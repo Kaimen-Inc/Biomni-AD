@@ -12,6 +12,7 @@ Use this guide if the user's query mentions any of: "Alzheimer", "AD", "dementia
 	- Read and print all JSON files in this folder that match `resource/BiomniAD*.json`.
 	- Each entry typically includes: `id`, `title`, `dataset_url`, `open_access_portal_url`, optional `manifest_url`, and `files[]` with per-file `uri` download links.
 	- Summarize the relevant datasets that are available (dataset name, modality, and recommended use).
+	- CRISPRbrain of brain and iPSC datasets are available through API directly (described below).
 2) Decide whether specific datasets could materially improve the task. If helpful, download only the needed subsets to the data lake (e.g., `./data/biomniad/`).
 3) Cache paths and reference them in subsequent tool calls.
 
@@ -133,6 +134,28 @@ Below are the dataset titles currently present in the local BiomniAD catalogs. R
 - GCST90027158 – New insights into the genetic etiology of Alzheimer’s disease and related dementias (Bellenguez et al., 2022)
 - isoMiGA – Isoform and Gene-level Counts and TPM in Short-read Human Microglia
 - isoMiGA – Expression and Splicing QTL Summary Statistics in Human Microglia
+
+## CRISPRbrain API
+CRISPRbrain provides access to CRISPR screening data of cells in the brain.
+### Installation
+```bash
+pip install crisprbrain
+```
+### Usage
+```python
+import crisprbrain
+# Initialize the CRISPRbrain API Client
+client = crisprbrain.Client()
+# List Available Screens
+print("Available Screens are:", str.join(", ", client.screens.keys()))
+# Access a Screen
+screen = client.screens["Glutamatergic Neuron-Survival-CRISPRi"]
+screen_type = screen.metadata["Screen Type"]
+print(screen_type, "RNA-seq")
+# Access the Screen Data
+df = screen.to_data_frame()
+print(df.describe())
+```
 
 ## Decision rule
 - Download using the `files[].uri` or `manifest_url`/`dataset_url` if the dataset's modality and "recommended_for" align with the task (e.g., genetics, transcriptomics, imaging, clinical outcomes) and expected benefit > cost (size/time/license).
