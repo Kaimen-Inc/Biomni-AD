@@ -9,7 +9,7 @@ class ToolRetriever:
     """Retrieve tools from the tool registry."""
 
     def __init__(self):
-        pass
+        self._cache = {}
 
     def prompt_based_retrieval(self, query: str, resources: dict, llm=None) -> dict:
         """Use a prompt-based approach to retrieve the most relevant resources for a query.
@@ -88,6 +88,10 @@ IMPORTANT GUIDELINES:
 
         prompt = "\n".join(prompt_sections) + response_format
 
+        # Check cache
+        if prompt in self._cache:
+            return self._cache[prompt]
+
         # Use the provided LLM or create a new one
         if llm is None:
             llm = ChatOpenAI(model="gpt-4o")
@@ -128,6 +132,9 @@ IMPORTANT GUIDELINES:
                 for i in selected_indices.get("know_how", [])
                 if i < len(resources.get("know_how", []))
             ]
+
+        # Store in cache
+        self._cache[prompt] = selected_resources
 
         return selected_resources
 

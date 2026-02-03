@@ -1,6 +1,8 @@
 import ast
+import concurrent.futures
 import enum
 import importlib
+
 import json
 import os
 import pickle
@@ -939,6 +941,9 @@ def check_and_download_s3_files(
     def download_with_progress(url: str, file_path: str, desc: str) -> bool:
         """Download file with progress bar."""
         try:
+            # Ensure directory exists for nested files
+            os.makedirs(os.path.dirname(file_path), exist_ok=True)
+            
             response = requests.get(url, stream=True)
             response.raise_for_status()
 
@@ -999,21 +1004,42 @@ def check_and_download_s3_files(
         return download_results
 
     # Handle data_lake folder (download individual files)
+    files_to_download = []
     for filename in expected_files:
         local_file_path = os.path.join(local_data_lake_path, filename)
 
         if os.path.exists(local_file_path):
             download_results[filename] = True
-            continue
-
-        s3_file_url = urljoin(s3_bucket_url + "/" + folder + "/", filename)
-        print(f"Downloading {filename} from {folder}...")
-
-        if download_with_progress(s3_file_url, local_file_path, filename):
-            print(f"✓ Successfully downloaded: {filename}")
-            download_results[filename] = True
         else:
+            files_to_download.append(filename)
             download_results[filename] = False
+
+    if not files_to_download:
+        return download_results
+
+    print(f"Downloading {len(files_to_download)} missing files from {folder}...")
+    
+    def process_file(filename):
+        local_file_path = os.path.join(local_data_lake_path, filename)
+        s3_file_url = urljoin(s3_bucket_url + "/" + folder + "/", filename)
+        
+        success = download_with_progress(s3_file_url, local_file_path, filename)
+        if success:
+            print(f"✓ Successfully downloaded: {filename}")
+        return filename, success
+
+    # Use ThreadPoolExecutor for parallel downloads
+    with concurrent.futures.ThreadPoolExecutor(max_workers=10) as executor:
+        future_to_file = {executor.submit(process_file, f): f for f in files_to_download}
+        
+        for future in concurrent.futures.as_completed(future_to_file):
+            filename = future_to_file[future]
+            try:
+                processed_filename, success = future.result()
+                download_results[processed_filename] = success
+            except Exception as e:
+                print(f"✗ Exception downloading {filename}: {e}")
+                download_results[filename] = False
 
     return download_results
 

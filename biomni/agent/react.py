@@ -19,11 +19,11 @@ from biomni.env_desc import data_lake_dict, library_content_dict
 from biomni.llm import get_llm
 from biomni.model.retriever import ToolRetriever
 from biomni.tool.tool_registry import ToolRegistry
-from biomni.utils import (
     api_schema_to_langchain_tool,
     function_to_api_schema,
     pretty_print,
     read_module2api,
+    run_with_timeout,
 )
 
 
@@ -88,65 +88,23 @@ class react:
         self.system_prompt = ""
 
     def _add_timeout_to_tools(self, tools):
-        """Apply timeout wrapper to all tool functions using multiprocessing."""
+        """Apply timeout wrapper to all tool functions using threading."""
 
         def create_timed_func(original_func, timeout):
             """Factory function that creates a unique timed function for each tool."""
-            tool_name = getattr(original_func, "__name__", "unknown")
-            # print(f"Applying timeout wrapper to tool: {tool_name}")
-
-            def process_func(func, args, kwargs, result_queue):
-                """Function to run in a separate process."""
-                try:
-                    result = func(*args, **kwargs)
-                    result_queue.put(("success", result))
-                except Exception as e:
-                    result_queue.put(("error", str(e)))
-
+            
             @wraps(original_func)
             def timed_func(*args, **kwargs):
-                # print(f"Executing tool with timeout: {tool_name}")
-                result_queue = Queue()
-
-                # Start a separate process
-                proc = Process(
-                    target=process_func,
-                    args=(original_func, args, kwargs, result_queue),
-                )
-                proc.start()
-
-                # Wait for the specified timeout
-                proc.join(timeout)
-
-                # Check if the process is still running after timeout
-                if proc.is_alive():
-                    print(f"TIMEOUT: Tool {tool_name} execution timed out after {timeout} seconds")
-                    # Force terminate the process
-                    proc.terminate()
-                    proc.join(1)  # Give it a second to terminate
-
-                    # If it's still not dead, kill it with more force
-                    if proc.is_alive():
-                        os.kill(proc.pid, signal.SIGKILL)
-
-                    return f"ERROR: Tool execution timed out after {timeout} seconds. Please try with simpler inputs or break your task into smaller steps."
-
-                # Get the result from the queue
-                if not result_queue.empty():
-                    status, result = result_queue.get()
-                    if status == "success":
-                        return result
-                    else:
-                        return f"Error in tool execution: {result}"
-
-                return "Error: Tool execution completed but no result was returned"
+                return run_with_timeout(original_func, args=args, kwargs=kwargs, timeout=timeout)
 
             return timed_func
 
         wrapped_tools = []
         for tool in tools:
             wrapped_tool = tool
-            wrapped_tool.func = create_timed_func(tool.func, self.timeout_seconds)
+            # Ensure we are wrapping the underlying function
+            if hasattr(tool, "func"):
+                wrapped_tool.func = create_timed_func(tool.func, self.timeout_seconds)
             wrapped_tools.append(wrapped_tool)
 
         return wrapped_tools
