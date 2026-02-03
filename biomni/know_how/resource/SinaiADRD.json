@@ -1,0 +1,79 @@
+{
+  "datasets": [
+    {
+      "id": "RADR",
+      "title": "RADR – Repository for Rare Alzheimer’s Disease and Related Dementia Variants",
+      "access": "open",
+      "dataset_url": "https://zenodo.org/records/17538285",
+      "open_access_portal_url": "https://radrvariants.com",
+      "manifest_url": null,
+      "study_description": "The RADR (Repository for Rare Alzheimer’s Disease and Related Dementia Variants) database is a curated reference of rare, protein-altering, and disease-associated variants in genes implicated in Alzheimer’s disease (AD) and related dementias (ADRD). The table aggregates variant annotations from ClinVar, AlzForum, InterVar, and literature sources, harmonized under GRCh38, with per-variant genomic position, predicted functional impact, clinical/neuropathological classification, and risk metrics, enabling variant interpretation and penetrance estimation in large biobank and sequencing cohorts (e.g., All of Us, BioMe, UK Biobank).",
+      "files": [
+        {
+          "name": "RADR_V3.xlsx (curated variant table; latest RADR release)",
+          "uri": "https://zenodo.org/records/17538285"
+        }
+      ]
+    },
+    {
+      "id": "SingleBrain",
+      "title": "SingleBrain – Single-nucleus eQTL Meta-analysis across Human Brain Cohorts",
+      "access": "open",
+      "dataset_url": "https://zenodo.org/records/14908182",
+      "open_access_portal_url": "https://pmc.ncbi.nlm.nih.gov/articles/PMC11908325/",
+      "manifest_url": null,
+      "study_description": "SingleBrain provides full and top association summary statistics for cis-eQTLs mapped in a meta-analysis of single-nucleus RNA-seq data from four human brain cohorts (Fujita et al., Mathys et al., Bryois et al., Gabitto et al.; 983 European-ancestry donors from 757 unique individuals). QTLs are mapped on hg38 using the mmQTL linear mixed model random-effects framework across major brain cell classes and subtypes (astrocytes, endothelial cells, excitatory and inhibitory neurons, microglia, oligodendrocytes, OPCs).",
+      "files": [
+        {
+          "name": "{Cell type}_eqtl_{ASSOC}.tsv.gz (cell-type–specific full and top association files for all tested phenotypes)",
+          "uri": "https://zenodo.org/records/14908182"
+        }
+      ]
+    },
+    {
+      "id": "GCST90027158",
+      "title": "GCST90027158 – New insights into the genetic etiology of Alzheimer’s disease and related dementias (Bellenguez et al., 2022)",
+      "access": "open",
+      "dataset_url": "https://www.ebi.ac.uk/gwas/studies/GCST90027158",
+      "open_access_portal_url": "https://pmc.ncbi.nlm.nih.gov/articles/PMC9005347/",
+      "manifest_url": null,
+      "study_description": "Genome-wide association summary statistics from Bellenguez et al. (Nat Genet 2022), a large European-ancestry meta-analysis of Alzheimer’s disease and related dementias. The discovery stage comprises 39,106 clinically diagnosed AD cases, 46,828 proxy cases, and 401,577 controls, with genotypes from multiple Affymetrix and Illumina arrays imputed to dense reference panels; replication includes 25,392 cases and 276,086 controls. The GCST90027158 study provides full GWAS summary statistics for late-onset AD risk.",
+      "files": [
+        {
+          "name": "GCST90027158 full GWAS summary statistics (FTP download via GWAS Catalog study page)",
+          "uri": "https://www.ebi.ac.uk/gwas/studies/GCST90027158"
+        }
+      ]
+    },
+    {
+      "id": "isoMiGA_counts",
+      "title": "isoMiGA – Isoform and Gene-level Counts and TPM in Short-read Human Microglia",
+      "access": "open",
+      "dataset_url": "https://zenodo.org/records/14866476",
+      "open_access_portal_url": "https://www.nature.com/articles/s41588-025-02099-0",
+      "manifest_url": null,
+      "study_description": "Short-read RNA-seq–based isoform and gene-level quantification in human microglia from four cohorts (Raj, Roussos, Gaffney, iPSC-derived microglia-like cells). Expression is quantified with Salmon at transcript and gene level as TPM and counts, against both GENCODE v38 and an augmented union reference that incorporates 35,879 novel microglia isoforms from isoMiGA long-read sequencing. The resource provides 32 cohort × quantification × reference matrices for downstream eQTL, TWAS, and network analyses.",
+      "files": [
+        {
+          "name": "{cohort}_{quantification}_{reference}.tsv.gz (32 isoform/gene quantification matrices across 4 cohorts, 4 quantification types, 2 references)",
+          "uri": "https://zenodo.org/records/14866476"
+        }
+      ]
+    },
+    {
+      "id": "isoMiGA_QTL",
+      "title": "isoMiGA – Expression and Splicing QTL Summary Statistics in Human Microglia",
+      "access": "open",
+      "dataset_url": "https://zenodo.org/records/8250771",
+      "open_access_portal_url": "https://www.nature.com/articles/s41588-025-02099-0",
+      "manifest_url": null,
+      "study_description": "Expression and splicing QTL summary statistics from the isoform-centric Microglia Genomic Atlas (isoMiGA), based on a multi-ethnic meta-analysis of six human microglia cohorts (Raj MFG, Raj STG, Raj SVZ, Raj THA, Roussos, Gaffney; 555 samples from 391 donors). Using mmQTL random-effects meta-analysis, the dataset reports full and top associations for expression QTLs and multiple splicing modalities (leafcutter intron excision and SUPPA A3, A5, AF, AL, RI, SE, as well as transcript-level phenotypes) for both GENCODE- and union-based isoform references.",
+      "files": [
+        {
+          "name": "{REFERENCE}_{PHENOTYPE}_{ASSOC}.tsv.gz (full and top association files for expression and splicing QTLs across GENCODE and union references)",
+          "uri": "https://zenodo.org/records/8250771"
+        }
+      ]
+    }
+  ]
+}
