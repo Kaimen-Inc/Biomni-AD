@@ -1773,7 +1773,8 @@ Each library is listed with its description to help you understand its functiona
         inputs = {"messages": [HumanMessage(content=prompt)], "next_step": None}
         config = {"recursion_limit": 500, "configurable": {"thread_id": 42}}
         self.log = []
-
+        self.raw_log = [] # Store raw messages for advanced artifact generation (e.g. Notebooks)
+        
         # Store the final conversation state for markdown generation
         final_state = None
 
@@ -1785,6 +1786,9 @@ Each library is listed with its description to help you understand its functiona
 
         # Store the conversation state for markdown generation
         self._conversation_state = final_state
+        
+        if final_state:
+            self.raw_log = list(final_state["messages"])
 
         return self.log, message.content
 

@@ -396,11 +396,18 @@ Here is the list of available libraries with their descriptions:
         config = {"recursion_limit": 50}
         inputs = {"messages": [("user", prompt)]}
         self.log = []
+        self.raw_log = [] # Store raw messages for advanced artifact generation (e.g. Notebooks)
+        final_state = None
         for s in self.app.stream(inputs, stream_mode="values", config=config):
             message = s["messages"][-1]
             out = pretty_print(message)
             self.log.append(out)
-        return self.log, s["messages"][-1].content
+            final_state = s
+        
+        if final_state:
+            self.raw_log = list(final_state["messages"])
+            
+        return self.log, final_state["messages"][-1].content if final_state else ""
 
     def result_formatting(self, output_class, task_intention):
         self.format_check_prompt = ChatPromptTemplate.from_messages(

@@ -460,6 +460,13 @@ def pretty_print(message, printout=True):
         if message.name is not None:
             title += f"\nName: {message.name}"
         title += f"\n\n{message.content}"
+        
+        # Check for tool_calls (LangChain standard for tool usage)
+        if hasattr(message, "tool_calls") and message.tool_calls:
+            for tool_call in message.tool_calls:
+                title += f"\n\nTool Call: {tool_call.get('name')}"
+                title += f"\nInput: {json.dumps(tool_call.get('args', {}), indent=2)}"
+
         if printout:
             print(f"{title}")
     return title

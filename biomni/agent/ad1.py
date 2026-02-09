@@ -5,8 +5,30 @@ import getpass
 import platform
 from typing import Any
 from pathlib import Path
+from datetime import datetime
+import shutil
+
 from biomni.agent.a1 import A1
 from langchain_core.messages import HumanMessage
+
+try:
+    from rich.console import Console
+    from rich.panel import Panel
+    from rich.theme import Theme
+    from rich.markdown import Markdown
+    
+    custom_theme = Theme({
+        "info": "dim cyan",
+        "warning": "magenta",
+        "danger": "bold red",
+        "success": "bold green",
+        "header": "bold cyan underline"
+    })
+    console = Console(theme=custom_theme)
+    print = console.print # Override print
+except ImportError:
+    # Fallback if rich is not available (though we verified it is)
+    pass
 
 class AD1(A1):
     def __init__(self, **kwargs):
@@ -19,17 +41,254 @@ class AD1(A1):
     def go(self, prompt):
         """Execute the agent with the given prompt, injecting AD context if relevant."""
         
+        # 1. Setup run directory
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        run_id = f"run_{timestamp}"
+        runs_root = os.path.abspath(os.path.join(os.getcwd(), "runs"))
+        current_run_dir = os.path.join(runs_root, run_id)
+        os.makedirs(current_run_dir, exist_ok=True)
+        
+        try:
+            console.print(Panel(f"[bold white]🚀 Starting AD1 Agent Run[/bold white]\n[dim]ID: {run_id}[/dim]", title="[header]Biomni AD1[/header]", border_style="cyan"))
+        except NameError:
+             print(f"\n🚀 Starting AD1 Agent Run: {run_id}")
+        
+        # 2. Capture initial file state
+        initial_files = self._get_all_files(os.getcwd())
+
         # Check for AD keywords
         is_ad_task = any(keyword.lower() in prompt.lower() for keyword in self.ad_keywords)
         
         if is_ad_task:
-            print("\n🧠 AD/Dementia task detected. Injecting specialized data sourcing protocols...")
+            try:
+                console.print("\n[magenta]🧠 AD/Dementia task detected.[/magenta] Injecting specialized data sourcing protocols...")
+            except NameError:
+                print("\n🧠 AD/Dementia task detected. Injecting specialized data sourcing protocols...")
             self._inject_ad_context()
         
-        # Run the agent
-        result = super().go(prompt)
+        # 3. Run the agent
+        try:
+            super().go(prompt)
+        except Exception as e:
+            try:
+                console.print(f"\n[danger]❌ Agent execution failed:[/danger] {e}")
+            except NameError:
+                print(f"\n❌ Agent execution failed: {e}")
         
-        return result
+        # 4. Save artifacts
+        self._save_run_artifacts(run_id, current_run_dir, initial_files)
+        
+        return self.log, self._conversation_state["messages"][-1].content if hasattr(self, "_conversation_state") else ""
+
+    def _save_run_artifacts(self, run_id, run_dir, initial_files):
+        """Standardized logic to save all run artifacts (trace, notebook, reports, and generated files)."""
+        try:
+             console.print("\n[header]💾 Saving run artifacts...[/header]")
+        except NameError:
+             print("\n💾 Saving run artifacts...")
+
+        # Save trace logs (JSON)
+        trace_path = os.path.join(run_dir, "trace.json")
+        try:
+            with open(trace_path, "w") as f:
+                json.dump(self.log, f, indent=2)
+            try:
+                console.print(f"  [success]✓[/success] Saved execution trace: [bold]trace.json[/bold]")
+            except NameError:
+                print(f"  ✓ Saved execution trace: trace.json")
+        except Exception as e:
+            print(f"  ⚠️ Failed to save trace: {e}")
+
+        # Save trace notebook (.ipynb)
+        try:
+            nb_content = self._generate_notebook()
+            nb_path = os.path.join(run_dir, "trace.ipynb")
+            with open(nb_path, "w", encoding="utf-8") as f:
+                json.dump(nb_content, f, indent=2)
+            try:
+                console.print(f"  [success]✓[/success] Saved trace notebook: [bold]trace.ipynb[/bold]")
+            except NameError:
+                print(f"  ✓ Saved trace notebook: trace.ipynb")
+        except Exception as e:
+            print(f"  ⚠️ Failed to save notebook: {e}")
+
+        # Save report (MD and PDF)
+        history_path_base = os.path.join(run_dir, "report")
+        try:
+            md_content = self._generate_markdown_content(include_images=True)
+            with open(history_path_base + ".md", "w", encoding="utf-8") as f:
+                f.write(md_content)
+            try:
+                console.print(f"  [success]✓[/success] Saved report: [bold]report.md[/bold]")
+            except NameError:
+                print(f"  ✓ Saved report: report.md")
+                
+            # Try to save PDF if possible
+            self.save_conversation_history(history_path_base, include_images=True, save_pdf=True)
+        except Exception as e:
+            print(f"  ⚠️ Failed to save report files: {e}")
+
+        # Move generated files
+        final_files = self._get_all_files(os.getcwd())
+        new_files = final_files - initial_files
+        
+        if new_files:
+            print(f"\n📦 New files generated ({len(new_files)}):")
+            for file_path in new_files:
+                try:
+                    rel_path = os.path.relpath(file_path, os.getcwd())
+                    dest_path = os.path.join(run_dir, os.path.basename(file_path))
+                    
+                    if os.path.exists(dest_path):
+                        base, ext = os.path.splitext(dest_path)
+                        dest_path = f"{base}_{int(datetime.now().timestamp())}{ext}"
+                    
+                    if os.path.isfile(file_path):
+                        shutil.move(file_path, dest_path)
+                        print(f"  ✓ Moved to run folder: {rel_path}")
+                except Exception as e:
+                    print(f"  ⚠️ Failed to move {file_path}: {e}")
+        else:
+            print("  (No new files generated to save)")
+
+        try:
+            console.print(Panel(f"[bold green]✅ Run {run_id} completed.[/bold green]", border_style="green"))
+        except NameError:
+            print(f"\n✅ Run {run_id} completed.")
+
+    def _generate_notebook(self):
+        """Generate a Jupyter Notebook structure from self.raw_log."""
+        cells = []
+        
+        # Add header
+        cells.append({
+            "cell_type": "markdown",
+            "metadata": {},
+            "source": ["# Biomni AD1 Execution Trace\n", f"Run ID: {datetime.now().strftime('%Y%m%d_%H%M%S')}"]
+        })
+
+        if not hasattr(self, 'raw_log') or not self.raw_log:
+            return {"cells": cells, "metadata": {}, "nbformat": 4, "nbformat_minor": 5}
+
+        import re
+        for msg in self.raw_log:
+            # Handle user/system messages
+            msg_type = getattr(msg, 'type', '')
+            msg_content = getattr(msg, 'content', '')
+            
+            if msg_type in ["human", "system"]:
+                cells.append({
+                    "cell_type": "markdown",
+                    "metadata": {},
+                    "source": [f"**{msg_type.title()}**: {msg_content}"]
+                })
+            
+            # Handle AI messages (thoughts, tools, responses)
+            elif msg_type == "ai":
+                # 1. Look for XML tags <execute> manually (requested by trace logic)
+                code_blocks = re.findall(r"<execute>(.*?)</execute>", msg_content, re.DOTALL)
+                
+                # 2. Extract thinking (text before first tag)
+                thinking = msg_content
+                if code_blocks:
+                    first_tag_pos = msg_content.find("<execute>")
+                    thinking = msg_content[:first_tag_pos].strip()
+                
+                if thinking:
+                     cells.append({
+                        "cell_type": "markdown",
+                        "metadata": {},
+                        "source": [f"**Assistant Reasoning**:\n{thinking}"]
+                    })
+
+                for code in code_blocks:
+                    cells.append({
+                        "cell_type": "code",
+                        "execution_count": None,
+                        "metadata": {},
+                        "outputs": [],
+                        "source": [code.strip()]
+                    })
+                
+                # 3. Final response (text after last tag)
+                after_tags = msg_content
+                if code_blocks:
+                    last_tag_pos = msg_content.rfind("</execute>")
+                    after_tags = msg_content[last_tag_pos+10:].strip()
+                
+                if after_tags and not any(tag in after_tags for tag in ["<solution>", "<execute>"]):
+                    cells.append({
+                        "cell_type": "markdown",
+                        "metadata": {},
+                        "source": [f"**Assistant Output**:\n{after_tags}"]
+                    })
+
+                # 4. Handle native tool_calls if they exist
+                if hasattr(msg, "tool_calls") and msg.tool_calls:
+                    for tool_call in msg.tool_calls:
+                        tool_name = tool_call.get("name")
+                        tool_args = tool_call.get("args")
+                        
+                        if tool_name == "run_python_repl":
+                            cells.append({
+                                "cell_type": "code",
+                                "execution_count": None,
+                                "metadata": {},
+                                "outputs": [],
+                                "source": [tool_args.get("command", "# No code")]
+                            })
+                        else:
+                            cells.append({
+                                "cell_type": "markdown",
+                                "metadata": {},
+                                "source": [f"*Tool Call*: {tool_name}\nArgs: {json.dumps(tool_args)}"]
+                            })
+
+            # Handle Tool Messages (Outputs)
+            elif msg_type == "tool":
+                 cells.append({
+                    "cell_type": "markdown",
+                    "metadata": {},
+                    "source": [f"**Observation ({getattr(msg, 'name', 'Tool')})**:\n```\n{msg_content}\n```"]
+                })
+
+        notebook = {
+            "cells": cells,
+            "metadata": {
+                "kernelspec": {
+                    "display_name": "Python 3",
+                    "language": "python",
+                    "name": "python3"
+                },
+                "language_info": {
+                    "codemirror_mode": {"name": "ipython", "version": 3},
+                    "file_extension": ".py",
+                    "mimetype": "text/x-python",
+                    "name": "python",
+                    "nbconvert_exporter": "python",
+                    "pygments_lexer": "ipython3",
+                    "version": "3.8.5"
+                }
+            },
+            "nbformat": 4,
+            "nbformat_minor": 5
+        }
+        return notebook
+
+    def _get_all_files(self, directory):
+        """Recursively get all files in a directory, ignoring system and run directories."""
+        file_list = []
+        for root, dirs, files in os.walk(directory):
+            # Safe ignore patterns
+            if "runs" in root or ".git" in root or "__pycache__" in root or ".gemini" in root:
+                continue
+                
+            for file in files:
+                # Ignore hidden files
+                if file.startswith('.'):
+                    continue
+                file_list.append(os.path.join(root, file))
+        return set(file_list)
 
     def _inject_ad_context(self):
         """Inject BiomniAD data sourcing instructions into the system prompt."""
@@ -77,8 +336,7 @@ class AD1(A1):
         server_name: str = "0.0.0.0",
         require_verification: bool = False,
     ) -> None:
-        """Launch the Biomni AD1 Web UI.
-        """
+        """Launch the Biomni AD1 Web UI."""
         try:
             import gradio as gr
             from gradio import ChatMessage
@@ -117,6 +375,41 @@ class AD1(A1):
                         continue
                     file_list.append(os.path.join(root, file))
             return set(file_list)
+            
+        def get_runs_list():
+            """Get list of recent runs with prompt history."""
+            runs_dir = os.path.join(os.getcwd(), "runs")
+            if not os.path.exists(runs_dir):
+                return "No runs found yet."
+            
+            # Sort runs by name (timestamped)
+            runs = sorted([d for d in os.listdir(runs_dir) if d.startswith('run_')], reverse=True)
+            
+            md_list = "### 🕒 Recent Runs\n"
+            for i, r in enumerate(runs[:15]): # Show up to 15
+                run_num = len(runs) - i
+                prompt_snippet = ""
+                
+                # Try to get prompt from trace.json
+                trace_json_path = os.path.join(runs_dir, r, "trace.json")
+                if os.path.exists(trace_json_path):
+                    try:
+                        with open(trace_json_path, "r") as f:
+                            trace_data = json.load(f)
+                            if trace_data and isinstance(trace_data, list):
+                                # First entry is usually the user prompt
+                                first_msg = trace_data[0]
+                                if "Human Message" in first_msg:
+                                    # Extract text after headers
+                                    prompt_snippet = first_msg.split("\n\n")[-1][:60].strip() + "..."
+                    except:
+                        pass
+                
+                if prompt_snippet:
+                    md_list += f"> **Run #{run_num}**  \n> {prompt_snippet}  \n> [ {r} ]\n\n"
+                else:
+                    md_list += f"**Run #{run_num}** (`{r}`)\n\n"
+            return md_list
 
         def generate_response(prompt_input, inner_history=None, main_history=None):
             if main_history is None:
@@ -158,7 +451,7 @@ class AD1(A1):
                         metadata={"title": "🧠 AD Context"},
                     )
                 )
-                yield inner_history, main_history, gr.update(), gr.update(), gr.update()
+                yield inner_history, main_history, gr.update(), gr.update(), gr.update() # Update outputs including runs_list
 
             for file_info in files:
                 file_path = file_info
@@ -398,11 +691,6 @@ class AD1(A1):
                     )
                     self.main_history_copy += [{"role": "assistant", "content": summary}]
 
-            # Restore system prompt if it was modified (e.g. by AD context)
-            # Note: AD context modifies self.system_prompt in place, so we might want to reset it if we want isolation.
-            # But for now, let's just leave it as is or reset if we had a mechanism.
-            # The previous code had `self.system_prompt = original_system_prompt` but we removed the directory injection part.
-            
             inner_history.append(
                 ChatMessage(
                     role="assistant",
@@ -411,94 +699,121 @@ class AD1(A1):
                 )
             )
 
-            # Capture final file state and find new files
-            final_files = get_all_files(os.getcwd())
-            new_files = sorted(list(final_files - initial_files))
-            
-            status_lines = []
-            
-            if new_files:
-                status_lines.append("Files created during this run:")
-                for f in new_files:
-                    # Get relative path for display
-                    try:
-                        rel_path = os.path.relpath(f, os.getcwd())
-                    except ValueError:
-                        rel_path = f
-                    
-                    status_lines.append(f"- [{rel_path}](file://{f})")
-            else:
-                status_lines.append("- No new files were created during this run.")
+            # Sync raw_log for notebook generation
+            if s and "messages" in s:
+                 self.raw_log = list(s["messages"])
 
-            status_md = "\n".join(status_lines)
+            # Setup run directory
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            run_id = f"run_{timestamp}"
+            runs_root = os.path.abspath(os.path.join(os.getcwd(), "runs"))
+            os.makedirs(runs_root, exist_ok=True) # Ensure runs_root exists
+            current_run_dir = os.path.join(runs_root, run_id)
+            os.makedirs(current_run_dir, exist_ok=True)
 
-            # We don't have specific PDF/Notebook outputs anymore, so hide them
-            yield inner_history, main_history, gr.update(value=status_md, visible=True), gr.update(visible=False), gr.update(visible=False)
+            # Centralized artifact saving
+            self._save_run_artifacts(run_id, current_run_dir, initial_files)
+
+            # Update runs list in sidebar
+            updated_runs_list = get_runs_list()
+            
+            # Count total runs for the success message
+            total_runs = len([d for d in os.listdir(runs_root) if d.startswith('run_')])
+
+            status_md = f"### ✅ Run #{total_runs} Completed\nAll artifacts, including logs and generated data, have been moved to:\n`{current_run_dir}`"
+
+            yield inner_history, main_history, gr.update(value=status_md, visible=True), gr.update(value=updated_runs_list), gr.update(visible=False)
 
         def like(data: Any = None) -> None:
             """Handle like/dislike events from the chatbot."""
             if data is not None:
                 print("User liked the response")
-                print(f"Index: {data.index}, Liked: {data.liked}")
 
-        # Layout: verification (optional) + main workspace
-        # Custom CSS for Roboto font and professional styling
+        # Custom CSS - Simple & Professional
         custom_css = """
-        @import url('https://fonts.googleapis.com/css2?family=Roboto:wght@300;400;500;700&display=swap');
-
-        * {
-            font-family: 'Roboto', sans-serif !important;
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap');
+        
+        body, .gradio-container {
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif !important;
+            background-color: #ffffff !important;
+        }
+        
+        /* Sidebar */
+        #sidebar {
+            background: #f8fafc;
+            border-right: 1px solid #e2e8f0;
+            padding: 20px;
+            min-width: 240px !important;
+        }
+        
+        #sidebar .prose {
+            word-wrap: break-word !important;
+            white-space: normal !important;
+        }
+        
+        #sidebar .prose blockquote {
+            border-left: 3px solid #3b82f6;
+            margin: 8px 0;
+            padding: 10px 12px;
+            background: #ffffff;
+            border-radius: 0 6px 6px 0;
+            font-size: 13px;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.08);
+        }
+        
+        #sidebar .prose strong {
+            color: #1e40af;
         }
 
-        .gradio-container {
-            font-family: 'Roboto', sans-serif !important;
+        /* Chat Area */
+        #chat-area {
+            background: #ffffff;
+            padding: 24px;
         }
-
-        /* Larger font sizes for chat messages and execution trace */
-        .message-wrap .message {
-            font-size: 16px !important;
-            line-height: 1.6 !important;
+        
+        /* Trace Area */
+        #trace-area {
+            background: #fafafa;
+            border-left: 1px solid #e2e8f0;
+            padding: 20px;
         }
-
-        .message-wrap p {
-            font-size: 16px !important;
-            line-height: 1.6 !important;
-            margin-bottom: 0.75em !important;
+        
+        /* Messages */
+        .message-row.user-row .message {
+            background: #2563eb !important;
+            color: white !important;
+            border-radius: 16px 16px 4px 16px !important;
         }
-
-        /* Better spacing and professional look */
-        .chatbot {
+        
+        .message-row.bot-row .message {
+            background: #f1f5f9 !important;
+            border-radius: 16px 16px 16px 4px !important;
+        }
+        
+        /* Buttons */
+        button.primary {
+            background: #2563eb !important;
+            color: white !important;
+            border: none !important;
             border-radius: 8px !important;
         }
-
-        .message-wrap {
-            padding: 12px 16px !important;
+        
+        button.secondary {
+            background: #f1f5f9 !important;
+            color: #1e40af !important;
+            border: 1px solid #e2e8f0 !important;
         }
-
-        /* Clean, modern button styling */
-        button {
-            border-radius: 6px !important;
-            font-weight: 500 !important;
-        }
-
-        /* Professional input styling */
-        textarea, input {
-            border-radius: 6px !important;
-            font-size: 15px !important;
-        }
-
-        /* Better label typography */
-        label {
-            font-weight: 500 !important;
+        
+        .prose {
             font-size: 14px !important;
-            margin-bottom: 8px !important;
+            line-height: 1.5 !important;
+            color: #1e293b !important;
         }
         """
 
-        with gr.Blocks(title="Biomni AD1 Agent", theme=gr.themes.Soft(), css=custom_css) as demo:
-            # AD1 Specific: Logo path
+        with gr.Blocks(title="Biomni AD1", theme=gr.themes.Soft(), css=custom_css) as demo:
+            # AD1 Logo
             logo_path = Path(__file__).resolve().parents[2] / "figs" / "Biomni-AD_Logo_v2.png"
-            # Fallback if v2 logo doesn't exist, try standard one or just text
             if not logo_path.exists():
                  logo_path = Path(__file__).resolve().parents[2] / "figs" / "biomni_logo.png"
 
@@ -508,11 +823,10 @@ class AD1(A1):
             with verification_container:
                 if logo_path.exists():
                     gr.Image(logo_path, show_label=False, height=80)
-                gr.Markdown("## Biomni AD1 Agent - Access Verification")
-                gr.Markdown("Enter your access code to continue.")
+                gr.Markdown("## Access Verification")
                 access_code_input = gr.Textbox(label="Access Code", type="password")
                 access_error_msg = gr.Markdown(visible=False)
-                verify_btn = gr.Button("Verify Access", variant="primary")
+                verify_btn = gr.Button("Verify", variant="primary")
                 verify_btn.click(
                     fn=verify_access_code,
                     inputs=[access_code_input],
@@ -520,55 +834,72 @@ class AD1(A1):
                 )
 
             with main_interface_container:
-                if logo_path.exists():
-                    gr.Image(logo_path, show_label=False, height=80)
-                gr.Markdown("## Biomni-AD — Alzheimer's Disease & Related Dementia Research Copilot")
+                # Top Header (Logo + Title)
+                with gr.Row(elem_classes="header-row"):
+                    with gr.Column(scale=1):
+                         if logo_path.exists():
+                            gr.Image(logo_path, show_label=False, height=60, container=False)
+                         else:
+                            gr.Markdown("# Biomni AD1")
 
-                with gr.Row():
-                    with gr.Column(scale=2):
+                with gr.Row(elem_id="main-row"):
+                    
+                    # --- Left Sidebar: Explorer ---
+                    with gr.Column(scale=1, elem_id="sidebar"):
+                        gr.Markdown("## 📂 Explorer")
+                        
+                        runs_list = gr.Markdown(value=get_runs_list())
+                        refresh_runs_btn = gr.Button("Refresh", size="sm", variant="secondary")
+                        refresh_runs_btn.click(fn=get_runs_list, outputs=[runs_list])
+
+                    # --- Center: Agent Chat ---
+                    with gr.Column(scale=3, elem_id="chat-area"):
                         main_chatbot = gr.Chatbot(
-                            label="Agent chat",
+                            label="Conversation",
                             type="messages",
-                            height=600,
+                            height=650,
                             show_copy_button=True,
                             show_share_button=True,
-                            autoscroll=False,
+                            autoscroll=True,
+                            avatar_images=(None, None), # Can add avatars here
+                            elem_id="main-chatbot"
                         )
-                        prompt_input = gr.MultimodalTextbox(
-                            interactive=True,
-                            file_count="multiple",
-                            placeholder=(
-                                "Describe your biomedical or Alzheimer's research question, "
-                                "and optionally upload files (e.g. tables, figures, PDFs)..."
-                            ),
-                            show_label=False,
-                        )
-                    with gr.Column(scale=3):
-                        innerloop_chatbot = gr.Chatbot(
-                            label="Biomni-AD execution trace",
-                            type="messages",
-                            height=600,
-                            show_copy_button=True,
-                            show_share_button=True,
-                        )
-                        gr.Markdown("### Run artifacts", elem_classes="artifacts-header")
-                        run_status = gr.Markdown(
-                            value=(
-                                "Artifacts from your latest run will appear here."
-                            ),
-                            visible=True,
-                        )
-                        # Hidden file components as placeholders if we ever need them back
-                        pdf_output = gr.File(label="Latest report (PDF)", interactive=False, visible=False)
-                        notebook_output = gr.File(
-                            label="Latest notebook", interactive=False, visible=False
-                        )
+                        
+                        with gr.Row():
+                            prompt_input = gr.MultimodalTextbox(
+                                interactive=True,
+                                file_count="multiple",
+                                placeholder="Ask a research question or upload data...",
+                                show_label=False,
+                                scale=8
+                            )
+                            # submit_btn = gr.Button("Send", variant="primary", scale=1) # MultimodalTextbox has embed submit
 
+                    # --- Right: Execution Trace ---
+                    with gr.Column(scale=2, elem_id="trace-area"):
+                        gr.Markdown("## ⚡ Execution Trace")
+                        innerloop_chatbot = gr.Chatbot(
+                            label="Thought Process",
+                            type="messages",
+                            height=500,
+                            show_copy_button=True,
+                            elem_id="inner-chatbot"
+                        )
+                        
+                        gr.Markdown("### 📦 Run Artifacts")
+                        run_status = gr.Markdown("Waiting for execution...")
+                        
+                        # Hidden placeholders
+                        pdf_output = gr.File(visible=False)
+                        notebook_output = gr.File(visible=False)
+
+                # Wiring
                 prompt_input.submit(
                     generate_response,
                     [prompt_input, innerloop_chatbot, main_chatbot],
-                    [innerloop_chatbot, main_chatbot, run_status, pdf_output, notebook_output],
+                    [innerloop_chatbot, main_chatbot, run_status, runs_list, pdf_output],
                 ).then(lambda: gr.MultimodalTextbox(value=None), None, [prompt_input])
+                
                 main_chatbot.like(like)
 
         print(f"Launching Biomni AD1 Gradio demo on {server_name}:7860")
