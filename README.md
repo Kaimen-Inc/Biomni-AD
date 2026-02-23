@@ -132,21 +132,62 @@ export LLM_SOURCE="Groq" # Optional: set this to use models served by Groq
 
 Some Python packages are not installed by default in the Biomni environment due to dependency conflicts. If you need these features, you must install the packages manually and may need to uncomment relevant code in the codebase. See the up-to-date list and details in [docs/known_conflicts.md](./docs/known_conflicts.md).
 
-### Basic Usage
+### Basic Usage & Agent Selection
 
-Once inside the environment, you can start using Biomni:
+Biomni provides two primary agents:
 
+1. **A1 (General Agent)**: The standard biomedical agent for general-purpose tasks.
+2. **AD1 (Alzheimer's Disease Agent)**: A specialized version of A1 optimized for Alzheimer's and Dementia research. It features:
+    - specialized data sourcing protocols
+    - context-aware instructions for neurodegeneration
+    - optimized tool selection for AD research
+
+#### 1. Running in Notebooks or CLI
+
+**A1 (General):**
 ```python
 from biomni.agent import A1
 
-# Initialize the agent with data path, Data lake will be automatically downloaded on first run (~11GB)
-agent = A1(path='./data', llm='claude-sonnet-4-20250514')
-
-# Execute biomedical tasks using natural language
-agent.go("Plan a CRISPR screen to identify genes that regulate T cell exhaustion, generate 32 genes that maximize the perturbation effect.")
-agent.go("Perform scRNA-seq annotation at [PATH] and generate meaningful hypothesis")
-agent.go("Predict ADMET properties for this compound: CC(C)CC1=CC=C(C=C1)C(C)C(=O)O")
+# Initialize general agent
+agent = A1(llm='claude-sonnet-4-5')
+agent.go("Plan a CRISPR screen to identify genes that regulate T cell exhaustion.")
 ```
+
+**AD1 (Alzheimer's Specialized):**
+```python
+from biomni.agent.ad1 import AD1
+
+# Initialize AD specialized agent
+agent = AD1(llm='claude-sonnet-4-5')
+agent.go("Analyze Tau aggregation pathways and suggest potential inhibitors.")
+```
+
+#### 2. Launching the Web UI
+
+You can launch a no-code interactive web interface for either agent.
+
+**A1 UI:**
+```python
+from biomni.agent import A1
+A1().launch_gradio_demo()
+```
+
+**AD1 UI:**
+```python
+from biomni.agent.ad1 import AD1
+AD1().launch_ui()
+```
+
+**UI Requirements:**
+To use the web interface, install Gradio 5.x:
+```bash
+pip install "gradio>=5.0,<6.0"
+```
+
+**UI Options:**
+- `share=True` - Create a public shareable link
+- `server_name="127.0.0.1"` - Localhost only (default: "0.0.0.0")
+- `require_verification=True` - Require access code (default: "Biomni2025")
 
 #### Controlling Datalake Loading
 
@@ -163,30 +204,6 @@ This is useful for:
 - Cases where you only need specific tools that don't require datalake files
 If you plan on using Azure for your model, always prefix the model name with azure- (e.g. llm='azure-gpt-4o').
 
-### Gradio Interface
-
-Launch an interactive web UI for Biomni:
-
-```python
-from biomni.agent import A1
-
-agent = A1(path='./data', llm='claude-sonnet-4-20250514')
-agent.launch_gradio_demo()
-```
-
-**Installation:**
-```bash
-pip install "gradio>=5.0,<6.0"
-```
-
-**Note:** Biomni's Gradio interface currently requires Gradio 5.x due to API changes in Gradio 6.0. If you have Gradio 6.x installed, you may need to downgrade.
-
-**Options:**
-- `share=True` - Create a public shareable link
-- `server_name="127.0.0.1"` - Localhost only (default: "0.0.0.0")
-- `require_verification=True` - Require access code (default code: "Biomni2025")
-
-The interface will be available at `http://localhost:7860`
 
 ### Configuration Management
 

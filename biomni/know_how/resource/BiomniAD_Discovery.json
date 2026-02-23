@@ -1,0 +1,138 @@
+{
+    "datasets": [
+        {
+            "id": "GCST90027158",
+            "title": "Bellenguez et al. (2022) - AD/ADRD GWAS Meta-analysis",
+            "access": "open",
+            "dataset_url": "https://www.ebi.ac.uk/gwas/studies/GCST90027158",
+            "open_access_portal_url": "https://pmc.ncbi.nlm.nih.gov/articles/PMC9005347/",
+            "study_description": "Largest multi-stage European-ancestry meta-analysis identifying 75 risk loci. The current gold standard for AD genetic risk data.",
+            "files": [
+                {
+                    "name": "Full SumStats (GRCh38) - Direct FTP",
+                    "uri": "ftp://ftp.ebi.ac.uk/pub/databases/gwas/summary_statistics/GCST90027001-GCST90028000/GCST90027158/GCST90027158_buildGRCh38.tsv.gz"
+                }
+            ]
+        },
+        {
+            "id": "FinnGen-R12",
+            "title": "FinnGen R12 – Alzheimer's Disease GWAS",
+            "access": "open",
+            "dataset_url": "https://r12.finngen.fi/pheno/G6_ALZHEIMER",
+            "open_access_portal_url": "https://www.finngen.fi/en/access_results",
+            "study_description": "2025/2026 update featuring high-resolution GWAS results from the Finnish population isolate, release R12.",
+            "files": [
+                {
+                    "name": "AD Summary Statistics (Direct Google Storage)",
+                    "uri": "https://storage.googleapis.com/finngen-public-data-r12/summary_stats/finngen_r12_G6_ALZHEIMER.gz"
+                }
+            ]
+        },
+        {
+            "id": "SEA-AD-2026",
+            "title": "SEA-AD – Seattle Alzheimer’s Disease Brain Cell Atlas (Release 26.2)",
+            "access": "open",
+            "dataset_url": "https://sea-ad.org",
+            "open_access_portal_url": "https://portal.brain-map.org/explore/seattle-alzheimers-disease",
+            "study_description": "Updated Feb 2026. Multi-omic single-nucleus atlas mapping AD progression across the MTG region with integrated pathology.",
+            "files": [
+                {
+                    "name": "Donor Metadata (Latest Excel)",
+                    "uri": "https://sea-ad-project.s3.amazonaws.com/metadata/SEAAD_donor_metadata.xlsx"
+                },
+                {
+                    "name": "Transcriptome/S3 Access",
+                    "uri": "s3://sea-ad-project/"
+                }
+            ]
+        },
+        {
+            "id": "ssREAD",
+            "title": "ssREAD – Single-cell and Spatial RNA-seq Database for AD",
+            "access": "open",
+            "dataset_url": "https://bmblx.bmi.osumc.edu/ssread/",
+            "open_access_portal_url": "https://zenodo.org/records/10850257",
+            "study_description": "Harmonized collection of 7M+ cells across 60+ AD-related studies, optimized for cross-dataset analysis.",
+            "files": [
+                {
+                    "name": "Harmonized Data Part 1 (Zenodo)",
+                    "uri": "https://zenodo.org/records/10850257/files/single-cell-AD-data-portal-part1.zip"
+                },
+                {
+                    "name": "Harmonized Data Part 2 (Zenodo)",
+                    "uri": "https://zenodo.org/records/10850257/files/single-cell-AD-data-portal-part2.zip"
+                }
+            ]
+        },
+        {
+            "id": "LBA-2026",
+            "title": "LBA – Lysosomal Brain Atlas",
+            "access": "open",
+            "dataset_url": "https://lysosomalbrainatlas.org",
+            "open_access_portal_url": "https://news.stanford.edu/stories/2026/01/atlas-database-researchers-neurological-disease-alzheimers",
+            "study_description": "A 2026 proteomic atlas pinpointing lysosomal proteins linked to neurodegeneration and AD cellular failure.",
+            "files": [
+                {
+                    "name": "Lysosomal Protein Dataset (CSV)",
+                    "uri": "https://lysosomalbrainatlas.org/download/lba_protein_matrix_v1.csv"
+                }
+            ]
+        },
+        {
+            "id": "OASIS-4",
+            "title": "OASIS-4 – Longitudinal Clinical AD Cohort",
+            "access": "open",
+            "dataset_url": "https://www.oasis-brains.org/",
+            "open_access_portal_url": "https://www.nitrc.org/projects/oasis4/",
+            "study_description": "Multimodal neuroimaging and clinical data for individuals presenting with memory complaints.",
+            "files": [
+                {
+                    "name": "Clinical Data Table (Direct)",
+                    "uri": "https://www.nitrc.org/frs/download.php/13149/OASIS-4_data.csv"
+                }
+            ]
+        },
+        {
+            "id": "ABC-Atlas",
+            "title": "ABC Atlas – Allen Brain Cell Atlas",
+            "access": "open",
+            "dataset_url": "https://portal.brain-map.org/explore/abc",
+            "open_access_portal_url": "https://github.com/AllenInstitute/abc_atlas_access",
+            "study_description": "The current standard for mammalian brain cell census, providing healthy and AD human brain taxonomies.",
+            "files": [
+                {
+                    "name": "Metadata & Cell Taxonomies (S3)",
+                    "uri": "s3://allen-brain-cell-atlas/metadata/"
+                }
+            ]
+        },
+        {
+            "id": "HCP-Open",
+            "title": "HCP – Human Connectome Project Open Access",
+            "access": "open",
+            "dataset_url": "https://www.humanconnectome.org/",
+            "open_access_portal_url": "https://registry.opendata.aws/hcp-openaccess/",
+            "study_description": "High-resolution structural and functional MRI data. Accessible via S3 without credentials.",
+            "files": [
+                {
+                    "name": "HCP S3 Bucket Root",
+                    "uri": "s3://hcp-openaccess/"
+                }
+            ]
+        },
+        {
+            "id": "Pan-UKBB-AD",
+            "title": "Pan-UK Biobank – AD Proxy GWAS",
+            "access": "open",
+            "dataset_url": "https://pan.ukbb.broadinstitute.org/",
+            "open_access_portal_url": "https://pan.ukbb.broadinstitute.org/downloads",
+            "study_description": "Consolidated multi-ancestry GWAS for Alzheimer’s using proxy cases from the UK Biobank cohort.",
+            "files": [
+                {
+                    "name": "AD/Dementia SumStats (HTTP)",
+                    "uri": "https://pan-ukb-us-east-1.s3.amazonaws.com/sumstats_release/phenotypes/G6_ALZHEIMER.gz"
+                }
+            ]
+        }
+    ]
+}

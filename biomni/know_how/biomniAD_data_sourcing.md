@@ -128,12 +128,24 @@ Below are the dataset titles currently present in the local BiomniAD catalogs. R
 - NG00180 Four Large-Scale Plasma pQTL and mQTL Atlases
 - NG00182 Genetic Determinants of CSF and Plasma ATN Biomarkers in Multi-Ancestry Cohorts
 
-### Sinai/Other
+### Sinai/Other (Huang Lab)
 - RADR – Repository for Rare Alzheimer’s Disease and Related Dementia Variants
 - SingleBrain – Single-nucleus eQTL Meta-analysis across Human Brain Cohorts
-- GCST90027158 – New insights into the genetic etiology of Alzheimer’s disease and related dementias (Bellenguez et al., 2022)
-- isoMiGA – Isoform and Gene-level Counts and TPM in Short-read Human Microglia
-- isoMiGA – Expression and Splicing QTL Summary Statistics in Human Microglia
+- isoMiGA – Microglia Genomic Atlas (Expression/Splicing QTLs)
+
+### Major Open Discovery Datasets (External)
+- **SEA-AD** – Seattle Alzheimer’s Disease Brain Cell Atlas (snRNA-seq, ATAC-seq, Pathology)
+- **ssREAD** – Integrated Single-cell and Spatial RNA-seq Database for AD
+- **HCP** – Human Connectome Project (Structural/Functional MRI)
+- **ABC Atlas** – Allen Brain Cell Atlas / BRAIN Initiative Cell Census
+
+## Major AD Discovery Portals (External)
+If local catalogs don't suffice, explore these high-impact portals:
+- **ssREAD** ([bmblx.bmi.osumc.edu/ssread/](https://bmblx.bmi.osumc.edu/ssread/)): Largest integrated scRNA-seq/Spatial database for AD.
+- **Alzheimer DataLENS** ([alzdatalens.partners.org](https://alzdatalens.partners.org)): Harmonized analytics for AMP-AD and other omics.
+- **SEA-AD Portal** ([sea-ad.org](https://sea-ad.org)): Comprehensive brain cell atlas for AD pathology.
+- **AD Knowledge Portal** ([adknowledgeportal.org](https://adknowledgeportal.org)): Home of AMP-AD (Synapse account recommended).
+- **HCP Open Access** (S3: `s3://hcp-openaccess/`): Huge repository of MRI data.
 
 ## CRISPRbrain API
 CRISPRbrain provides access to CRISPR screening data of cells in the brain.
