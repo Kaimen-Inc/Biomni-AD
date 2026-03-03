@@ -189,6 +189,39 @@ pip install "gradio>=5.0,<6.0"
 - `server_name="127.0.0.1"` - Localhost only (default: "0.0.0.0")
 - `require_verification=True` - Require access code (default: "Biomni2025")
 
+#### 3. Chainlit Interactive UI (Recommended)
+
+Biomni also ships a **Chainlit**-based UI with an interactive **plan-then-approve** workflow:
+
+1. Before executing, the agent generates a numbered research plan.
+2. You review the plan and choose **Approve & Execute**, **Revise Plan**, or **Cancel**.
+3. After approval, the full ReAct loop runs with each step shown as a collapsible trace (Thinking → Code → Observation → Answer).
+
+**Setup (one-time):**
+```bash
+# Inside the biomni_e1 environment
+conda activate biomni_e1
+pip install "chainlit>=1.0"
+```
+
+**Launch:**
+```bash
+# Works from any shell state — no need to manually activate biomni_e1 first.
+# The script always uses biomni_e1's Python via `conda run`, so a .venv
+# active in the same shell cannot shadow the wrong interpreter.
+bash run_chainlit.sh                   # opens http://localhost:8000
+bash run_chainlit.sh --port 8080       # custom port
+bash run_chainlit.sh --headless        # no browser auto-open (servers/CI)
+```
+
+**Environment variables (optional):**
+| Variable | Default | Description |
+|---|---|---|
+| `BIOMNI_LLM` | `claude-sonnet-4-5` | LLM model used by both agents |
+| `BIOMNI_PATH` | `./data` | Data directory for the agent |
+
+> **Note:** Always use `bash run_chainlit.sh` rather than calling `chainlit run chainlit_app.py` directly. The script pins execution to `biomni_e1`'s Python via `conda run`, which is necessary when a virtualenv (`.venv`) is also active in the same shell.
+
 #### Controlling Datalake Loading
 
 By default, Biomni automatically downloads the datalake files (~11GB) when you create an agent. You can control this behavior:

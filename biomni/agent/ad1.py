@@ -131,10 +131,36 @@ class AD1(A1):
         # Move generated files
         final_files = self._get_all_files(os.getcwd())
         new_files = final_files - initial_files
+
+        allowed_output_extensions = {
+            ".png", ".jpg", ".jpeg", ".gif", ".bmp", ".webp", ".svg", ".pdf",
+            ".csv", ".tsv", ".xlsx", ".xls", ".json", ".jsonl", ".txt", ".md",
+            ".html", ".parquet", ".npy", ".npz", ".pkl", ".pt", ".h5", ".hdf5",
+            ".rds", ".loom", ".h5ad",
+        }
+        excluded_path_parts = {
+            "runs", ".venv", "venv", "env", ".git", "__pycache__", ".chainlit",
+            "site-packages", "dist-info", "node_modules",
+        }
+
+        def is_generated_output_file(file_path: str) -> bool:
+            rel_path = os.path.relpath(file_path, os.getcwd())
+            rel_parts = Path(rel_path).parts
+
+            # Skip hidden/system/environment paths.
+            if any(part.startswith(".") for part in rel_parts[:-1]):
+                return False
+            if any(part in excluded_path_parts for part in rel_parts):
+                return False
+
+            # Keep only likely end-user output artifact types.
+            return Path(file_path).suffix.lower() in allowed_output_extensions
+
+        new_output_files = [f for f in sorted(new_files) if is_generated_output_file(f)]
         
-        if new_files:
-            print(f"\n📦 New files generated ({len(new_files)}):")
-            for file_path in new_files:
+        if new_output_files:
+            print(f"\n📦 New output files generated ({len(new_output_files)}):")
+            for file_path in new_output_files:
                 try:
                     rel_path = os.path.relpath(file_path, os.getcwd())
                     dest_path = os.path.join(run_dir, os.path.basename(file_path))
@@ -149,7 +175,7 @@ class AD1(A1):
                 except Exception as e:
                     print(f"  ⚠️ Failed to move {file_path}: {e}")
         else:
-            print("  (No new files generated to save)")
+            print("  (No new output files generated to save)")
 
         try:
             console.print(Panel(f"[bold green]✅ Run {run_id} completed.[/bold green]", border_style="green"))
@@ -278,10 +304,17 @@ class AD1(A1):
     def _get_all_files(self, directory):
         """Recursively get all files in a directory, ignoring system and run directories."""
         file_list = []
+        excluded_dirs = {
+            "runs", ".git", "__pycache__", ".gemini", ".venv", "venv", "env",
+            ".chainlit", "node_modules", "site-packages",
+        }
+
         for root, dirs, files in os.walk(directory):
-            # Safe ignore patterns
-            if "runs" in root or ".git" in root or "__pycache__" in root or ".gemini" in root:
-                continue
+            # Prune ignored directories early.
+            dirs[:] = [
+                d for d in dirs
+                if not d.startswith(".") and d not in excluded_dirs
+            ]
                 
             for file in files:
                 # Ignore hidden files

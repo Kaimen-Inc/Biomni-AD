@@ -48,6 +48,11 @@ def _capture_matplotlib_plots():
     """Capture any matplotlib plots that might have been generated during execution."""
     global _captured_plots
     try:
+        import matplotlib
+
+        # Enforce a headless backend for threaded/server execution contexts.
+        if matplotlib.get_backend().lower() != "agg":
+            matplotlib.use("Agg", force=True)
         import matplotlib.pyplot as plt
 
         # Check if there are any active figures
@@ -81,6 +86,12 @@ def _capture_matplotlib_plots():
 def _apply_matplotlib_patches():
     """Apply simple monkey patches to matplotlib functions to automatically capture plots."""
     try:
+        import matplotlib
+
+        # On macOS, GUI backends (e.g. MacOSX) crash when used outside the main thread.
+        # Biomni executes Python snippets in worker threads, so force a non-GUI backend.
+        if matplotlib.get_backend().lower() != "agg":
+            matplotlib.use("Agg", force=True)
         import matplotlib.pyplot as plt
 
         # Only patch if matplotlib is available and not already patched
