@@ -35,6 +35,11 @@ Tools are implemented as Python functions in `biomni/tool/XXX.py`, organized by 
 
 ### 📊 Adding New Data
 
+**Persistence note (important):**
+- Biomni now persists custom data registrations in a local index under the data lake directory (`_custom_data_index.json`).
+- Any file already present in the local data lake is auto-discoverable by A1/AD1 in future sessions.
+- To maximize portability across machines, register data paths relative to the data lake root when possible.
+
 If the data source has web API, follow this process:
 
 **Steps:**

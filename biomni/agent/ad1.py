@@ -3,6 +3,7 @@ import glob
 import json
 import getpass
 import platform
+import re
 from typing import Any
 from pathlib import Path
 from datetime import datetime
@@ -37,6 +38,57 @@ class AD1(A1):
             "Alzheimer", "AD", "dementia", "MCI", "amyloid", "tau", 
             "neurodegeneration", "cognition"
         ]
+        self._enforce_local_data_priority()
+
+    def _build_local_data_priority_instruction(self) -> str:
+        """Build AD1 local-data-first policy block for the system prompt."""
+        local_items = []
+        if hasattr(self, "_get_data_lake_items"):
+            local_items = self._get_data_lake_items()
+
+        preview_limit = 25
+        preview = "\n".join(f"- {item}" for item in local_items[:preview_limit])
+        if len(local_items) > preview_limit:
+            preview += f"\n- ... and {len(local_items) - preview_limit} more local files"
+        if not preview:
+            preview = "- No local data lake files detected yet."
+
+        return f"""
+### AD1_LOCAL_DATA_POLICY_START
+AD1 GLOBAL PRIORITY (APPLIES TO ALL TASKS):
+1. Local data lake first: always inspect and use locally available data before web search.
+2. External sources second: use web/literature/databases only to supplement missing local evidence.
+3. Code generation last: write custom code only when built-in tools and available data are insufficient.
+4. Never fabricate data. If local data is missing, explicitly state the gap.
+
+Current locally available data lake files: {len(local_items)}
+{preview}
+### AD1_LOCAL_DATA_POLICY_END
+""".strip()
+
+    def _enforce_local_data_priority(self) -> None:
+        """Ensure local-data-first policy is always present even after prompt updates."""
+        if not hasattr(self, "system_prompt") or not self.system_prompt:
+            return
+
+        policy_block = self._build_local_data_priority_instruction()
+        self.system_prompt = re.sub(
+            r"### AD1_LOCAL_DATA_POLICY_START.*?### AD1_LOCAL_DATA_POLICY_END\\n?",
+            "",
+            self.system_prompt,
+            flags=re.DOTALL,
+        ).strip()
+        self.system_prompt = f"{policy_block}\n\n{self.system_prompt}"
+
+    def configure(self, *args, **kwargs):
+        """Configure AD1 and enforce local-data-first policy for all tasks."""
+        super().configure(*args, **kwargs)
+        self._enforce_local_data_priority()
+
+    def update_system_prompt_with_selected_resources(self, selected_resources):
+        """Update prompt and then re-apply AD1 global local-data-first policy."""
+        super().update_system_prompt_with_selected_resources(selected_resources)
+        self._enforce_local_data_priority()
         
     def go(self, prompt):
         """Execute the agent with the given prompt, injecting AD context if relevant."""
@@ -358,6 +410,7 @@ class AD1(A1):
                 
                 # Update the system prompt
                 self.system_prompt += ad_instruction
+                self._enforce_local_data_priority()
                 
                 # Also update the app's system message if it's already compiled
                 # Note: In A1.go(), the system prompt is passed to the graph. 
@@ -452,6 +505,53 @@ class AD1(A1):
                 else:
                     md_list += f"**Run #{run_num}** (`{r}`)\n\n"
             return md_list
+
+        def get_local_data_summary():
+            """Get a brief markdown summary of local data available to AD1."""
+            try:
+                local_items = self._get_data_lake_items() if hasattr(self, "_get_data_lake_items") else []
+            except Exception:
+                local_items = []
+
+            lines = ["### 💾 Local Data", f"**{len(local_items)} local file(s) available**"]
+            preview_limit = 20
+            if local_items:
+                for item in local_items[:preview_limit]:
+                    lines.append(f"- `{item}`")
+                if len(local_items) > preview_limit:
+                    lines.append(f"- ... and {len(local_items) - preview_limit} more")
+            else:
+                lines.append("- No local data files detected yet")
+
+            if hasattr(self, "data_lake_dir"):
+                lines.append(f"\nPath: `{self.data_lake_dir}`")
+
+            user_data_path = os.getenv("BIOMNI_USER_DATA_PATH", "").strip()
+            if user_data_path:
+                lines.append("\n### 👤 User Data Folder")
+                lines.append(f"Path: `{user_data_path}`")
+                if os.path.isdir(user_data_path):
+                    try:
+                        entries = sorted(
+                            [name for name in os.listdir(user_data_path) if not name.startswith(".")]
+                        )
+                    except OSError:
+                        entries = []
+
+                    if entries:
+                        preview_user_limit = 10
+                        for name in entries[:preview_user_limit]:
+                            lines.append(f"- `{name}`")
+                        if len(entries) > preview_user_limit:
+                            lines.append(f"- ... and {len(entries) - preview_user_limit} more")
+                    else:
+                        lines.append("- (empty)")
+                else:
+                    lines.append("- (path not found)")
+            return "\n".join(lines)
+
+        def refresh_sidebar():
+            return get_runs_list(), get_local_data_summary()
 
         def generate_response(prompt_input, inner_history=None, main_history=None):
             if main_history is None:
@@ -891,8 +991,9 @@ class AD1(A1):
                         gr.Markdown("## 📂 Explorer")
                         
                         runs_list = gr.Markdown(value=get_runs_list())
+                        local_data_summary = gr.Markdown(value=get_local_data_summary())
                         refresh_runs_btn = gr.Button("Refresh", size="sm", variant="secondary")
-                        refresh_runs_btn.click(fn=get_runs_list, outputs=[runs_list])
+                        refresh_runs_btn.click(fn=refresh_sidebar, outputs=[runs_list, local_data_summary])
 
                     # --- Center: Agent Chat ---
                     with gr.Column(scale=3, elem_id="chat-area"):

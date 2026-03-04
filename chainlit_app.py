@@ -113,6 +113,273 @@ FORCE_AGENT = os.getenv("BIOMNI_AGENT", "").lower()  # "a1" | "ad1" | ""
 
 SUPPORTED_IMAGE_EXTENSIONS = (".png", ".jpg", ".jpeg", ".gif", ".bmp", ".webp")
 
+# Optional user-specified data folder shown alongside the datalake in the portal
+USER_DATA_PATH = os.getenv("BIOMNI_USER_DATA_PATH", "").strip()
+CHAINLIT_MD_PATH = Path(__file__).with_name("chainlit.md")
+_WELCOME_DATASET_BLOCK_START = "<!-- BIOMNI_LOCAL_DATASET_SECTION_START -->"
+_WELCOME_DATASET_BLOCK_END = "<!-- BIOMNI_LOCAL_DATASET_SECTION_END -->"
+
+
+def _list_path_entries(path: str, max_items: int = 40) -> list[str]:
+    """List non-hidden entries for a path (brief, non-recursive)."""
+    if not path or not os.path.isdir(path):
+        return []
+    try:
+        entries = sorted(name for name in os.listdir(path) if not name.startswith("."))
+    except OSError:
+        return []
+    return entries[:max_items]
+
+
+def _list_local_data_lake_files(base_path: str, max_items: int = 30) -> list[str]:
+    """List local data lake files (relative paths) from common Biomni folders."""
+    candidates = [
+        Path(base_path) / "biomni_data" / "data_lake",
+        Path(base_path) / "data_lake",
+    ]
+
+    data_lake_dir = next((c for c in candidates if c.is_dir()), None)
+    if data_lake_dir is None:
+        return []
+
+    items: list[str] = []
+    for root, _dirs, files in os.walk(data_lake_dir):
+        for file_name in files:
+            if file_name.startswith("."):
+                continue
+            full_path = Path(root) / file_name
+            rel = full_path.relative_to(data_lake_dir).as_posix()
+            if rel == "_custom_data_index.json":
+                continue
+            items.append(rel)
+
+    items = sorted(set(items))
+    return items[:max_items]
+
+
+def _build_welcome_local_dataset_section() -> str:
+    """Build markdown block displayed at the bottom of the Chainlit welcome page."""
+    configured_data_root = os.getenv("BIOMNI_DATA_PATH") or os.getenv("BIOMNI_PATH") or DEFAULT_PATH
+    root_entries = _list_path_entries(configured_data_root, max_items=12)
+    data_lake_files = _list_local_data_lake_files(configured_data_root, max_items=20)
+
+    lines: list[str] = []
+    lines.append("### Available Local Datasets")
+    lines.append("")
+    lines.append(f"- BIOMNI_DATA_PATH: `{configured_data_root}`")
+
+    if root_entries:
+        lines.append("- Root entries:")
+        lines.extend([f"  - `{name}`" for name in root_entries])
+    else:
+        lines.append("- Root entries: *(none found)*")
+
+    lines.append(f"- Data lake files detected: **{len(data_lake_files)}**")
+    if data_lake_files:
+        lines.extend([f"  - `{name}`" for name in data_lake_files])
+
+    if USER_DATA_PATH:
+        user_entries = _list_path_entries(USER_DATA_PATH, max_items=10)
+        lines.append(f"- User data path: `{USER_DATA_PATH}`")
+        if user_entries:
+            lines.append("- User data entries:")
+            lines.extend([f"  - `{name}`" for name in user_entries])
+        else:
+            lines.append("- User data entries: *(none found)*")
+
+    return "\n".join(lines)
+
+
+def _refresh_chainlit_welcome_markdown() -> None:
+    """Append or replace a managed local-dataset section in chainlit.md."""
+    try:
+        if CHAINLIT_MD_PATH.exists():
+            original = CHAINLIT_MD_PATH.read_text(encoding="utf-8")
+        else:
+            original = (
+                "## Hi, I'm Biomni-AD 🧠\n"
+                "#### Your AI co-scientist on the journey to conquer Alzheimer's disease.\n\n"
+                "Tell me a research question to get started.\n"
+            )
+
+        managed_pattern = (
+            rf"\n?{re.escape(_WELCOME_DATASET_BLOCK_START)}.*?{re.escape(_WELCOME_DATASET_BLOCK_END)}\n?"
+        )
+        base = re.sub(managed_pattern, "\n", original, flags=re.DOTALL).rstrip()
+
+        dataset_section = _build_welcome_local_dataset_section()
+        managed_block = (
+            f"\n\n{_WELCOME_DATASET_BLOCK_START}\n"
+            f"{dataset_section}\n"
+            f"{_WELCOME_DATASET_BLOCK_END}\n"
+        )
+
+        CHAINLIT_MD_PATH.write_text(base + managed_block, encoding="utf-8")
+    except Exception as exc:
+        print(f"Warning: Could not refresh chainlit welcome markdown: {exc}")
+
+
+_refresh_chainlit_welcome_markdown()
+
+# ---------------------------------------------------------------------------
+# Dataset listing helper
+# ---------------------------------------------------------------------------
+
+_DATALAKE_CATEGORIES: list[tuple[str, list[str]]] = [
+    ("Protein Interactions", [
+        "affinity_capture-ms", "affinity_capture-rna", "co-fractionation",
+        "proximity_label-ms", "reconstituted_complex", "two-hybrid",
+        "Virus-Host_PPI_P-HIPSTER_2020",
+    ]),
+    ("Drug & Compound Data", [
+        "BindingDB_All_202409", "broad_repurposing_hub_molecule_with_smiles",
+        "broad_repurposing_hub_phase_moa_target_info", "enamine_cloud_library_smiles",
+        "ddinter_alimentary_tract_metabolism", "ddinter_antineoplastic",
+        "ddinter_antiparasitic", "ddinter_blood_organs", "ddinter_dermatological",
+        "ddinter_hormonal", "ddinter_respiratory", "ddinter_various",
+    ]),
+    ("Gene Expression & Cancer", [
+        "DepMap_CRISPRGeneDependency", "DepMap_CRISPRGeneEffect", "DepMap_Model",
+        "DepMap_OmicsExpressionProteinCodingGenesTPMLogp1",
+        "gtex_tissue_gene_tpm", "proteinatlas",
+    ]),
+    ("Genomics & Genetic Variants", [
+        "genebass_missense_LC_filtered", "genebass_pLoF_filtered",
+        "genebass_synonymous_filtered", "gwas_catalog", "variant_table",
+        "sgRNA_KO_SP_human", "sgRNA_KO_SP_mouse",
+    ]),
+    ("Gene Sets & Functional Annotations", [
+        "msigdb_human_c1_positional_geneset", "msigdb_human_c2_curated_geneset",
+        "msigdb_human_c3_regulatory_target_geneset",
+        "msigdb_human_c3_subset_transcription_factor_targets_from_GTRD",
+        "msigdb_human_c4_computational_geneset", "msigdb_human_c5_ontology_geneset",
+        "msigdb_human_c6_oncogenic_signature_geneset",
+        "msigdb_human_c7_immunologic_signature_geneset",
+        "msigdb_human_c8_celltype_signature_geneset", "msigdb_human_h_hallmark_geneset",
+        "mousemine_m1_positional_geneset", "mousemine_m2_curated_geneset",
+        "mousemine_m3_regulatory_target_geneset", "mousemine_m5_ontology_geneset",
+        "mousemine_m8_celltype_signature_geneset", "mousemine_mh_hallmark_geneset",
+        "go-plus", "gene_info",
+    ]),
+    ("Disease & Phenotype", [
+        "DisGeNET", "omim", "hp", "kg",
+    ]),
+    ("Cell Biology", [
+        "czi_census_datasets_v4", "marker_celltype",
+    ]),
+    ("RNA Biology", [
+        "miRDB_v6.0_results", "miRTarBase_microRNA_target_interaction",
+        "miRTarBase_microRNA_target_interaction_pubmed_abtract",
+        "miRTarBase_MicroRNA_Target_Sites",
+    ]),
+    ("Genetic Interactions", [
+        "dosage_growth_defect", "genetic_interaction",
+        "synthetic_growth_defect", "synthetic_lethality", "synthetic_rescue",
+    ]),
+    ("Immunology & Other", [
+        "McPAS-TCR", "txgnn_name_mapping", "txgnn_prediction",
+    ]),
+]
+
+
+def _build_dataset_listing(agent) -> str:
+    """Return a plain-text listing for Chainlit sidebar text element."""
+    data_lake_dict: dict = getattr(agent, "data_lake_dict", {})
+    local_items: list[str] = []
+    if hasattr(agent, "_get_data_lake_items"):
+        try:
+            local_items = agent._get_data_lake_items()
+        except Exception:
+            local_items = []
+    if not local_items:
+        local_items = sorted(data_lake_dict.keys())
+
+    lines: list[str] = [
+        "🗂️  BIOMNI LOCAL DATA INVENTORY",
+        "━━━━━━━━━━━━━",
+    ]
+
+    # BIOMNI_DATA_PATH root folder (user may place files directly here)
+    configured_data_root = os.getenv("BIOMNI_DATA_PATH") or os.getenv("BIOMNI_PATH") or DEFAULT_PATH
+    lines.append("")
+    lines.append("📍 DATA ROOT")
+    lines.append(f"Path: {configured_data_root}")
+    root_entries = _list_path_entries(configured_data_root, max_items=25)
+    if root_entries:
+        lines.append(f"Items: {len(root_entries)}")
+        for name in root_entries:
+            lines.append(f"  • {name}")
+    else:
+        lines.append("Items: (none found or path unavailable)")
+    lines.append("")
+
+    if local_items:
+        lines.append("🧪 DATA LAKE")
+        lines.append(f"Detected files: {len(local_items)}")
+        categorised: set[str] = set()
+
+        for category, stems in _DATALAKE_CATEGORIES:
+            matched = []
+            for filename in local_items:
+                desc = data_lake_dict.get(filename, f"Local data lake file: {filename}")
+                stem = Path(filename).stem
+                if stem in stems:
+                    matched.append((filename, desc))
+                    categorised.add(filename)
+            if matched:
+                lines.append(f"  {category}")
+                for filename, desc in sorted(matched):
+                    lines.append(f"    • {filename}")
+                    lines.append(f"      {desc}")
+                lines.append("")
+
+        # Any remaining files not in the category map
+        uncategorised = [
+            (filename, data_lake_dict.get(filename, f"Local data lake file: {filename}"))
+            for filename in local_items
+            if filename not in categorised
+        ]
+        if uncategorised:
+            lines.append("  Other")
+            for filename, desc in sorted(uncategorised):
+                lines.append(f"    • {filename}")
+                lines.append(f"      {desc}")
+            lines.append("")
+    else:
+        lines.append("🧪 DATA LAKE")
+        lines.append("Detected files: 0 (not yet loaded)")
+        lines.append("")
+
+    # User-specified folder
+    if USER_DATA_PATH:
+        folder = Path(USER_DATA_PATH)
+        lines.append("👤 USER DATA FOLDER")
+        lines.append(f"Path: {folder}")
+        if folder.is_dir():
+            entries = sorted(p for p in folder.iterdir() if not p.name.startswith("."))
+            if entries:
+                lines.append(f"Items: {len(entries)}")
+                for p in entries:
+                    size = ""
+                    if p.is_file():
+                        try:
+                            mb = p.stat().st_size / (1024 * 1024)
+                            size = f" ({mb:.1f} MB)" if mb >= 0.1 else f" ({p.stat().st_size / 1024:.1f} KB)"
+                        except OSError:
+                            pass
+                    icon = "📁" if p.is_dir() else "📄"
+                    lines.append(f"  • {icon} {p.name}{size}")
+            else:
+                lines.append("Items: (folder is empty)")
+        else:
+            lines.append("Items: (path does not exist or is not a directory)")
+        lines.append("")
+
+    lines.append("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+    lines.append("Tip: put files in BIOMNI_DATA_PATH root or biomni_data/data_lake")
+
+    return "\n".join(lines)
+
 
 # ---------------------------------------------------------------------------
 # Async helpers
@@ -252,12 +519,20 @@ async def on_chat_start():
         cl.user_session.set("agent_type", agent_type)
         cl.user_session.set("history", [])
         cl.user_session.set("thread_id", str(uuid.uuid4()))
+        cl.user_session.set("dataset_listing", _build_dataset_listing(agent))
+        cl.user_session.set("dataset_panel_shown", False)
     except Exception as exc:
         await cl.Message(content=f"Failed to initialize {label}: {exc}").send()
         return
 
-    # No greeting message sent here — the centered welcome screen (chainlit.md)
-    # stays visible until the user sends their first message.
+    # Render local-data panel in the native sidebar at startup,
+    # keeping the center welcome/search screen unchanged.
+    sidebar_content = cl.user_session.get("dataset_listing") or _build_dataset_listing(agent)
+    await cl.ElementSidebar.set_title("Local Data")
+    await cl.ElementSidebar.set_elements([
+        cl.Text(name="Local Data", content=sidebar_content),
+    ])
+    cl.user_session.set("dataset_panel_shown", True)
 
 
 # ---------------------------------------------------------------------------
@@ -339,11 +614,10 @@ async def on_message(message: cl.Message):
         cl.user_session.set("history", history)
 
     # ------------------------------------------------------------------
-    # Phase 5: Artifact saving (AD1 only)
+    # Phase 5: Artifact saving (all agents)
     # ------------------------------------------------------------------
-    if agent_type == "ad1" and final_state and hasattr(agent, "_save_run_artifacts"):
-        await _save_ad1_artifacts(agent, final_state, initial_files)
-
+    if final_state and hasattr(agent, "_save_run_artifacts"):
+        await _save_run_artifacts_for_agent(agent, final_state, initial_files)
 
 # ---------------------------------------------------------------------------
 # Interactive planning helpers
@@ -546,6 +820,11 @@ async def _display_images(observation: str):
 
 async def _save_ad1_artifacts(agent, final_state: dict, initial_files: set):
     """Sync AD1 run artifacts to ./runs/ and notify the user."""
+    await _save_run_artifacts_for_agent(agent, final_state, initial_files)
+
+
+async def _save_run_artifacts_for_agent(agent, final_state: dict, initial_files: set):
+    """Save run artifacts to ./runs/ for any agent and notify the user."""
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     run_id = f"run_{timestamp}"
     runs_root = os.path.abspath(os.path.join(os.getcwd(), "runs"))

@@ -1,7 +1,9 @@
 import glob
 import inspect
+import json
 import os
 import re
+import shutil
 from collections.abc import Generator
 from datetime import datetime
 from pathlib import Path
@@ -65,6 +67,7 @@ class A1:
         api_key: str | None = None,
         commercial_mode: bool | None = None,
         expected_data_lake_files: list | None = None,
+        auto_network_limited_mode: bool | None = None,
     ):
         """Initialize the biomni agent.
 
@@ -96,6 +99,8 @@ class A1:
             api_key = default_config.api_key if default_config.api_key else "EMPTY"
         if commercial_mode is None:
             commercial_mode = default_config.commercial_mode
+        if auto_network_limited_mode is None:
+            auto_network_limited_mode = default_config.auto_network_limited_mode
 
         # Import appropriate env_desc based on commercial_mode
         if commercial_mode:
@@ -192,6 +197,14 @@ class A1:
             print("Note: Some tools may require datalake files to function properly.")
 
         self.path = os.path.join(path, "biomni_data")
+        self.data_lake_dir = os.path.join(self.path, "data_lake")
+        self.custom_data_index_path = os.path.join(self.data_lake_dir, "_custom_data_index.json")
+        self.auto_network_limited_mode = auto_network_limited_mode
+        self.network_limited_mode = False
+        self.network_limited_mode_trigger = None
+        self._custom_data = {}
+        self._load_custom_data_index()
+        self._sync_data_lake_descriptions()
         module2api = read_module2api()
 
         self.llm = get_llm(
@@ -221,6 +234,288 @@ class A1:
         # Add timeout parameter
         self.timeout_seconds = timeout_seconds  # 10 minutes default timeout
         self.configure()
+
+    def _build_network_limited_instruction(self) -> str:
+        """Build policy text for network-limited operation mode."""
+        trigger_line = (
+            f"Trigger: {self.network_limited_mode_trigger}"
+            if self.network_limited_mode_trigger
+            else "Trigger: network/API availability issues detected"
+        )
+        return f"""
+### NETWORK_LIMITED_MODE_START
+NETWORK-LIMITED MODE IS ACTIVE.
+{trigger_line}
+
+For all analyses in this run:
+1. Prioritize local datasets first (data lake files, user-provided files, and generated local outputs).
+2. Prioritize locally installed tools and libraries via Python/R/Bash execution.
+3. Treat web search and remote API calls as optional fallback only after local attempts are exhausted.
+4. If a remote call fails, continue using local-only methods and explicitly state limitations.
+### NETWORK_LIMITED_MODE_END
+""".strip()
+
+    def _enforce_network_limited_policy(self) -> None:
+        """Ensure network-limited policy remains present in the system prompt."""
+        if not self.network_limited_mode or not getattr(self, "system_prompt", None):
+            return
+
+        policy_block = self._build_network_limited_instruction()
+        self.system_prompt = re.sub(
+            r"### NETWORK_LIMITED_MODE_START.*?### NETWORK_LIMITED_MODE_END\\n?",
+            "",
+            self.system_prompt,
+            flags=re.DOTALL,
+        ).strip()
+        self.system_prompt = f"{policy_block}\n\n{self.system_prompt}"
+
+    def _enable_network_limited_mode(self, trigger: str | None = None) -> None:
+        """Enable network-limited mode and update system prompt accordingly."""
+        if not self.auto_network_limited_mode:
+            return
+
+        if trigger:
+            self.network_limited_mode_trigger = trigger[:300]
+
+        if not self.network_limited_mode:
+            print("⚠️ Network/API failures detected. Switching to network-limited local-first mode.")
+
+        self.network_limited_mode = True
+        self._enforce_network_limited_policy()
+
+    def _is_network_or_api_failure(self, text: str) -> bool:
+        """Detect common network/API failure signatures in execution output."""
+        if not text:
+            return False
+
+        lowered = text.lower()
+        signatures = [
+            "connection error",
+            "connection aborted",
+            "connection refused",
+            "failed to establish a new connection",
+            "name resolution",
+            "temporary failure in name resolution",
+            "nodename nor servname provided",
+            "max retries exceeded",
+            "read timed out",
+            "connect timeout",
+            "timeout",
+            "httpconnectionpool",
+            "httpsconnectionpool",
+            "requests.exceptions",
+            "api is unavailable",
+            "service unavailable",
+            "bad gateway",
+            "too many requests",
+            "rate limit",
+            "network is unreachable",
+            "no route to host",
+            "ssl",
+            "dns",
+        ]
+        return any(sig in lowered for sig in signatures)
+
+    def _is_network_dependent_tool(self, tool: Any) -> bool:
+        """Heuristic check for tools that likely rely on remote APIs or web calls."""
+        if isinstance(tool, dict):
+            text = " ".join(
+                [
+                    str(tool.get("name", "")),
+                    str(tool.get("description", "")),
+                    str(tool.get("module", "")),
+                ]
+            ).lower()
+        else:
+            text = " ".join(
+                [
+                    str(getattr(tool, "name", "")),
+                    str(getattr(tool, "description", "")),
+                    str(getattr(tool, "module_name", "")),
+                ]
+            ).lower()
+
+        remote_keywords = [
+            "api",
+            "web",
+            "internet",
+            "online",
+            "http",
+            "download",
+            "search",
+            "pubmed",
+            "biorxiv",
+            "google",
+            "url",
+            "request",
+            "database query",
+        ]
+        return any(keyword in text for keyword in remote_keywords)
+
+    def _prioritize_local_tools(self, tools: list[Any]) -> list[Any]:
+        """Reorder tools to place local/non-network tools before remote/network-heavy tools."""
+        local_tools: list[Any] = []
+        network_tools: list[Any] = []
+
+        for tool in tools:
+            if self._is_network_dependent_tool(tool):
+                network_tools.append(tool)
+            else:
+                local_tools.append(tool)
+
+        return local_tools + network_tools
+
+    def _get_data_lake_items(self) -> list[str]:
+        """Return all files currently present in the data lake (recursive)."""
+        items: list[str] = []
+
+        if not os.path.isdir(self.data_lake_dir):
+            return items
+
+        for root, _dirs, files in os.walk(self.data_lake_dir):
+            for file_name in files:
+                full_path = os.path.join(root, file_name)
+                relative_path = os.path.relpath(full_path, self.data_lake_dir).replace(os.sep, "/")
+                if relative_path == "_custom_data_index.json":
+                    continue
+                items.append(relative_path)
+
+        return sorted(set(items))
+
+    def _resolve_data_path(self, data_path: str) -> str:
+        """Resolve a data path to an absolute path with data-lake-first semantics."""
+        if not data_path:
+            return data_path
+
+        if os.path.isabs(data_path):
+            return os.path.abspath(data_path)
+
+        candidate_in_data_lake = os.path.join(self.data_lake_dir, data_path)
+        if os.path.exists(candidate_in_data_lake):
+            return os.path.abspath(candidate_in_data_lake)
+
+        if os.path.exists(data_path):
+            return os.path.abspath(data_path)
+
+        return os.path.abspath(candidate_in_data_lake)
+
+    def _path_for_index(self, absolute_or_relative_path: str) -> str:
+        """Store data-lake-local paths as relative strings in the index for portability."""
+        if not absolute_or_relative_path:
+            return absolute_or_relative_path
+
+        path_obj = Path(absolute_or_relative_path)
+        if not path_obj.is_absolute():
+            return absolute_or_relative_path.replace("\\", "/")
+
+        try:
+            rel = path_obj.relative_to(Path(self.data_lake_dir))
+            return str(rel).replace("\\", "/")
+        except ValueError:
+            return str(path_obj)
+
+    def _load_custom_data_index(self) -> None:
+        """Load custom data metadata persisted from previous sessions."""
+        if not os.path.exists(self.custom_data_index_path):
+            return
+
+        try:
+            with open(self.custom_data_index_path, encoding="utf-8") as f:
+                payload = json.load(f)
+        except Exception as e:
+            print(f"Warning: Failed to read custom data index: {e}")
+            return
+
+        entries = []
+        if isinstance(payload, dict) and isinstance(payload.get("items"), list):
+            entries = payload["items"]
+        elif isinstance(payload, dict):
+            entries = [
+                {"name": name, "path": info.get("path", name), "description": info.get("description", "")}
+                for name, info in payload.items()
+                if isinstance(info, dict)
+            ]
+        elif isinstance(payload, list):
+            entries = payload
+
+        loaded_count = 0
+        for entry in entries:
+            if not isinstance(entry, dict):
+                continue
+
+            name = entry.get("name") or ""
+            raw_path = entry.get("path") or name
+            description = entry.get("description") or f"Custom data item: {name or raw_path}"
+
+            if not name:
+                name = os.path.basename(raw_path)
+            if not name:
+                continue
+
+            resolved_path = self._resolve_data_path(raw_path)
+            self._custom_data[name] = {"path": resolved_path, "description": description}
+            self.data_lake_dict[name] = description
+            loaded_count += 1
+
+        if loaded_count > 0:
+            print(f"Loaded {loaded_count} custom data item(s) from index")
+
+    def _save_custom_data_index(self) -> None:
+        """Persist custom data metadata so it is available in future sessions."""
+        os.makedirs(self.data_lake_dir, exist_ok=True)
+
+        payload = {
+            "version": 1,
+            "items": [
+                {
+                    "name": name,
+                    "path": self._path_for_index(info.get("path", "")),
+                    "description": info.get("description", ""),
+                }
+                for name, info in sorted(self._custom_data.items())
+            ],
+        }
+
+        tmp_path = self.custom_data_index_path + ".tmp"
+        with open(tmp_path, "w", encoding="utf-8") as f:
+            json.dump(payload, f, indent=2)
+        os.replace(tmp_path, self.custom_data_index_path)
+
+    def _sync_data_lake_descriptions(self) -> None:
+        """Ensure all currently downloaded data-lake files are discoverable by description."""
+        for item in self._get_data_lake_items():
+            if item not in self.data_lake_dict:
+                self.data_lake_dict[item] = f"Local data lake file: {item}"
+
+        if hasattr(self, "_custom_data") and self._custom_data:
+            for name, info in self._custom_data.items():
+                description = info.get("description", f"Custom data item: {name}")
+                self.data_lake_dict[name] = description
+
+                resolved_path = info.get("path", "")
+                if resolved_path:
+                    try:
+                        rel = Path(resolved_path).resolve().relative_to(Path(self.data_lake_dir).resolve())
+                        rel_name = str(rel).replace("\\", "/")
+                        self.data_lake_dict[rel_name] = description
+                    except ValueError:
+                        pass
+
+    def _get_data_lake_resources(self) -> list[dict[str, str]]:
+        """Build data-lake resources with descriptions for prompts and retrieval."""
+        self._sync_data_lake_descriptions()
+        resources: list[dict[str, str]] = []
+
+        for item in self._get_data_lake_items():
+            resources.append({"name": item, "description": self.data_lake_dict.get(item, f"Data lake item: {item}")})
+
+        if hasattr(self, "_custom_data") and self._custom_data:
+            existing_names = {resource["name"] for resource in resources}
+            for name, info in self._custom_data.items():
+                if name not in existing_names:
+                    resources.append({"name": name, "description": info.get("description", f"Data lake item: {name}")})
+
+        return resources
 
     def add_tool(self, api):
         """Add a new tool to the agent's tool registry and make it available for retrieval.
@@ -699,16 +994,32 @@ class A1:
                 # Extract filename from path for storage
                 filename = os.path.basename(file_path) if "/" in file_path else file_path
 
+                resolved_path = self._resolve_data_path(file_path)
+
                 # Store the data with both the full path and description
                 self._custom_data[filename] = {
-                    "path": file_path,
+                    "path": resolved_path,
                     "description": description,
                 }
 
                 # Also add to the data_lake_dict for consistency
                 self.data_lake_dict[filename] = description
 
+                # If this file is inside data_lake, also map its relative path
+                try:
+                    rel = Path(resolved_path).resolve().relative_to(Path(self.data_lake_dir).resolve())
+                    rel_name = str(rel).replace("\\", "/")
+                    self.data_lake_dict[rel_name] = description
+                except ValueError:
+                    pass
+
+                if not os.path.exists(resolved_path):
+                    print(f"Warning: '{resolved_path}' does not exist yet. Metadata is saved for future sessions.")
+
                 print(f"Added data item '{filename}': {description}")
+
+            self._save_custom_data_index()
+            self._sync_data_lake_descriptions()
             self.configure()
             print(f"Successfully added {len(data)} data item(s) to the data lake")
             return True
@@ -769,6 +1080,9 @@ class A1:
 
         if removed:
             print(f"Custom data item '{name}' has been removed")
+            self._save_custom_data_index()
+            self._sync_data_lake_descriptions()
+            self.configure()
         else:
             print(f"Custom data item '{name}' was not found")
 
@@ -1308,25 +1622,12 @@ Each library is listed with its description to help you understand its functiona
         self.self_critic = self_critic
 
         # Get data lake content
-        data_lake_path = self.path + "/data_lake"
-        data_lake_content = glob.glob(data_lake_path + "/*")
-        data_lake_items = [x.split("/")[-1] for x in data_lake_content]
+        data_lake_with_desc = self._get_data_lake_resources()
 
         # data_lake_dict and library_content_dict are already set in __init__
 
         # Prepare tool descriptions
         tool_desc = {i: [x for x in j if x["name"] != "run_python_repl"] for i, j in self.module2api.items()}
-
-        # Prepare data lake items with descriptions
-        data_lake_with_desc = []
-        for item in data_lake_items:
-            description = self.data_lake_dict.get(item, f"Data lake item: {item}")
-            data_lake_with_desc.append({"name": item, "description": description})
-
-        # Add custom data items if they exist
-        if hasattr(self, "_custom_data") and self._custom_data:
-            for name, info in self._custom_data.items():
-                data_lake_with_desc.append({"name": name, "description": info["description"]})
 
         # Prepare library content list including custom software
         library_content_list = list(self.library_content_dict.keys())
@@ -1386,6 +1687,7 @@ Each library is listed with its description to help you understand its functiona
             custom_software=custom_software if custom_software else None,
             know_how_docs=know_how_docs if know_how_docs else None,
         )
+        self._enforce_network_limited_policy()
 
         # Define the nodes
         def generate(state: AgentState) -> AgentState:
@@ -1549,6 +1851,9 @@ Each library is listed with its description to help you understand its functiona
                     print(f"Warning: Could not capture plots from execution: {e}")
                     execution_plots = []
 
+                if self._is_network_or_api_failure(str(result)):
+                    self._enable_network_limited_mode(str(result))
+
                 # Store the execution result with metadata
                 execution_entry = {
                     "triggering_message": last_message,  # The AI message that contained <execute>
@@ -1670,20 +1975,7 @@ Each library is listed with its description to help you understand its functiona
         all_tools = self.tool_registry.tools if hasattr(self, "tool_registry") else []
 
         # 2. Data lake items with descriptions
-        data_lake_path = self.path + "/data_lake"
-        data_lake_content = glob.glob(data_lake_path + "/*")
-        data_lake_items = [x.split("/")[-1] for x in data_lake_content]
-
-        # Create data lake descriptions for retrieval
-        data_lake_descriptions = []
-        for item in data_lake_items:
-            description = self.data_lake_dict.get(item, f"Data lake item: {item}")
-            data_lake_descriptions.append({"name": item, "description": description})
-
-        # Add custom data items to retrieval if they exist
-        if hasattr(self, "_custom_data") and self._custom_data:
-            for name, info in self._custom_data.items():
-                data_lake_descriptions.append({"name": name, "description": info["description"]})
+        data_lake_descriptions = self._get_data_lake_resources()
 
         # 3. Libraries with descriptions - use library_content_dict directly
         library_descriptions = []
@@ -1710,6 +2002,11 @@ Each library is listed with its description to help you understand its functiona
 
         # Use prompt-based retrieval with the agent's LLM
         selected_resources = self.retriever.prompt_based_retrieval(prompt, resources, llm=self.llm)
+
+        if self.network_limited_mode:
+            selected_resources["tools"] = self._prioritize_local_tools(selected_resources["tools"])
+            print("⚠️ Network-limited mode active: prioritizing local tools and datasets.")
+
         print("\n" + "=" * 60)
         print("🔍 RESOURCE RETRIEVAL")
         print("=" * 60)
@@ -1799,6 +2096,21 @@ Each library is listed with its description to help you understand its functiona
         
         if final_state:
             self.raw_log = list(final_state["messages"])
+
+        # Auto-save run artifacts to runs/ directory.
+        # Skip when called from a subclass that manages artifact saving itself
+        # (e.g. AD1 calls super().go() then saves its own artifacts).
+        if type(self) is A1:
+            try:
+                timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+                run_id = f"run_{timestamp}"
+                runs_root = os.path.abspath(os.path.join(os.getcwd(), "runs"))
+                os.makedirs(runs_root, exist_ok=True)
+                current_run_dir = os.path.join(runs_root, run_id)
+                os.makedirs(current_run_dir, exist_ok=True)
+                self._save_run_artifacts(run_id, current_run_dir, set())
+            except Exception as _e:
+                print(f"Warning: Could not save run artifacts: {_e}")
 
         return self.log, message.content
 
@@ -1947,6 +2259,7 @@ Each library is listed with its description to help you understand its functiona
             custom_software=custom_software if custom_software else None,
             know_how_docs=know_how_docs if know_how_docs else None,
         )
+        self._enforce_network_limited_policy()
 
         # Print the raw system prompt for debugging
         # print("\n" + "="*20 + " RAW SYSTEM PROMPT FROM AGENT " + "="*20)
@@ -2071,6 +2384,185 @@ Each library is listed with its description to help you understand its functiona
 
         print(f"Created MCP server with {registered_tools} tools")
         return mcp
+
+    # ---------------------------------------------------------------------------
+    # Run artifact helpers (used by go() and chainlit)
+    # ---------------------------------------------------------------------------
+
+    def _get_all_files(self, directory: str) -> set:
+        """Recursively get all files in directory, excluding system/env folders."""
+        excluded_dirs = {
+            "runs", ".git", "__pycache__", ".gemini", ".venv", "venv", "env",
+            ".chainlit", "node_modules", "site-packages",
+        }
+        result = set()
+        for root, dirs, files in os.walk(directory):
+            dirs[:] = [
+                d for d in dirs
+                if not d.startswith(".") and d not in excluded_dirs
+            ]
+            for fname in files:
+                if not fname.startswith("."):
+                    result.add(os.path.join(root, fname))
+        return result
+
+    def _generate_notebook(self) -> dict:
+        """Generate a Jupyter Notebook structure from self.raw_log."""
+        cells = []
+        cells.append({
+            "cell_type": "markdown",
+            "metadata": {},
+            "source": ["# Biomni A1 Execution Trace\n", f"Run: {datetime.now().strftime('%Y%m%d_%H%M%S')}"]
+        })
+
+        if not hasattr(self, "raw_log") or not self.raw_log:
+            return {"cells": cells, "metadata": {}, "nbformat": 4, "nbformat_minor": 5}
+
+        for msg in self.raw_log:
+            msg_type = getattr(msg, "type", "")
+            msg_content = getattr(msg, "content", "")
+
+            if msg_type in ["human", "system"]:
+                cells.append({
+                    "cell_type": "markdown",
+                    "metadata": {},
+                    "source": [f"**{msg_type.title()}**: {msg_content}"]
+                })
+            elif msg_type == "ai":
+                code_blocks = re.findall(r"<execute>(.*?)</execute>", msg_content, re.DOTALL)
+                thinking = msg_content
+                if code_blocks:
+                    first_tag_pos = msg_content.find("<execute>")
+                    thinking = msg_content[:first_tag_pos].strip()
+                if thinking:
+                    cells.append({
+                        "cell_type": "markdown",
+                        "metadata": {},
+                        "source": [f"**Assistant Reasoning**:\n{thinking}"]
+                    })
+                for code in code_blocks:
+                    cells.append({
+                        "cell_type": "code",
+                        "execution_count": None,
+                        "metadata": {},
+                        "outputs": [],
+                        "source": [code.strip()]
+                    })
+                if hasattr(msg, "tool_calls") and msg.tool_calls:
+                    for tool_call in msg.tool_calls:
+                        tool_name = tool_call.get("name")
+                        tool_args = tool_call.get("args")
+                        if tool_name == "run_python_repl":
+                            cells.append({
+                                "cell_type": "code",
+                                "execution_count": None,
+                                "metadata": {},
+                                "outputs": [],
+                                "source": [tool_args.get("command", "# No code")]
+                            })
+                        else:
+                            cells.append({
+                                "cell_type": "markdown",
+                                "metadata": {},
+                                "source": [f"*Tool Call*: {tool_name}\nArgs: {json.dumps(tool_args)}"]
+                            })
+            elif msg_type == "tool":
+                cells.append({
+                    "cell_type": "markdown",
+                    "metadata": {},
+                    "source": [f"**Observation ({getattr(msg, 'name', 'Tool')})**:\n```\n{msg_content}\n```"]
+                })
+
+        return {
+            "cells": cells,
+            "metadata": {
+                "kernelspec": {"display_name": "Python 3", "language": "python", "name": "python3"},
+                "language_info": {
+                    "codemirror_mode": {"name": "ipython", "version": 3},
+                    "file_extension": ".py",
+                    "mimetype": "text/x-python",
+                    "name": "python",
+                    "nbconvert_exporter": "python",
+                    "pygments_lexer": "ipython3",
+                    "version": "3.8.5"
+                }
+            },
+            "nbformat": 4,
+            "nbformat_minor": 5
+        }
+
+    def _save_run_artifacts(self, run_id: str, run_dir: str, initial_files: set) -> None:
+        """Save all run artifacts (trace, notebook, PDF report, and any generated files)."""
+        print(f"\n💾 Saving run artifacts to {run_dir} ...")
+
+        # 1. Save trace JSON
+        trace_path = os.path.join(run_dir, "trace.json")
+        try:
+            with open(trace_path, "w") as f:
+                json.dump(self.log, f, indent=2)
+            print("  ✓ Saved execution trace: trace.json")
+        except Exception as e:
+            print(f"  ⚠️ Failed to save trace: {e}")
+
+        # 2. Save trace notebook
+        try:
+            nb_content = self._generate_notebook()
+            nb_path = os.path.join(run_dir, "trace.ipynb")
+            with open(nb_path, "w", encoding="utf-8") as f:
+                json.dump(nb_content, f, indent=2)
+            print("  ✓ Saved trace notebook: trace.ipynb")
+        except Exception as e:
+            print(f"  ⚠️ Failed to save notebook: {e}")
+
+        # 3. Save markdown report and PDF
+        history_path_base = os.path.join(run_dir, "report")
+        try:
+            md_content = self._generate_markdown_content(include_images=True)
+            with open(history_path_base + ".md", "w", encoding="utf-8") as f:
+                f.write(md_content)
+            print("  ✓ Saved report: report.md")
+            self.save_conversation_history(history_path_base, include_images=True, save_pdf=True)
+        except Exception as e:
+            print(f"  ⚠️ Failed to save report/PDF: {e}")
+
+        # 4. Move any newly created output files into run_dir
+        if initial_files:
+            final_files = self._get_all_files(os.getcwd())
+            new_files = final_files - initial_files
+            allowed_exts = {
+                ".png", ".jpg", ".jpeg", ".gif", ".bmp", ".webp", ".svg", ".pdf",
+                ".csv", ".tsv", ".xlsx", ".xls", ".json", ".jsonl", ".txt", ".md",
+                ".html", ".parquet", ".npy", ".npz", ".pkl", ".pt", ".h5", ".hdf5",
+                ".rds", ".loom", ".h5ad",
+            }
+            excluded_parts = {
+                "runs", ".venv", "venv", "env", ".git", "__pycache__", ".chainlit",
+                "site-packages", "dist-info", "node_modules",
+            }
+
+            def _is_output(fp: str) -> bool:
+                parts = Path(os.path.relpath(fp, os.getcwd())).parts
+                if any(p.startswith(".") for p in parts[:-1]):
+                    return False
+                if any(p in excluded_parts for p in parts):
+                    return False
+                return Path(fp).suffix.lower() in allowed_exts
+
+            output_files = [f for f in sorted(new_files) if _is_output(f)]
+            if output_files:
+                print(f"\n📦 Moving {len(output_files)} new output file(s) to run folder:")
+                for fp in output_files:
+                    try:
+                        dest = os.path.join(run_dir, os.path.basename(fp))
+                        if os.path.exists(dest):
+                            base, ext = os.path.splitext(dest)
+                            dest = f"{base}_{int(datetime.now().timestamp())}{ext}"
+                        shutil.move(fp, dest)
+                        print(f"  ✓ {os.path.relpath(fp, os.getcwd())}")
+                    except Exception as e:
+                        print(f"  ⚠️ Could not move {fp}: {e}")
+
+        print(f"\n✅ Run artifacts saved to: {run_dir}")
 
     def save_conversation_history(self, filepath: str, include_images: bool = True, save_pdf: bool = True) -> None:
         """Save the complete conversation history as PDF only.
@@ -2956,6 +3448,55 @@ Each library is listed with its description to help you understand its functiona
             print("User liked the response")
             print(f"Index: {data.index}, Liked: {data.liked}")
 
+        def get_local_data_summary():
+            """Get a brief markdown summary of local data available to A1."""
+            lines = ["## 💾 Local Data"]
+
+            local_items = []
+            if hasattr(self, "_get_data_lake_items"):
+                try:
+                    local_items = self._get_data_lake_items()
+                except Exception:
+                    local_items = []
+
+            lines.append(f"**{len(local_items)} local file(s) available**")
+            preview_limit = 15
+            if local_items:
+                for item in local_items[:preview_limit]:
+                    lines.append(f"- `{item}`")
+                if len(local_items) > preview_limit:
+                    lines.append(f"- ... and {len(local_items) - preview_limit} more")
+            else:
+                lines.append("- No local data files detected yet")
+
+            if hasattr(self, "data_lake_dir"):
+                lines.append(f"\nPath: `{self.data_lake_dir}`")
+
+            user_data_path = os.getenv("BIOMNI_USER_DATA_PATH", "").strip()
+            if user_data_path:
+                lines.append("\n## 👤 User Data Folder")
+                lines.append(f"Path: `{user_data_path}`")
+                if os.path.isdir(user_data_path):
+                    try:
+                        entries = sorted(
+                            [name for name in os.listdir(user_data_path) if not name.startswith(".")]
+                        )
+                    except OSError:
+                        entries = []
+
+                    if entries:
+                        preview_user_limit = 10
+                        for name in entries[:preview_user_limit]:
+                            lines.append(f"- `{name}`")
+                        if len(entries) > preview_user_limit:
+                            lines.append(f"- ... and {len(entries) - preview_user_limit} more")
+                    else:
+                        lines.append("- (empty)")
+                else:
+                    lines.append("- (path not found)")
+
+            return "\n".join(lines)
+
         # Create the Gradio interface
         with gr.Blocks() as demo:
             # Verification page (if enabled)
@@ -2978,6 +3519,10 @@ Each library is listed with its description to help you understand its functiona
             with main_interface_container:
                 with gr.Row():
                     with gr.Column(scale=1):
+                        gr.Markdown("## 📂 Explorer")
+                        local_data_summary = gr.Markdown(value=get_local_data_summary())
+                        refresh_data_btn = gr.Button("Refresh Data", size="sm", variant="secondary")
+                    with gr.Column(scale=2):
                         main_chatbot = gr.Chatbot(
                             label="Biomni A1 Agent",
                             type="messages",
@@ -2985,7 +3530,7 @@ Each library is listed with its description to help you understand its functiona
                             show_copy_button=True,
                             show_share_button=True,
                         )
-                    with gr.Column(scale=1):
+                    with gr.Column(scale=2):
                         innerloop_chatbot = gr.Chatbot(
                             label="Biomni Executor",
                             type="messages",
@@ -3008,6 +3553,7 @@ Each library is listed with its description to help you understand its functiona
                     [prompt_input, innerloop_chatbot, main_chatbot],
                     [innerloop_chatbot, main_chatbot],
                 ).then(lambda: gr.MultimodalTextbox(value=None), None, [prompt_input])
+                refresh_data_btn.click(fn=get_local_data_summary, outputs=[local_data_summary])
                 main_chatbot.like(like)
 
         # Launch

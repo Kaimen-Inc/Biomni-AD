@@ -25,11 +25,11 @@ class BiomniConfig:
         config = BiomniConfig(llm="gpt-4", timeout_seconds=1200)
 
         # Modify after creation
-        config.path = "./custom_data"
+        config.path = "/custom/data/path"
     """
 
     # Data and execution settings
-    path: str = "./data"
+    path: str = os.path.join(os.path.expanduser("~"), ".biomni", "data")
     timeout_seconds: int = 600
 
     # LLM settings (API keys still from environment)
@@ -38,6 +38,7 @@ class BiomniConfig:
 
     # Tool settings
     use_tool_retriever: bool = True
+    auto_network_limited_mode: bool = True
 
     # Data licensing settings
     commercial_mode: bool = False  # If True, excludes non-commercial datasets
@@ -64,6 +65,8 @@ class BiomniConfig:
             self.llm = os.getenv("BIOMNI_LLM") or os.getenv("BIOMNI_LLM_MODEL")
         if os.getenv("BIOMNI_USE_TOOL_RETRIEVER"):
             self.use_tool_retriever = os.getenv("BIOMNI_USE_TOOL_RETRIEVER").lower() == "true"
+        if os.getenv("BIOMNI_AUTO_NETWORK_LIMITED_MODE"):
+            self.auto_network_limited_mode = os.getenv("BIOMNI_AUTO_NETWORK_LIMITED_MODE").lower() == "true"
         if os.getenv("BIOMNI_COMMERCIAL_MODE"):
             self.commercial_mode = os.getenv("BIOMNI_COMMERCIAL_MODE").lower() == "true"
         if os.getenv("BIOMNI_TEMPERATURE"):
@@ -88,6 +91,7 @@ class BiomniConfig:
             "llm": self.llm,
             "temperature": self.temperature,
             "use_tool_retriever": self.use_tool_retriever,
+            "auto_network_limited_mode": self.auto_network_limited_mode,
             "commercial_mode": self.commercial_mode,
             "base_url": self.base_url,
             "api_key": self.api_key,

@@ -1,0 +1,22 @@
+services:
+  biomni:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        BIOMNI_ENV_FILE: biomni_env/fixed_env.yml
+    image: biomni:latest
+    container_name: biomni
+    env_file:
+      - .env
+    environment:
+      CHAINLIT_HOST: 0.0.0.0
+      CHAINLIT_PORT: 8000
+      BIOMNI_PATH: /app/data
+      MPLBACKEND: Agg
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./data:/app/data
+      - ./runs:/app/runs
+    restart: unless-stopped

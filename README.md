@@ -107,6 +107,9 @@ AWS_REGION=us-east-1
 
 # Optional: Timeout settings (defaults to 600 seconds)
 # BIOMNI_TIMEOUT_SECONDS=600
+
+# Optional: Auto-switch to local-first mode when network/API calls fail (default: true)
+# BIOMNI_AUTO_NETWORK_LIMITED_MODE=true
 ```
 
 #### Option 2: Using shell environment variables
@@ -221,6 +224,20 @@ bash run_chainlit.sh --headless        # no browser auto-open (servers/CI)
 | `BIOMNI_PATH` | `./data` | Data directory for the agent |
 
 > **Note:** Always use `bash run_chainlit.sh` rather than calling `chainlit run chainlit_app.py` directly. The script pins execution to `biomni_e1`'s Python via `conda run`, which is necessary when a virtualenv (`.venv`) is also active in the same shell.
+
+#### 4. Docker Deployment (Local or VM)
+
+Biomni can be run as a containerized service with external access:
+
+```bash
+cp .env.example .env
+docker compose build
+docker compose up -d
+```
+
+Then open `http://localhost:8000` (or your VM public IP).
+
+For full VM deployment instructions (firewall/security group, operations, and hardening), see [docs/docker_vm_deployment.md](docs/docker_vm_deployment.md).
 
 #### Controlling Datalake Loading
 
