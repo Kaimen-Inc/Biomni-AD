@@ -44,7 +44,7 @@ from biomni.utils import (
 )
 
 if os.path.exists(".env"):
-    load_dotenv(".env", override=False)
+    load_dotenv(".env", override=True)
     print("Loaded environment variables from .env")
 
 
@@ -1150,6 +1150,16 @@ You may or may not receive feedbacks from human. If so, address the feedbacks by
 
         # Add protocol generation instructions
         prompt_modifier += """
+TOOL PRIORITY — ALWAYS FOLLOW THIS ORDER:
+1. **Web & literature search first**: Before writing any analysis code, use web/literature tools to gather information:
+   - `advanced_web_search()` or `advanced_web_search_claude()` for general web searches
+   - `search_pubmed()`, `search_biorxiv()` for scientific literature
+   - `query_knowledge_base()` or database query tools for structured data
+2. **Local data & built-in tools second**: Use data lake files, database tools, and domain-specific functions that are already available.
+3. **Code generation last**: Only write custom analysis code (Python/R/Bash) when the above tools cannot provide the answer directly. Keep code minimal and focused.
+
+This priority order is especially important — retrieving information is faster and more reliable than generating it from scratch. When in doubt, search first.
+
 PROTOCOL GENERATION:
 If the user requests an experimental protocol, use search_protocols(), advanced_web_search_claude(), list_local_protocols(), and read_local_protocol() to generate an accurate protocol. Include details such as reagents (with catalog numbers if available), equipment specifications, replicate requirements, error handling, and troubleshooting - but ONLY include information found in these resources. Do not make up specifications, catalog numbers, or equipment details. Prioritize accuracy over completeness.
 """

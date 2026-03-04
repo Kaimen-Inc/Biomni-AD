@@ -1,7 +1,10 @@
 import os
 from typing import TYPE_CHECKING, Literal, Optional
 
+from dotenv import load_dotenv
 from langchain_core.language_models.chat_models import BaseChatModel
+
+load_dotenv(override=True)
 
 if TYPE_CHECKING:
     from biomni.config import BiomniConfig
@@ -147,13 +150,25 @@ def get_llm(
                 "langchain-openai package is required for Azure OpenAI models. Install with: pip install langchain-openai"
             )
         API_VERSION = "2024-12-01-preview"
-        model = model.replace("azure-", "")
-        return AzureChatOpenAI(
-            openai_api_key=os.getenv("OPENAI_API_KEY"),
-            azure_endpoint=os.getenv("OPENAI_ENDPOINT"),
-            azure_deployment=model,
+        # Derive deployment name: strip "azure-" prefix if present, else fall back to DEPLOYMENT_NAME env var
+        deployment = model.replace("azure-", "") if model.startswith("azure-") else (
+            os.getenv("DEPLOYMENT_NAME") or model
+        )
+
+        # Some Azure-hosted models (e.g. gpt-5.*) reject any temperature value other
+        # than the default. Use a subclass that silently drops the parameter.
+        class _AzureChatOpenAINoTemp(AzureChatOpenAI):
+            def _get_request_payload(self, input_, *, stop=None, **kwargs):  # type: ignore[override]
+                payload = super()._get_request_payload(input_, stop=stop, **kwargs)
+                payload.pop("temperature", None)
+                return payload
+
+        return _AzureChatOpenAINoTemp(
+            openai_api_key=os.getenv("AZURE_OPENAI_API_KEY") or os.getenv("OPENAI_API_KEY"),
+            azure_endpoint=os.getenv("ENDPOINT_URL") or os.getenv("OPENAI_ENDPOINT"),
+            azure_deployment=deployment,
             openai_api_version=API_VERSION,
-            temperature=temperature,
+            temperature=1,  # default; will be stripped from payload by subclass
         )
 
     elif source == "Anthropic":

@@ -339,7 +339,16 @@ class AD1(A1):
                 # Append to system prompt
                 # We add it as a high priority instruction
                 ad_instruction = f"""
-                
+
+                AD/DEMENTIA TOOL PRIORITY — ALWAYS FOLLOW THIS ORDER:
+                1. **AD Data Lake first**: Query the local AD/dementia data lake (ADNI, ROSMAP, UK Biobank, NACC, etc.)
+                   using the data sourcing protocol below BEFORE any other source.
+                2. **Web & literature search second**: Use advanced_web_search(), search_pubmed(), search_biorxiv()
+                   to supplement with published findings.
+                3. **Built-in domain tools third**: Use database and domain-specific tools already available.
+                4. **Code generation last**: Write custom Python/R code only when the above cannot answer directly.
+                Do NOT simulate or fabricate data at any step.
+
                 IMPORTANT: ALZHEIMER'S & DEMENTIA DATA SOURCING PROTOCOL
                 PRIORITIZE using this data & only supplement with other data as needed. Do NOT simulate data for analyses.
                 ========================================================

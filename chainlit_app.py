@@ -21,6 +21,9 @@ from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 from pathlib import Path
 
+from dotenv import load_dotenv
+load_dotenv(override=True)
+
 # ---------------------------------------------------------------------------
 # Environment guard — all biomni dependencies live in the biomni_e1 conda env.
 # Catch the most common mistake (running from the bare .venv) early.
@@ -75,12 +78,38 @@ PLANNING_SYSTEM_PROMPT = (
     "You are a biomedical research assistant planning a task. "
     "Given the user's research question, write a concise numbered plan "
     "of 3 to 7 steps describing exactly how you will solve it. "
+    "IMPORTANT: Always prefer this tool order in your plan: "
+    "(1) web/literature search tools first (advanced_web_search, search_pubmed, search_biorxiv), "
+    "(2) local data and database query tools second, "
+    "(3) custom code generation only as a last resort. "
     "Mention specific tools, databases, or analyses you will use. "
     "Be specific but brief. Do not execute any code yet."
 )
 
-DEFAULT_LLM = os.getenv("BIOMNI_LLM", "claude-sonnet-4-5")
+AD1_PLANNING_SYSTEM_PROMPT = (
+    "You are an Alzheimer's disease research assistant planning a task. "
+    "Given the user's research question, write a concise numbered plan "
+    "of 3 to 7 steps describing exactly how you will solve it. "
+    "IMPORTANT: Always follow this strict tool priority order in your plan: "
+    "(1) AD/dementia data lake FIRST — query ADNI, ROSMAP, UK Biobank, NACC, or other "
+    "available AD-specific datasets before any other source; "
+    "(2) web/literature search second (advanced_web_search, search_pubmed, search_biorxiv) "
+    "to supplement with published findings; "
+    "(3) built-in domain tools third (database queries, biomarker tools); "
+    "(4) custom code generation only as a last resort. "
+    "Do NOT simulate or fabricate data. "
+    "Mention specific datasets, tools, or analyses you will use. "
+    "Be specific but brief. Do not execute any code yet."
+)
+
+# Auto-detect Azure setup: if DEPLOYMENT_NAME + ENDPOINT_URL are set, default to Azure
+_azure_deployment = os.getenv("DEPLOYMENT_NAME")
+_azure_endpoint = os.getenv("ENDPOINT_URL")
+_azure_default = f"azure-{_azure_deployment}" if (_azure_deployment and _azure_endpoint) else None
+DEFAULT_LLM = os.getenv("BIOMNI_LLM") or _azure_default or "claude-sonnet-4-5"
 DEFAULT_PATH = os.getenv("BIOMNI_PATH", "./data")
+# Set BIOMNI_AGENT=a1 to force the A1 agent on startup (skips the profile selector)
+FORCE_AGENT = os.getenv("BIOMNI_AGENT", "").lower()  # "a1" | "ad1" | ""
 
 SUPPORTED_IMAGE_EXTENSIONS = (".png", ".jpg", ".jpeg", ".gif", ".bmp", ".webp")
 
@@ -118,55 +147,117 @@ async def stream_langgraph(agent_app, inputs, config):
 
 
 # ---------------------------------------------------------------------------
+# Chat profiles (A1 vs AD1)
+# ---------------------------------------------------------------------------
+
+@cl.set_chat_profiles
+async def set_chat_profiles():
+    if FORCE_AGENT:
+        # CLI override: skip the selector entirely
+        return None
+    return [
+        cl.ChatProfile(
+            name="AD1",
+            markdown_description=(
+                "**AD1 — Alzheimer's Disease Co-Scientist**\n\n"
+                "Specialized for AD/dementia research: ADNI, ROSMAP, UK Biobank, "
+                "multi-omics, biomarker discovery, drug repurposing."
+            ),
+            icon="/public/avatars/ad1.png",
+        ),
+        cl.ChatProfile(
+            name="A1",
+            markdown_description=(
+                "**A1 — General-Purpose Biomedical Agent**\n\n"
+                "Broad biomedical research across genomics, proteomics, "
+                "single-cell, clinical data, and more."
+            ),
+            icon="/public/avatars/ad1.png",
+        ),
+    ]
+
+
+# ---------------------------------------------------------------------------
+# AD1 example starters
+# ---------------------------------------------------------------------------
+
+AD1_STARTERS = [
+    cl.Starter(
+        label="Amyloid & tau biomarkers in CSF",
+        message=(
+            "Analyze the relationship between CSF amyloid-β42, p-tau181, and t-tau levels "
+            "across MCI and AD patients in the ADNI cohort. Identify which combination best "
+            "predicts conversion from MCI to AD within 2 years."
+        ),
+        icon="/public/avatars/ad1.png",
+    ),
+    cl.Starter(
+        label="Differential gene expression in AD brain",
+        message=(
+            "Perform differential expression analysis comparing AD vs. control samples in the "
+            "ROSMAP bulk RNA-seq dataset. Focus on genes in the APP processing pathway and "
+            "highlight any that overlap with GWAS hits from the latest AD meta-analysis."
+        ),
+        icon="/public/avatars/ad1.png",
+    ),
+    cl.Starter(
+        label="Drug repurposing for neuroinflammation",
+        message=(
+            "Identify existing FDA-approved drugs that could be repurposed to target "
+            "neuroinflammation in Alzheimer's disease. Cross-reference known TREM2 and "
+            "microglia activation pathways with drug-target interaction databases."
+        ),
+        icon="/public/avatars/ad1.png",
+    ),
+    cl.Starter(
+        label="Single-cell microglia subtypes in AD",
+        message=(
+            "Using single-cell RNA-seq data, characterize microglia subtypes present in "
+            "Alzheimer's disease brain tissue. Identify disease-associated microglia (DAM) "
+            "markers and compare their abundance across Braak staging levels."
+        ),
+        icon="/public/avatars/ad1.png",
+    ),
+]
+
+
+@cl.set_starters
+async def set_starters():
+    return AD1_STARTERS
+
+
+# ---------------------------------------------------------------------------
 # Chat lifecycle
 # ---------------------------------------------------------------------------
 
 @cl.on_chat_start
 async def on_chat_start():
-    """Welcome the user and let them choose A1 or AD1."""
-    res = await cl.AskActionMessage(
-        content=(
-            "## Welcome to **Biomni** 🧬\n\n"
-            "A general-purpose biomedical AI agent.\n\n"
-            "Which agent would you like to use?"
-        ),
-        actions=[
-            cl.Action(name="a1", label="🔬 A1 — General Purpose", payload={"value": "a1"}),
-            cl.Action(name="ad1", label="🧠 AD1 — Alzheimer's Disease", payload={"value": "ad1"}),
-        ],
-        timeout=120,
-    ).send()
+    """Initialize the selected agent and greet the user."""
+    # Determine agent type: CLI env var > chat profile selection > default AD1
+    if FORCE_AGENT in ("a1", "ad1"):
+        agent_type = FORCE_AGENT
+    else:
+        profile = cl.user_session.get("chat_profile", "AD1")
+        agent_type = "a1" if str(profile).upper() == "A1" else "ad1"
 
-    agent_type = (res.get("payload") or {}).get("value", "a1") if res else "a1"
+    label = "AD1" if agent_type == "ad1" else "A1"
+    try:
+        if agent_type == "ad1":
+            from biomni.agent.ad1 import AD1
+            agent = await run_in_executor(lambda: AD1(llm=DEFAULT_LLM))
+        else:
+            from biomni.agent.a1 import A1
+            agent = await run_in_executor(lambda: A1(llm=DEFAULT_LLM))
+        cl.user_session.set("agent", agent)
+        cl.user_session.set("agent_type", agent_type)
+        cl.user_session.set("history", [])
+        cl.user_session.set("thread_id", str(uuid.uuid4()))
+    except Exception as exc:
+        await cl.Message(content=f"Failed to initialize {label}: {exc}").send()
+        return
 
-    async with cl.Step(name="🚀 Initializing agent", show_input=False) as step:
-        try:
-            if agent_type == "ad1":
-                from biomni.agent.ad1 import AD1
-                agent = await run_in_executor(lambda: AD1(llm=DEFAULT_LLM))
-            else:
-                from biomni.agent.a1 import A1
-                agent = await run_in_executor(lambda: A1(llm=DEFAULT_LLM))
-            cl.user_session.set("agent", agent)
-            cl.user_session.set("agent_type", agent_type)
-            cl.user_session.set("history", [])
-            cl.user_session.set("thread_id", str(uuid.uuid4()))
-            step.output = f"✅ {agent_type.upper()} agent ready (model: {DEFAULT_LLM})"
-        except Exception as exc:
-            step.output = f"❌ Initialization failed: {exc}"
-            await cl.Message(
-                content=f"Failed to initialize agent: {exc}",
-            ).send()
-            return
-
-    label = "Alzheimer's Disease (AD1)" if agent_type == "ad1" else "General Purpose (A1)"
-    await cl.Message(
-        content=(
-            f"**{label} agent is ready.**\n\n"
-            "Ask me a biomedical research question and I'll generate a plan "
-            "for your review before executing."
-        ),
-    ).send()
+    # No greeting message sent here — the centered welcome screen (chainlit.md)
+    # stays visible until the user sends their first message.
 
 
 # ---------------------------------------------------------------------------
@@ -224,7 +315,7 @@ async def on_message(message: cl.Message):
     # ------------------------------------------------------------------
     # Phase 3: Interactive planning
     # ------------------------------------------------------------------
-    prompt = await _interactive_planning(agent, prompt)
+    prompt = await _interactive_planning(agent, prompt, agent_type=agent_type)
     if prompt is None:
         # User cancelled
         await cl.Message(content="Execution cancelled.").send()
@@ -258,16 +349,17 @@ async def on_message(message: cl.Message):
 # Interactive planning helpers
 # ---------------------------------------------------------------------------
 
-async def _interactive_planning(agent, prompt: str) -> str | None:
+async def _interactive_planning(agent, prompt: str, agent_type: str = "a1") -> str | None:
     """
     Generate a research plan, show it for user approval, and handle revisions.
     Returns the (possibly modified) prompt on approval, or None if cancelled.
     """
+    base_prompt = AD1_PLANNING_SYSTEM_PROMPT if agent_type == "ad1" else PLANNING_SYSTEM_PROMPT
     modification_context = ""
 
     while True:
         # Build planning messages
-        full_system = PLANNING_SYSTEM_PROMPT
+        full_system = base_prompt
         if modification_context:
             full_system += f"\n\nUser requested these revisions to the previous plan:\n{modification_context}"
 
