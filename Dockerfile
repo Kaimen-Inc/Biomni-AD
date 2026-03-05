@@ -2,7 +2,7 @@ FROM mambaorg/micromamba:1.5.10
 
 WORKDIR /app
 
-ARG BIOMNI_ENV_FILE=biomni_env/fixed_env.yml
+ARG BIOMNI_ENV_FILE=biomni_env/environment.yml
 
 COPY ${BIOMNI_ENV_FILE} /tmp/biomni_env.yml
 

@@ -4,7 +4,7 @@ services:
       context: .
       dockerfile: Dockerfile
       args:
-        BIOMNI_ENV_FILE: biomni_env/fixed_env.yml
+        BIOMNI_ENV_FILE: biomni_env/environment.yml
     image: biomni:latest
     container_name: biomni
     env_file:

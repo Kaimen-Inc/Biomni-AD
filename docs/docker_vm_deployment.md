@@ -53,6 +53,33 @@ Use this when you prefer shipping your current local workspace snapshot to the V
 From your local Biomni repo root:
 
 ```bash
+chmod +x scripts/package_for_vm.sh
+./scripts/package_for_vm.sh
+```
+
+This default mode is **code-only** (excludes `data/` and `runs/`), so archives are usually small.
+
+Optional: custom output file name:
+
+```bash
+./scripts/package_for_vm.sh biomni_release_20260304.tar.gz
+```
+
+If you want to ship your local data lake with the code (large archive expected), use:
+
+```bash
+./scripts/package_for_vm.sh --with-data-lake
+```
+
+Or with custom name:
+
+```bash
+./scripts/package_for_vm.sh biomni_full_with_data.tar.gz --with-data-lake
+```
+
+Manual fallback (`tar` directly):
+
+```bash
 cd /path/to/Biomni
 tar -czf biomni_deploy_$(date +%Y%m%d_%H%M%S).tar.gz \
   --exclude='.git' \
@@ -108,11 +135,36 @@ docker compose up -d
 
 First build can take significant time because the image installs a large Conda stack.
 
-By default, Docker builds with `biomni_env/fixed_env.yml` (recommended for container size and setup time). To switch to the base environment file:
+By default, Docker builds with `biomni_env/environment.yml` (more reliable on cloud VMs).
+
+To use the larger `fixed_env.yml` variant instead:
 
 ```bash
-docker compose build --build-arg BIOMNI_ENV_FILE=biomni_env/environment.yml
+docker compose build --build-arg BIOMNI_ENV_FILE=biomni_env/fixed_env.yml
 docker compose up -d
+```
+
+### Common Azure VM build failure (pip wheel build errors)
+
+If you see errors like:
+
+- `Failed to build annoy biom-format fanc macs2 pybedtools`
+- `critical libmamba pip failed to install packages`
+
+this means the selected Conda env file includes pip packages that are difficult to compile in your VM image.
+
+Use the VM-stable default env explicitly:
+
+```bash
+docker compose build --no-cache --build-arg BIOMNI_ENV_FILE=biomni_env/environment.yml
+docker compose up -d
+```
+
+If you previously attempted a failed build, clean stale layers first:
+
+```bash
+docker compose down
+docker builder prune -f
 ```
 
 ## 4) Expose externally
