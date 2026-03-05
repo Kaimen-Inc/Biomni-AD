@@ -10,7 +10,7 @@ Tell me a research question to get started, or pick one of the examples below.
 
 - BIOMNI_DATA_PATH: `/Users/kuan-linhuang/Downloads/test`
 - Root entries:
-  - `Biomn-AD Final Technical Abstract.docx`
+  - `Biomn-AD_dataset.csv`
   - `biomni_data`
 - Data lake files detected: **20**
   - `BindingDB_All_202409.tsv`

@@ -46,23 +46,55 @@ class AD1(A1):
         if hasattr(self, "_get_data_lake_items"):
             local_items = self._get_data_lake_items()
 
+        # Also gather data root items (datasets at BIOMNI_DATA_PATH root)
+        data_root_items = []
+        data_root_dir = getattr(self, "data_root_dir", None)
+        if hasattr(self, "_get_data_root_items"):
+            data_root_items = self._get_data_root_items(max_depth=2)
+
+        # Scan BiomniAD JSON catalogs
+        catalog_summary = self._scan_ad_catalogs_summary()
+
         preview_limit = 25
         preview = "\n".join(f"- {item}" for item in local_items[:preview_limit])
         if len(local_items) > preview_limit:
-            preview += f"\n- ... and {len(local_items) - preview_limit} more local files"
+            preview += f"\n- ... and {len(local_items) - preview_limit} more data lake files"
         if not preview:
-            preview = "- No local data lake files detected yet."
+            preview = "- No data lake files detected yet."
+
+        # Data root preview
+        root_preview = ""
+        if data_root_dir and data_root_items:
+            root_dirs = sorted({item.split("/")[0] for item in data_root_items if "/" in item})
+            root_files = [item for item in data_root_items if "/" not in item]
+            root_lines = []
+            for d in root_dirs[:15]:
+                sub_count = sum(1 for i in data_root_items if i.startswith(d + "/"))
+                root_lines.append(f"- 📁 {d}/ ({sub_count} file(s))")
+            for f in root_files[:5]:
+                root_lines.append(f"- 📄 {f}")
+            if len(root_dirs) > 15:
+                root_lines.append(f"- ... and {len(root_dirs) - 15} more directories")
+            root_preview = f"\n\nData root directory ({data_root_dir}):\n" + "\n".join(root_lines)
+        elif data_root_dir:
+            root_preview = f"\n\nData root directory ({data_root_dir}): (empty or not mounted)"
 
         return f"""
 ### AD1_LOCAL_DATA_POLICY_START
 AD1 GLOBAL PRIORITY (APPLIES TO ALL TASKS):
-1. Local data lake first: always inspect and use locally available data before web search.
-2. External sources second: use web/literature/databases only to supplement missing local evidence.
-3. Code generation last: write custom code only when built-in tools and available data are insufficient.
-4. Never fabricate data. If local data is missing, explicitly state the gap.
+1. Local data first: always inspect BIOMNI_DATA_PATH and the data lake before web search.
+   - Data root: {data_root_dir or 'not set'}
+   - Data lake: {getattr(self, 'data_lake_dir', 'not set')}
+   - Use os.listdir() to discover datasets at the data root.
+2. BiomniAD catalogs: scan JSON catalogs in biomni/know_how/resource/ for AD datasets with download URIs.
+3. External sources third: use web/literature/databases only to supplement missing local evidence.
+4. Code generation last: write custom code only when built-in tools and available data are insufficient.
+5. Never fabricate data. If local data is missing, explicitly state the gap.
 
-Current locally available data lake files: {len(local_items)}
-{preview}
+Data lake files: {len(local_items)}
+{preview}{root_preview}
+
+{catalog_summary}
 ### AD1_LOCAL_DATA_POLICY_END
 """.strip()
 
@@ -375,51 +407,73 @@ Current locally available data lake files: {len(local_items)}
                 file_list.append(os.path.join(root, file))
         return set(file_list)
 
+    def _scan_ad_catalogs_summary(self) -> str:
+        """Scan BiomniAD JSON catalogs and return a compact summary string."""
+        current_dir = os.path.dirname(os.path.abspath(__file__))
+        resource_dir = os.path.join(current_dir, "..", "know_how", "resource")
+
+        if not os.path.isdir(resource_dir):
+            return "BiomniAD catalogs: resource directory not found."
+
+        patterns = ["BiomniAD*.json", "NIAGADS*.json", "SinaiADRD.json"]
+        catalog_paths = []
+        for pat in patterns:
+            catalog_paths.extend(glob.glob(os.path.join(resource_dir, pat)))
+
+        if not catalog_paths:
+            return "BiomniAD catalogs: no JSON catalogs found."
+
+        datasets = []
+        for p in catalog_paths:
+            try:
+                with open(p, "r") as f:
+                    data = json.load(f)
+                datasets.extend(data.get("datasets", []))
+            except Exception:
+                pass
+
+        lines = [f"BiomniAD catalogs: {len(datasets)} datasets across {len(catalog_paths)} catalog file(s)."]
+        lines.append("To browse them, load JSON files from: " + resource_dir)
+        for d in datasets[:20]:
+            title = d.get("title", d.get("id", "?"))
+            n_files = len(d.get("files", []))
+            lines.append(f"  - {title} ({n_files} file URI(s))")
+        if len(datasets) > 20:
+            lines.append(f"  ... and {len(datasets) - 20} more datasets")
+        return "\n".join(lines)
+
     def _inject_ad_context(self):
         """Inject BiomniAD data sourcing instructions into the system prompt."""
         try:
-            # Locate the data sourcing markdown
-            # Assuming the file is in the same project structure relative to this file
-            # biomni/agent/ad1.py -> ../know_how/biomniAD_data_sourcing.md
             current_dir = os.path.dirname(os.path.abspath(__file__))
             know_how_path = os.path.join(current_dir, "..", "know_how", "biomniAD_data_sourcing.md")
-            
+
             if os.path.exists(know_how_path):
                 with open(know_how_path, "r") as f:
                     ad_sourcing_content = f.read()
-                
-                # Append to system prompt
-                # We add it as a high priority instruction
+
+                data_root_dir = getattr(self, "data_root_dir", "not set")
+
                 ad_instruction = f"""
 
-                AD/DEMENTIA TOOL PRIORITY — ALWAYS FOLLOW THIS ORDER:
-                1. **AD Data Lake first**: Query the local AD/dementia data lake (ADNI, ROSMAP, UK Biobank, NACC, etc.)
-                   using the data sourcing protocol below BEFORE any other source.
-                2. **Web & literature search second**: Use advanced_web_search(), search_pubmed(), search_biorxiv()
-                   to supplement with published findings.
-                3. **Built-in domain tools third**: Use database and domain-specific tools already available.
-                4. **Code generation last**: Write custom Python/R code only when the above cannot answer directly.
-                Do NOT simulate or fabricate data at any step.
+AD/DEMENTIA TOOL PRIORITY — ALWAYS FOLLOW THIS ORDER:
+1. **Local data first**: Scan BIOMNI_DATA_PATH ({data_root_dir}) and data lake for any locally available AD datasets.
+   Use os.listdir() on the data root — datasets may be placed directly there.
+2. **BiomniAD catalogs second**: Load JSON catalogs from biomni/know_how/resource/ to find datasets with download URIs.
+3. **Web & literature search third**: Use advanced_web_search(), search_pubmed(), search_biorxiv() to supplement.
+4. **Code generation last**: Write custom Python/R code only when the above cannot answer directly.
+Do NOT simulate or fabricate data at any step.
 
-                IMPORTANT: ALZHEIMER'S & DEMENTIA DATA SOURCING PROTOCOL
-                PRIORITIZE using this data & only supplement with other data as needed. Do NOT simulate data for analyses.
-                ========================================================
-                {ad_sourcing_content}
-                ========================================================
-                """
-                
-                # Update the system prompt
+ALZHEIMER'S & DEMENTIA DATA SOURCING PROTOCOL
+========================================================
+{ad_sourcing_content}
+========================================================
+"""
                 self.system_prompt += ad_instruction
                 self._enforce_local_data_priority()
-                
-                # Also update the app's system message if it's already compiled
-                # Note: In A1.go(), the system prompt is passed to the graph. 
-                # Since we modify self.system_prompt before super().go(), 
-                # A1.go() will use the updated prompt when it calls generate().
-                
             else:
                 print(f"Warning: Could not find AD data sourcing guide at {know_how_path}")
-                
+
         except Exception as e:
             print(f"Warning: Failed to inject AD context: {e}")
 
@@ -513,7 +567,7 @@ Current locally available data lake files: {len(local_items)}
             except Exception:
                 local_items = []
 
-            lines = ["### 💾 Local Data", f"**{len(local_items)} local file(s) available**"]
+            lines = ["### 💾 Local Data", f"**{len(local_items)} data lake file(s)**"]
             preview_limit = 20
             if local_items:
                 for item in local_items[:preview_limit]:
@@ -521,10 +575,32 @@ Current locally available data lake files: {len(local_items)}
                 if len(local_items) > preview_limit:
                     lines.append(f"- ... and {len(local_items) - preview_limit} more")
             else:
-                lines.append("- No local data files detected yet")
+                lines.append("- No data lake files detected yet")
 
             if hasattr(self, "data_lake_dir"):
-                lines.append(f"\nPath: `{self.data_lake_dir}`")
+                lines.append(f"\nData lake: `{self.data_lake_dir}`")
+
+            # Show data root directory contents
+            data_root = getattr(self, "data_root_dir", None)
+            if data_root and os.path.isdir(data_root):
+                lines.append(f"\n### 📂 Data Root")
+                lines.append(f"Path: `{data_root}`")
+                try:
+                    entries = sorted(
+                        [name for name in os.listdir(data_root) if not name.startswith(".")]
+                    )
+                except OSError:
+                    entries = []
+
+                if entries:
+                    for name in entries[:15]:
+                        full = os.path.join(data_root, name)
+                        suffix = "/" if os.path.isdir(full) else ""
+                        lines.append(f"- `{name}{suffix}`")
+                    if len(entries) > 15:
+                        lines.append(f"- ... and {len(entries) - 15} more")
+                else:
+                    lines.append("- (empty)")
 
             user_data_path = os.getenv("BIOMNI_USER_DATA_PATH", "").strip()
             if user_data_path:

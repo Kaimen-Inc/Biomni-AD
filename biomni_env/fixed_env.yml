@@ -318,6 +318,8 @@ dependencies:
       - debugpy==1.8.15
       - decoupler==2.1.1
       - defusedxml==0.7.1
+      - fastparquet
+      - PyPDF2
       - demes==0.2.3
       - depinfo==2.2.0
       - deprecated==1.2.18

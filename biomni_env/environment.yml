@@ -37,3 +37,6 @@ dependencies:
       - mcp
       - tooluniverse
       - python-dotenv
+      - PyPDF2
+      - pyarrow
+      - fastparquet

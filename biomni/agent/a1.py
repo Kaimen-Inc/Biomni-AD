@@ -196,6 +196,7 @@ class A1:
             print("Skipping datalake download (load_datalake=False)")
             print("Note: Some tools may require datalake files to function properly.")
 
+        self.data_root_dir = os.path.abspath(path)
         self.path = os.path.join(path, "biomni_data")
         self.data_lake_dir = os.path.join(self.path, "data_lake")
         self.custom_data_index_path = os.path.join(self.data_lake_dir, "_custom_data_index.json")
@@ -382,8 +383,46 @@ For all analyses in this run:
 
         return sorted(set(items))
 
+    def _get_data_root_items(self, max_depth: int = 3) -> list[str]:
+        """Return files and directories under the configured BIOMNI_DATA_PATH root.
+
+        This captures datasets placed directly under the data root (e.g.
+        /mnt/dataset1/files) that are outside the standard data_lake sub-tree.
+        """
+        root_dir = getattr(self, "data_root_dir", None)
+        if not root_dir or not os.path.isdir(root_dir):
+            return []
+
+        excluded = {
+            ".git", "__pycache__", ".venv", "venv", "env",
+            ".chainlit", "node_modules", "site-packages",
+        }
+        items: list[str] = []
+
+        for root, dirs, files in os.walk(root_dir):
+            # Respect max depth
+            depth = root.replace(root_dir, "").count(os.sep)
+            if depth >= max_depth:
+                dirs[:] = []
+                continue
+            # Prune hidden and excluded dirs
+            dirs[:] = [d for d in dirs if not d.startswith(".") and d not in excluded]
+            for file_name in files:
+                if file_name.startswith("."):
+                    continue
+                full_path = os.path.join(root, file_name)
+                rel = os.path.relpath(full_path, root_dir).replace(os.sep, "/")
+                if rel == "_custom_data_index.json":
+                    continue
+                items.append(rel)
+
+        return sorted(set(items))
+
     def _resolve_data_path(self, data_path: str) -> str:
-        """Resolve a data path to an absolute path with data-lake-first semantics."""
+        """Resolve a data path to an absolute path with data-lake-first semantics.
+
+        Search order: data_lake_dir -> data_root_dir -> cwd-relative -> fallback.
+        """
         if not data_path:
             return data_path
 
@@ -393,6 +432,13 @@ For all analyses in this run:
         candidate_in_data_lake = os.path.join(self.data_lake_dir, data_path)
         if os.path.exists(candidate_in_data_lake):
             return os.path.abspath(candidate_in_data_lake)
+
+        # Also check the data root directory (BIOMNI_DATA_PATH root)
+        root_dir = getattr(self, "data_root_dir", None)
+        if root_dir:
+            candidate_in_root = os.path.join(root_dir, data_path)
+            if os.path.exists(candidate_in_root):
+                return os.path.abspath(candidate_in_root)
 
         if os.path.exists(data_path):
             return os.path.abspath(data_path)
@@ -1554,6 +1600,12 @@ Each item is listed with its description to help you understand its contents.
 {data_lake_content}
 ----
 
+- Data Root Directory (BIOMNI_DATA_PATH)
+The configured data root is: {data_root_path}
+Datasets may also live directly under this root (outside the data_lake subfolder).
+Use os.listdir() or glob on this path to discover files placed there by the user.
+{data_root_listing}
+
 - Software Library:
 {library_intro}
 Each library is listed with its description to help you understand its functionality.
@@ -1585,6 +1637,25 @@ Each library is listed with its description to help you understand its functiona
         data_lake_content_formatted = "\n".join(data_lake_formatted)
 
         # Format the prompt with the appropriate values
+        # Build data root listing for the system prompt
+        data_root_dir = getattr(self, "data_root_dir", self.path)
+        data_root_items = self._get_data_root_items(max_depth=2) if hasattr(self, "_get_data_root_items") else []
+        if data_root_items:
+            # Show top-level dirs + sample files (keep compact)
+            root_dirs = sorted({item.split("/")[0] for item in data_root_items if "/" in item})
+            root_files = [item for item in data_root_items if "/" not in item]
+            listing_lines = []
+            for d in root_dirs[:30]:
+                sub_count = sum(1 for i in data_root_items if i.startswith(d + "/"))
+                listing_lines.append(f"  📁 {d}/ ({sub_count} file(s))")
+            for f in root_files[:10]:
+                listing_lines.append(f"  📄 {f}")
+            if len(root_dirs) > 30:
+                listing_lines.append(f"  ... and {len(root_dirs) - 30} more directories")
+            data_root_listing = "\n".join(listing_lines)
+        else:
+            data_root_listing = "  (no files found at this path)"
+
         format_dict = {
             "function_intro": function_intro,
             "tool_desc": textify_api_dict(tool_desc) if isinstance(tool_desc, dict) else tool_desc,
@@ -1592,6 +1663,8 @@ Each library is listed with its description to help you understand its functiona
             "data_lake_path": self.path + "/data_lake",
             "data_lake_intro": data_lake_intro,
             "data_lake_content": data_lake_content_formatted,
+            "data_root_path": data_root_dir,
+            "data_root_listing": data_root_listing,
             "library_intro": library_intro,
             "library_content_formatted": library_content_formatted,
         }
@@ -3450,7 +3523,7 @@ Each library is listed with its description to help you understand its functiona
 
         def get_local_data_summary():
             """Get a brief markdown summary of local data available to A1."""
-            lines = ["## 💾 Local Data"]
+            lines = ["## 💾 Local Datasets"]
 
             local_items = []
             if hasattr(self, "_get_data_lake_items"):

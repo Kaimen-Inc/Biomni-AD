@@ -426,7 +426,7 @@ async def set_chat_profiles():
         cl.ChatProfile(
             name="AD1",
             markdown_description=(
-                "**Biomni-AD — Your Alzheimer's Disease Co-Scientist**\n\n"
+                "**Hi, I'm Biomni-AD — Your Alzheimer's Disease Co-Scientist**\n\n"
                 "What would you like to discover about Alzheimer's today?"
             ),
             icon="/public/avatars/ad1.png",
@@ -449,38 +449,44 @@ async def set_chat_profiles():
 
 AD1_STARTERS = [
     cl.Starter(
-        label="Amyloid & tau biomarkers in CSF",
+        label="Scan local AD data & catalogs",
         message=(
-            "Analyze the relationship between CSF amyloid-β42, p-tau181, and t-tau levels "
-            "across MCI and AD patients in the ADNI cohort. Identify which combination best "
-            "predicts conversion from MCI to AD within 2 years."
+            "Scan my local BIOMNI_DATA_PATH directory and the BiomniAD catalogs "
+            "(BiomniAD*.json, NIAGADS*.json, SinaiADRD.json) in your know-how resources. "
+            "List every locally available dataset with its modality, then suggest the 3 most "
+            "impactful quick analyses I could run right now using only local files."
         ),
         icon="/public/avatars/ad1.png",
     ),
     cl.Starter(
-        label="Differential gene expression in AD brain",
+        label="AD risk loci cross-study comparison",
         message=(
-            "Perform differential expression analysis comparing AD vs. control samples in the "
-            "ROSMAP bulk RNA-seq dataset. Focus on genes in the APP processing pathway and "
-            "highlight any that overlap with GWAS hits from the latest AD meta-analysis."
+            "Using the local BiomniAD catalog files, compare the top 20 AD risk loci between "
+            "the Bellenguez et al. (2022) GWAS meta-analysis and the FinnGen R12 AD GWAS. "
+            "Download only the summary statistics headers (first 1000 lines) from each, "
+            "identify overlapping and population-specific loci, and visualise the comparison "
+            "as a Venn diagram and a Manhattan-style dot plot."
         ),
         icon="/public/avatars/ad1.png",
     ),
     cl.Starter(
-        label="Drug repurposing for neuroinflammation",
+        label="CRISPRbrain AD screens explorer",
         message=(
-            "Identify existing FDA-approved drugs that could be repurposed to target "
-            "neuroinflammation in Alzheimer's disease. Cross-reference known TREM2 and "
-            "microglia activation pathways with drug-target interaction databases."
+            "Use the CRISPRbrain Python API (pip install crisprbrain) to list all available "
+            "CRISPR screens. Filter for brain and iPSC-neuron screens, retrieve the top screen's "
+            "data, identify the top 20 gene hits, and cross-reference them with known AD GWAS "
+            "risk genes from the local catalogs. Produce a ranked table and a volcano-style plot."
         ),
         icon="/public/avatars/ad1.png",
     ),
     cl.Starter(
-        label="Single-cell microglia subtypes in AD",
+        label="AD variant lookup via RADR",
         message=(
-            "Using single-cell RNA-seq data, characterize microglia subtypes present in "
-            "Alzheimer's disease brain tissue. Identify disease-associated microglia (DAM) "
-            "markers and compare their abundance across Braak staging levels."
+            "From the local SinaiADRD catalog, download the RADR variant table (RADR_V3.xlsx). "
+            "Summarise how many rare variants are classified as pathogenic vs. likely-pathogenic "
+            "per AD gene (APP, PSEN1, PSEN2, TREM2, SORL1, ABCA7). "
+            "Produce a stacked bar chart of variant pathogenicity by gene and list the top 10 "
+            "most penetrant variants with their ClinVar annotations."
         ),
         icon="/public/avatars/ad1.png",
     ),
