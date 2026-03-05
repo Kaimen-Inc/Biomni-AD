@@ -16,10 +16,9 @@ COPY biomni /app/biomni
 COPY chainlit_app.py chainlit.md /app/
 COPY .chainlit /app/.chainlit
 COPY public /app/public
-COPY docker/entrypoint.sh /app/docker/entrypoint.sh
+COPY --chmod=755 docker/entrypoint.sh /app/docker/entrypoint.sh
 
-RUN chmod +x /app/docker/entrypoint.sh && \
-    micromamba run -n biomni_e1 pip install --no-cache-dir -e /app
+RUN micromamba run -n biomni_e1 pip install --no-cache-dir -e /app
 
 ENV MPLBACKEND=Agg \
     PYTHONUNBUFFERED=1 \

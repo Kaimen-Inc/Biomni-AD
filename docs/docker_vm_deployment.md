@@ -222,6 +222,43 @@ Rebuild after source changes:
 docker compose up -d --build
 ```
 
+### Common runtime error: `address already in use` on port 8000
+
+If you see:
+
+- `failed to bind host port for 0.0.0.0:8000`
+- `address already in use`
+
+then another service is already using VM port `8000`.
+
+Option A (recommended): publish Biomni on another host port.
+
+Set in `.env`:
+
+```bash
+HOST_PORT=8080
+```
+
+Then restart:
+
+```bash
+docker compose down
+docker compose up -d
+```
+
+Access using:
+
+```text
+http://<VM_PUBLIC_IP>:8080
+```
+
+Option B: free port 8000 by stopping the conflicting process/container.
+
+```bash
+sudo lsof -iTCP:8000 -sTCP:LISTEN -n -P
+docker ps --format 'table {{.ID}}\t{{.Names}}\t{{.Ports}}'
+```
+
 ## 7) Optional production hardening
 
 - Put Nginx/Caddy in front for HTTPS (TLS) and domain-based access.

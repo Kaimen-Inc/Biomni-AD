@@ -15,7 +15,7 @@ services:
       BIOMNI_PATH: /app/data
       MPLBACKEND: Agg
     ports:
-      - "8000:8000"
+      - "${HOST_PORT:-8000}:8000"
     volumes:
       - ./data:/app/data
       - ./runs:/app/runs

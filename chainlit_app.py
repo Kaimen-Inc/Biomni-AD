@@ -426,9 +426,8 @@ async def set_chat_profiles():
         cl.ChatProfile(
             name="AD1",
             markdown_description=(
-                "**AD1 — Alzheimer's Disease Co-Scientist**\n\n"
-                "Specialized for AD/dementia research: ADNI, ROSMAP, UK Biobank, "
-                "multi-omics, biomarker discovery, drug repurposing."
+                "**Biomni-AD — Your Alzheimer's Disease Co-Scientist**\n\n"
+                "What would you like to discover about Alzheimer's today?"
             ),
             icon="/public/avatars/ad1.png",
         ),
