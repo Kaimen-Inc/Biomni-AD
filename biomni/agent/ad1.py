@@ -82,10 +82,10 @@ class AD1(A1):
         return f"""
 ### AD1_LOCAL_DATA_POLICY_START
 AD1 GLOBAL PRIORITY (APPLIES TO ALL TASKS):
-1. Local data first: always inspect BIOMNI_DATA_PATH and the data lake before web search.
-   - Data root: {data_root_dir or 'not set'}
-   - Data lake: {getattr(self, 'data_lake_dir', 'not set')}
-   - Use os.listdir() to discover datasets at the data root.
+1. Local data first: always inspect the built-in data lake and user data directory before web search.
+   - Built-in data lake: {getattr(self, 'data_lake_dir', 'not set')}
+   - User data directory (BIOMNI_DATA_PATH): {data_root_dir or 'not set'}
+   - Use os.listdir() on both locations to discover available datasets.
 2. BiomniAD catalogs: scan JSON catalogs in biomni/know_how/resource/ for AD datasets with download URIs.
 3. External sources third: use web/literature/databases only to supplement missing local evidence.
 4. Code generation last: write custom code only when built-in tools and available data are insufficient.
@@ -468,8 +468,8 @@ Data lake files: {len(local_items)}
                 ad_instruction = f"""
 
 AD/DEMENTIA TOOL PRIORITY — ALWAYS FOLLOW THIS ORDER:
-1. **Local data first**: Scan BIOMNI_DATA_PATH ({data_root_dir}) and data lake for any locally available AD datasets.
-   Use os.listdir() on the data root — datasets may be placed directly there.
+1. **Local data first**: Scan the built-in data lake ({getattr(self, 'data_lake_dir', 'not set')}) and user data directory ({data_root_dir}) for any locally available AD datasets.
+   Use os.listdir() on both locations — the data lake has curated datasets; the user directory may contain additional data.
 2. **BiomniAD catalogs second**: Load JSON catalogs from biomni/know_how/resource/ to find datasets with download URIs.
 3. **Web & literature search third**: Use advanced_web_search(), search_pubmed(), search_biorxiv() to supplement.
 4. **Code generation last**: Write custom Python/R code only when the above cannot answer directly.

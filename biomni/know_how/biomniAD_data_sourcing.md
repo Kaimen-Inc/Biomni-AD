@@ -38,7 +38,7 @@ for d in datasets:
         print(f"      -> {fi['name']}: {fi['uri']}")
 ```
 
-## Available AD datasets (quick reference)
+## Available AD datasets (quick reference, check json files for more details)
 
 ### NIAGADS (NG*) — genetics / omics / biomarkers
 
@@ -71,7 +71,7 @@ for d in datasets:
 | NG00180 | Four Plasma pQTL and mQTL Atlases | pQTL / mQTL |
 | NG00182 | CSF/Plasma ATN Biomarkers Multi-Ancestry | Biomarker GWAS |
 
-### Sinai / Huang Lab
+### Sinai
 
 | ID | Title | Modality |
 |----|-------|----------|
@@ -91,15 +91,6 @@ for d in datasets:
 | HCP | Human Connectome Project | Structural / functional MRI |
 | Pan-UKBB-AD | Pan-UK Biobank AD Proxy GWAS | GWAS sumstats |
 
-## External AD discovery portals
-
-If local catalogs do not suffice, explore:
-
-- **ssREAD** ([bmblx.bmi.osumc.edu/ssread/](https://bmblx.bmi.osumc.edu/ssread/)) — largest integrated scRNA-seq/spatial DB for AD
-- **Alzheimer DataLENS** ([alzdatalens.partners.org](https://alzdatalens.partners.org)) — harmonized AMP-AD analytics
-- **SEA-AD Portal** ([sea-ad.org](https://sea-ad.org)) — comprehensive brain cell atlas
-- **AD Knowledge Portal** ([adknowledgeportal.org](https://adknowledgeportal.org)) — AMP-AD home (Synapse account suggested)
-- **HCP Open Access** (S3: `s3://hcp-openaccess/`) — MRI repository
 
 ## CRISPRbrain API
 

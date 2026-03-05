@@ -157,30 +157,37 @@ class A1:
             os.makedirs(path)
             print(f"Created directory: {path}")
 
-        # --- Begin custom folder/file checks ---
-        benchmark_dir = os.path.join(path, "biomni_data", "benchmark")
-        data_lake_dir = os.path.join(path, "biomni_data", "data_lake")
+        # --- Locate the built-in data lake shipped with the repo ---
+        # The repo-local data/ folder is the PRIMARY source for data lake and benchmark
+        # files — they are already present and should NOT be re-downloaded on every start.
+        # BIOMNI_DATA_PATH (the `path` argument) is for user-supplied additional data only.
+        _repo_root = Path(__file__).resolve().parents[2]  # biomni/agent/a1.py → repo root
+        _builtin_data_dir = _repo_root / "data" / "biomni_data"
+        builtin_data_lake_dir = str(_builtin_data_dir / "data_lake")
+        builtin_benchmark_dir = str(_builtin_data_dir / "benchmark")
 
-        # Create the biomni_data directory structure
-        os.makedirs(benchmark_dir, exist_ok=True)
-        os.makedirs(data_lake_dir, exist_ok=True)
+        # Ensure the built-in directories exist (no-op if already present)
+        os.makedirs(builtin_data_lake_dir, exist_ok=True)
+        os.makedirs(builtin_benchmark_dir, exist_ok=True)
 
         if expected_data_lake_files is None:
             expected_data_lake_files = list(self.data_lake_dict.keys())
 
-            # Check and download missing data lake files
-            print("Checking and downloading missing data lake files...")
+            # Check and download ONLY missing files into the repo-local data lake.
+            # check_and_download_s3_files skips any file that already exists locally,
+            # so if the full data lake is already present this becomes a no-op.
+            print(f"Checking data lake at: {builtin_data_lake_dir}")
             check_and_download_s3_files(
                 s3_bucket_url="https://biomni-release.s3.amazonaws.com",
-                local_data_lake_path=data_lake_dir,
+                local_data_lake_path=builtin_data_lake_dir,
                 expected_files=expected_data_lake_files,
                 folder="data_lake",
             )
 
             # Check if benchmark directory structure is complete
             benchmark_ok = False
-            if os.path.isdir(benchmark_dir):
-                patient_gene_detection_dir = os.path.join(benchmark_dir, "hle")
+            if os.path.isdir(builtin_benchmark_dir):
+                patient_gene_detection_dir = os.path.join(builtin_benchmark_dir, "hle")
                 if os.path.isdir(patient_gene_detection_dir):
                     benchmark_ok = True
 
@@ -188,7 +195,7 @@ class A1:
                 print("Checking and downloading benchmark files...")
                 check_and_download_s3_files(
                     s3_bucket_url="https://biomni-release.s3.amazonaws.com",
-                    local_data_lake_path=benchmark_dir,
+                    local_data_lake_path=builtin_benchmark_dir,
                     expected_files=[],  # Empty list - will download entire folder
                     folder="benchmark",
                 )
@@ -196,9 +203,12 @@ class A1:
             print("Skipping datalake download (load_datalake=False)")
             print("Note: Some tools may require datalake files to function properly.")
 
+        # data_root_dir = user data directory (BIOMNI_DATA_PATH) for additional user datasets
         self.data_root_dir = os.path.abspath(path)
-        self.path = os.path.join(path, "biomni_data")
-        self.data_lake_dir = os.path.join(self.path, "data_lake")
+        self.user_data_dir = self.data_root_dir  # alias — clearly user-supplied data
+        # data_lake_dir = repo-local built-in data lake (primary, read from repo)
+        self.path = str(_builtin_data_dir)
+        self.data_lake_dir = builtin_data_lake_dir
         self.custom_data_index_path = os.path.join(self.data_lake_dir, "_custom_data_index.json")
         self.auto_network_limited_mode = auto_network_limited_mode
         self.network_limited_mode = False
@@ -433,13 +443,18 @@ For all analyses in this run:
         if os.path.exists(candidate_in_data_lake):
             return os.path.abspath(candidate_in_data_lake)
 
-        # Also check the data root directory (BIOMNI_DATA_PATH root)
+        # 2. Check the user data directory (BIOMNI_DATA_PATH)
         root_dir = getattr(self, "data_root_dir", None)
         if root_dir:
             candidate_in_root = os.path.join(root_dir, data_path)
             if os.path.exists(candidate_in_root):
                 return os.path.abspath(candidate_in_root)
+            # Also check nested biomni_data structure in user dir
+            candidate_in_user_lake = os.path.join(root_dir, "biomni_data", "data_lake", data_path)
+            if os.path.exists(candidate_in_user_lake):
+                return os.path.abspath(candidate_in_user_lake)
 
+        # 3. CWD-relative
         if os.path.exists(data_path):
             return os.path.abspath(data_path)
 
@@ -1490,6 +1505,7 @@ After that, you have two options:
 2) When you think it is ready, directly provide a solution that adheres to the required format for the given task to the user. Your solution should be enclosed using "<solution>" tag, for example: The answer is <solution> A </solution>. IMPORTANT: You must end the solution block with </solution> tag.
 
 You have many chances to interact with the environment to receive the observation. So you can decompose your code into multiple steps.
+IMPORTANT: Do NOT provide <solution> until ALL steps in your plan are completed and checked off [✓]. After each <observation>, review your checklist — if unchecked steps remain, proceed to the next step with <execute>. Multi-step analyses require multiple rounds of execution.
 Don't overcomplicate the code. Keep it simple and easy to understand.
 When writing the code, please print out the steps and results in a clear and concise manner, like a research log.
 When calling the existing python functions in the function dictionary, YOU MUST SAVE THE OUTPUT and PRINT OUT the result.
@@ -1945,8 +1961,18 @@ Each library is listed with its description to help you understand its functiona
                 }
                 self._execution_results.append(execution_entry)
 
-                observation = f"\n<observation>{result}</observation>"
-                state["messages"].append(AIMessage(content=observation.strip()))
+                observation = f"<observation>{result}</observation>"
+                # Use HumanMessage so the LLM treats the observation as new input
+                # requiring a response. This maintains proper user↔assistant role
+                # alternation (critical for Anthropic API) and prevents non-thinking
+                # models from concluding the task is done after one execution.
+                continuation = (
+                    f"{observation}\n\n"
+                    "Review your plan checklist above. If any steps still have [ ] "
+                    "(unchecked), continue to the next step using <execute>. "
+                    "Only use <solution> when ALL steps are [✓] completed."
+                )
+                state["messages"].append(HumanMessage(content=continuation))
 
             return state
 
@@ -2541,11 +2567,20 @@ Each library is listed with its description to help you understand its functiona
             msg_content = getattr(msg, "content", "")
 
             if msg_type in ["human", "system"]:
-                cells.append({
-                    "cell_type": "markdown",
-                    "metadata": {},
-                    "source": [f"**{msg_type.title()}**: {msg_content}"]
-                })
+                # Check if this human message carries an observation result
+                obs_match = re.search(r"<observation>(.*?)</observation>", msg_content, re.DOTALL)
+                if msg_type == "human" and obs_match:
+                    cells.append({
+                        "cell_type": "markdown",
+                        "metadata": {},
+                        "source": [f"**Observation**:\n```\n{obs_match.group(1).strip()}\n```"]
+                    })
+                else:
+                    cells.append({
+                        "cell_type": "markdown",
+                        "metadata": {},
+                        "source": [f"**{msg_type.title()}**: {msg_content}"]
+                    })
             elif msg_type == "ai":
                 code_blocks = re.findall(r"<execute>(.*?)</execute>", msg_content, re.DOTALL)
                 thinking = msg_content
@@ -2951,8 +2986,17 @@ Each library is listed with its description to help you understand its functiona
 
         Note:
             Human messages don't increment the step counter as they are not considered
-            steps in the agent's process.
+            steps in the agent's process, unless they contain <observation> tags
+            (execution results forwarded as human messages for role alternation).
         """
+        # If this human message contains an observation tag, delegate to the AI
+        # message processor which already handles observation rendering.
+        if "<observation>" in clean_output.lower():
+            content, step_number, _ = self._process_ai_message(
+                clean_output, content, step_number, set(), include_images=True
+            )
+            return content, step_number, first_human_shown
+
         if "each response must include thinking process" in clean_output.lower():
             parsing_error_content = create_parsing_error_html()
             content += f"{parsing_error_content}\n\n"

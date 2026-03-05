@@ -157,34 +157,44 @@ def _list_local_data_lake_files(base_path: str, max_items: int = 30) -> list[str
 
 
 def _build_welcome_local_dataset_section() -> str:
-    """Build markdown block displayed at the bottom of the Chainlit welcome page."""
-    configured_data_root = os.getenv("BIOMNI_DATA_PATH") or os.getenv("BIOMNI_PATH") or DEFAULT_PATH
-    root_entries = _list_path_entries(configured_data_root, max_items=12)
-    data_lake_files = _list_local_data_lake_files(configured_data_root, max_items=20)
+    """Build a collapsed markdown block shown at the bottom of the Chainlit welcome page."""
+    # Data lake always sourced from the repo-local built-in location
+    _repo_root = Path(__file__).resolve().parent
+    builtin_data_lake = _repo_root / "data" / "biomni_data" / "data_lake"
+    data_lake_files = _list_local_data_lake_files(str(_repo_root / "data"), max_items=200)
+
+    # User data from BIOMNI_DATA_PATH — optional, for additional user datasets only
+    user_data_root = os.getenv("BIOMNI_DATA_PATH") or os.getenv("BIOMNI_PATH") or ""
+    user_entries = _list_path_entries(user_data_root, max_items=12) if user_data_root else []
+
+    # One-line summary for the collapsed header
+    summary_parts = [f"{len(data_lake_files)} data lake files"]
+    if user_entries:
+        summary_parts.append(f"{len(user_entries)} user data entries")
 
     lines: list[str] = []
-    lines.append("### Available Local Datasets")
+    lines.append(f"<details><summary>📊 {' · '.join(summary_parts)} available — click to expand</summary>")
     lines.append("")
-    lines.append(f"- BIOMNI_DATA_PATH: `{configured_data_root}`")
-
-    if root_entries:
-        lines.append("- Root entries:")
-        lines.extend([f"  - `{name}`" for name in root_entries])
-    else:
-        lines.append("- Root entries: *(none found)*")
-
-    lines.append(f"- Data lake files detected: **{len(data_lake_files)}**")
+    lines.append(f"**Built-in Data Lake** — `{builtin_data_lake}`")
+    lines.append("")
     if data_lake_files:
-        lines.extend([f"  - `{name}`" for name in data_lake_files])
+        for name in data_lake_files:
+            lines.append(f"- `{name}`")
+    else:
+        lines.append("- *(none found)*")
 
-    if USER_DATA_PATH:
-        user_entries = _list_path_entries(USER_DATA_PATH, max_items=10)
-        lines.append(f"- User data path: `{USER_DATA_PATH}`")
+    if user_data_root:
+        lines.append("")
+        lines.append(f"**User Data (BIOMNI_DATA_PATH)** — `{user_data_root}`")
+        lines.append("")
         if user_entries:
-            lines.append("- User data entries:")
-            lines.extend([f"  - `{name}`" for name in user_entries])
+            for name in user_entries:
+                lines.append(f"- `{name}`")
         else:
-            lines.append("- User data entries: *(none found)*")
+            lines.append("- *(none found)*")
+
+    lines.append("")
+    lines.append("</details>")
 
     return "\n".join(lines)
 
@@ -298,18 +308,18 @@ def _build_dataset_listing(agent) -> str:
         "━━━━━━━━━━━━━",
     ]
 
-    # BIOMNI_DATA_PATH root folder (user may place files directly here)
-    configured_data_root = os.getenv("BIOMNI_DATA_PATH") or os.getenv("BIOMNI_PATH") or DEFAULT_PATH
+    # User data directory — BIOMNI_DATA_PATH is for additional user-supplied datasets only
+    user_data_root = os.getenv("BIOMNI_DATA_PATH") or os.getenv("BIOMNI_PATH") or ""
     lines.append("")
-    lines.append("📍 DATA ROOT")
-    lines.append(f"Path: {configured_data_root}")
-    root_entries = _list_path_entries(configured_data_root, max_items=25)
+    lines.append("📍 USER DATA DIRECTORY (BIOMNI_DATA_PATH)")
+    lines.append(f"Path: {user_data_root or '(not configured)'}")
+    root_entries = _list_path_entries(user_data_root, max_items=25) if user_data_root else []
     if root_entries:
         lines.append(f"Items: {len(root_entries)}")
         for name in root_entries:
             lines.append(f"  • {name}")
     else:
-        lines.append("Items: (none found or path unavailable)")
+        lines.append("Items: (none found or not configured)")
     lines.append("")
 
     if local_items:
@@ -374,7 +384,7 @@ def _build_dataset_listing(agent) -> str:
             lines.append("Items: (path does not exist or is not a directory)")
         lines.append("")
 
-    lines.append("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+    lines.append("━━━━━━━━━━━━━━")
     lines.append("Tip: put files in BIOMNI_DATA_PATH root or biomni_data/data_lake")
 
     return "\n".join(lines)
@@ -566,7 +576,7 @@ async def on_message(message: cl.Message):
     if agent_type == "ad1":
         ad_keywords = getattr(agent, "ad_keywords", [])
         if any(kw.lower() in prompt.lower() for kw in ad_keywords):
-            async with cl.Step(name="🧠 AD Context Detected", show_input=False) as step:
+            async with cl.Step(name="🧠 AD Context Detected", type="tool", show_input=False) as step:
                 await run_in_executor(agent._inject_ad_context)
                 step.output = (
                     "Specialized AD/dementia data sourcing protocols injected into context."
@@ -576,7 +586,7 @@ async def on_message(message: cl.Message):
     # Phase 2: Tool retrieval
     # ------------------------------------------------------------------
     if getattr(agent, "use_tool_retriever", False):
-        async with cl.Step(name="🔍 Selecting Resources", show_input=False) as step:
+        async with cl.Step(name="🔍 Selecting Resources", type="retrieval", show_input=False) as step:
             try:
                 resources = await run_in_executor(
                     agent._prepare_resources_for_retrieval, prompt
@@ -585,7 +595,18 @@ async def on_message(message: cl.Message):
                     await run_in_executor(
                         agent.update_system_prompt_with_selected_resources, resources
                     )
-                    step.output = f"Selected {len(resources)} relevant tools, datasets, and libraries."
+                    tools_n = len(resources.get('tools', []))
+                    data_n = len(resources.get('data_lake', []))
+                    libs_n = len(resources.get('libraries', []))
+                    knowhow_n = len(resources.get('know_how', []))
+                    total = tools_n + data_n + libs_n + knowhow_n
+                    step.output = (
+                        f"Selected {total} resources: "
+                        f"🔧 {tools_n} tools, "
+                        f"📊 {data_n} datasets, "
+                        f"⚙️ {libs_n} libraries, "
+                        f"📚 {knowhow_n} know-how documents."
+                    )
                 else:
                     step.output = "No resources selected; proceeding with full tool set."
             except Exception as exc:
@@ -666,7 +687,7 @@ async def _interactive_planning(agent, prompt: str, agent_type: str = "a1") -> s
             HumanMessage(content=prompt),
         ]
 
-        async with cl.Step(name="📋 Generating Research Plan", show_input=False) as step:
+        async with cl.Step(name="📋 Generating Research Plan", type="llm", show_input=False) as step:
             try:
                 response = await run_in_executor(agent.llm.invoke, planning_messages)
                 plan_text = response.content if hasattr(response, "content") else str(response)
@@ -754,7 +775,7 @@ async def _stream_execution(
             first_tag = min(tag_positions)
             thinking = content[:first_tag].strip()
             if thinking:
-                async with cl.Step(name="🤔 Thinking", show_input=False) as step:
+                async with cl.Step(name="🤔 Thinking", type="llm", show_input=False) as step:
                     step.output = thinking
 
         # 2. Solution (final answer)
@@ -776,7 +797,7 @@ async def _stream_execution(
                 language = "bash"
                 code = re.sub(r"^#!(BASH|CLI)\s*", "", code, count=1)
 
-            code_step = cl.Step(name=f"⚡ Executing {language.upper()}", show_input=False)
+            code_step = cl.Step(name=f"⚡ Executing {language.upper()}", type="run", show_input=False)
             await code_step.__aenter__()
             code_step.output = f"```{language}\n{code}\n```"
             code_steps.append(code_step)
@@ -792,7 +813,7 @@ async def _stream_execution(
                 finished_step = code_steps.pop()
                 await finished_step.__aexit__(None, None, None)
 
-            async with cl.Step(name="👁 Observation", show_input=False) as obs_step:
+            async with cl.Step(name="👁 Observation", type="tool", show_input=False) as obs_step:
                 # Truncate very long output for display
                 display_obs = observation[:3000] + "\n...[truncated]" if len(observation) > 3000 else observation
                 obs_step.output = display_obs
@@ -867,7 +888,7 @@ async def _save_run_artifacts_for_agent(agent, final_state: dict, initial_files:
         agent.raw_log = list(final_state["messages"])
     agent._conversation_state = final_state
 
-    async with cl.Step(name="📦 Saving Artifacts", show_input=False) as step:
+    async with cl.Step(name="📦 Saving Artifacts", type="tool", show_input=False) as step:
         try:
             await run_in_executor(
                 agent._save_run_artifacts, run_id, current_run_dir, initial_files
