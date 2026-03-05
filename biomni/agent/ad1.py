@@ -125,6 +125,11 @@ Data lake files: {len(local_items)}
     def go(self, prompt):
         """Execute the agent with the given prompt, injecting AD context if relevant."""
         
+        # Initialize log/raw_log early so _save_run_artifacts always has them,
+        # even when super().go() raises an exception.
+        self.log = getattr(self, "log", [])
+        self.raw_log = getattr(self, "raw_log", [])
+
         # 1. Setup run directory
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         run_id = f"run_{timestamp}"
@@ -162,7 +167,13 @@ Data lake files: {len(local_items)}
         # 4. Save artifacts
         self._save_run_artifacts(run_id, current_run_dir, initial_files)
         
-        return self.log, self._conversation_state["messages"][-1].content if hasattr(self, "_conversation_state") else ""
+        last_content = ""
+        try:
+            if hasattr(self, "_conversation_state") and self._conversation_state:
+                last_content = self._conversation_state["messages"][-1].content
+        except (KeyError, IndexError, TypeError):
+            pass
+        return self.log, last_content
 
     def _save_run_artifacts(self, run_id, run_dir, initial_files):
         """Standardized logic to save all run artifacts (trace, notebook, reports, and generated files)."""

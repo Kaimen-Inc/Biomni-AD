@@ -10,6 +10,9 @@ Tell me a research question to get started, or pick one of the examples below.
 
 - BIOMNI_DATA_PATH: `/Users/kuan-linhuang/Downloads/test`
 - Root entries:
+  - `AD_high_confidence_genes.csv`
+  - `AD_high_confidence_genes_ranked.csv`
+  - `AD_prioritized_druggable_targets.csv`
   - `Biomn-AD_dataset.csv`
   - `biomni_data`
 - Data lake files detected: **20**

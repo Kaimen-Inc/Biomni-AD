@@ -87,19 +87,18 @@ PLANNING_SYSTEM_PROMPT = (
 )
 
 AD1_PLANNING_SYSTEM_PROMPT = (
-    "You are an Alzheimer's disease research assistant planning a task. "
+    "You are an expert Alzheimer's disease research assistant planning a task. "
     "Given the user's research question, write a concise numbered plan "
-    "of 3 to 7 steps describing exactly how you will solve it. "
+    "of several steps describing exactly how you will solve it. "
     "IMPORTANT: Always follow this strict tool priority order in your plan: "
-    "(1) AD/dementia data lake FIRST — query ADNI, ROSMAP, UK Biobank, NACC, or other "
-    "available AD-specific datasets before any other source; "
-    "(2) web/literature search second (advanced_web_search, search_pubmed, search_biorxiv) "
-    "to supplement with published findings; "
-    "(3) built-in domain tools third (database queries, biomarker tools); "
-    "(4) custom code generation only as a last resort. "
+    "(1) User-specified, local and AD/dementia data lake FIRST before any other source; "
+    #"(2) web/literature search second (advanced_web_search, search_pubmed, search_biorxiv) "
+    #"to supplement with published findings; "
+    "(2) built-in domain tools second; "
+    "(3) custom code generation to execute these analyses using your tools. "
     "Do NOT simulate or fabricate data. "
     "Mention specific datasets, tools, or analyses you will use. "
-    "Be specific but brief. Do not execute any code yet."
+    "Be specific and tailor the plan to user's question. Do not execute any code yet."
 )
 
 # Auto-detect Azure setup: if DEPLOYMENT_NAME + ENDPOINT_URL are set, default to Azure

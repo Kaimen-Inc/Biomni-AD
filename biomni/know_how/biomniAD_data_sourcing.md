@@ -6,7 +6,7 @@ Short, actionable guidance for AD/dementia tasks that may benefit from additiona
 
 ## When to use
 
-Trigger keywords: "Alzheimer", "AD", "dementia", "MCI", "amyloid", "tau", "neurodegeneration", "cognition", or any NIAGADS/ADSP/ROSMAP/ADNI cohort name.
+Trigger keywords: "Alzheimer", "AD", "dementia", "MCI", "amyloid", "tau", "neurodegeneration", "cognition", or any ADRD-related cohort name.
 
 ## Step-by-step agent instructions
 

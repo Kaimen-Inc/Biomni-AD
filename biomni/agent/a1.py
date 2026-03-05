@@ -2687,24 +2687,19 @@ Each library is listed with its description to help you understand its functiona
             temp_markdown_path = temp_file.name
 
         try:
-            # Add timeout for PDF generation to prevent hanging
-            import signal
+            # Use thread-based timeout (works from any thread, unlike signal.alarm)
+            import concurrent.futures
 
-            def timeout_handler(signum, frame):
-                raise TimeoutError("PDF generation timed out")
+            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+                future = executor.submit(
+                    self._convert_markdown_to_pdf, temp_markdown_path, pdf_path
+                )
+                future.result(timeout=60)
 
-            # Set timeout to 60 seconds
-            signal.signal(signal.SIGALRM, timeout_handler)
-            signal.alarm(60)
+            print(f"Conversation history saved as PDF: {pdf_path}")
+            print(f"Total steps recorded: {len(self.log)}")
 
-            try:
-                self._convert_markdown_to_pdf(temp_markdown_path, pdf_path)
-                print(f"Conversation history saved as PDF: {pdf_path}")
-                print(f"Total steps recorded: {len(self.log)}")
-            finally:
-                signal.alarm(0)  # Cancel the alarm
-
-        except TimeoutError:
+        except concurrent.futures.TimeoutError:
             print("Warning: PDF generation timed out after 60 seconds")
         except Exception as e:
             print(f"Warning: Could not convert to PDF: {e}")
