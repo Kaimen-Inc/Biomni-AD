@@ -1606,6 +1606,16 @@ Datasets may also live directly under this root (outside the data_lake subfolder
 Use os.listdir() or glob on this path to discover files placed there by the user.
 {data_root_listing}
 
+- Output Directory (for saving results):
+  The variable OUTPUT_DIR is pre-set in your Python environment and points to the current run's output folder.
+  Save ALL output files (plots, figures, result tables, intermediate data) to OUTPUT_DIR.
+  Example:
+    import os
+    plt.savefig(os.path.join(OUTPUT_DIR, "my_plot.png"))
+    df.to_csv(os.path.join(OUTPUT_DIR, "results.csv"))
+  IMPORTANT: Do NOT save generated outputs to the data root path ({data_root_path}).
+  That path is for INPUT source data only. All generated files must go into OUTPUT_DIR.
+
 - Software Library:
 {library_intro}
 Each library is listed with its description to help you understand its functionality.
@@ -2150,6 +2160,27 @@ Each library is listed with its description to help you understand its functiona
             selected_resources_names = self._prepare_resources_for_retrieval(prompt)
             self.update_system_prompt_with_selected_resources(selected_resources_names)
 
+        # Create run directory BEFORE execution so OUTPUT_DIR is available during code runs.
+        try:
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            run_id = f"run_{timestamp}"
+            runs_root = os.path.abspath(os.path.join(os.getcwd(), "runs"))
+            os.makedirs(runs_root, exist_ok=True)
+            current_run_dir = os.path.join(runs_root, run_id)
+            os.makedirs(current_run_dir, exist_ok=True)
+            self._current_run_dir = current_run_dir
+            os.environ["BIOMNI_OUTPUT_PATH"] = current_run_dir
+        except Exception as _e:
+            print(f"Warning: Could not pre-create run directory: {_e}")
+            current_run_dir = None
+            run_id = None
+
+        # Snapshot files that already exist so we can detect newly created outputs.
+        data_root_dir = getattr(self, "data_root_dir", None)
+        initial_files: set = self._get_all_files(os.getcwd())
+        if data_root_dir and os.path.isdir(data_root_dir):
+            initial_files |= self._get_all_files(data_root_dir)
+
         inputs = {"messages": [HumanMessage(content=prompt)], "next_step": None}
         config = {"recursion_limit": 500, "configurable": {"thread_id": 42}}
         self.log = []
@@ -2173,15 +2204,9 @@ Each library is listed with its description to help you understand its functiona
         # Auto-save run artifacts to runs/ directory.
         # Skip when called from a subclass that manages artifact saving itself
         # (e.g. AD1 calls super().go() then saves its own artifacts).
-        if type(self) is A1:
+        if type(self) is A1 and current_run_dir and run_id:
             try:
-                timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-                run_id = f"run_{timestamp}"
-                runs_root = os.path.abspath(os.path.join(os.getcwd(), "runs"))
-                os.makedirs(runs_root, exist_ok=True)
-                current_run_dir = os.path.join(runs_root, run_id)
-                os.makedirs(current_run_dir, exist_ok=True)
-                self._save_run_artifacts(run_id, current_run_dir, set())
+                self._save_run_artifacts(run_id, current_run_dir, initial_files)
             except Exception as _e:
                 print(f"Warning: Could not save run artifacts: {_e}")
 
@@ -2205,6 +2230,19 @@ Each library is listed with its description to help you understand its functiona
         if self.use_tool_retriever:
             selected_resources_names = self._prepare_resources_for_retrieval(prompt)
             self.update_system_prompt_with_selected_resources(selected_resources_names)
+
+        # Pre-create run directory so OUTPUT_DIR is available during code execution.
+        try:
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            run_id = f"run_{timestamp}"
+            runs_root = os.path.abspath(os.path.join(os.getcwd(), "runs"))
+            os.makedirs(runs_root, exist_ok=True)
+            current_run_dir = os.path.join(runs_root, run_id)
+            os.makedirs(current_run_dir, exist_ok=True)
+            self._current_run_dir = current_run_dir
+            os.environ["BIOMNI_OUTPUT_PATH"] = current_run_dir
+        except Exception as _e:
+            print(f"Warning: Could not pre-create run directory: {_e}")
 
         inputs = {"messages": [HumanMessage(content=prompt)], "next_step": None}
         config = {"recursion_limit": 500, "configurable": {"thread_id": 42}}
@@ -2391,6 +2429,13 @@ Each library is listed with its description to help you understand its functiona
         """
         custom_functions = getattr(self, "_custom_functions", {})
         inject_custom_functions_to_repl(custom_functions)
+
+        # Inject OUTPUT_DIR so agent-generated code saves outputs to the run folder.
+        run_dir = getattr(self, "_current_run_dir", None)
+        if run_dir:
+            from biomni.tool.support_tools import _persistent_namespace
+            _persistent_namespace["OUTPUT_DIR"] = run_dir
+            os.environ["BIOMNI_OUTPUT_PATH"] = run_dir
 
     def create_mcp_server(self, tool_modules=None):
         """
@@ -2599,19 +2644,21 @@ Each library is listed with its description to help you understand its functiona
             print(f"  ⚠️ Failed to save report/PDF: {e}")
 
         # 4. Move any newly created output files into run_dir
+        # Search in both the working directory and the BIOMNI_DATA_PATH root.
+        allowed_exts = {
+            ".png", ".jpg", ".jpeg", ".gif", ".bmp", ".webp", ".svg", ".pdf",
+            ".csv", ".tsv", ".xlsx", ".xls", ".json", ".jsonl", ".txt", ".md",
+            ".html", ".parquet", ".npy", ".npz", ".pkl", ".pt", ".h5", ".hdf5",
+            ".rds", ".loom", ".h5ad",
+        }
+        excluded_parts = {
+            "runs", ".venv", "venv", "env", ".git", "__pycache__", ".chainlit",
+            "site-packages", "dist-info", "node_modules",
+        }
+
         if initial_files:
             final_files = self._get_all_files(os.getcwd())
             new_files = final_files - initial_files
-            allowed_exts = {
-                ".png", ".jpg", ".jpeg", ".gif", ".bmp", ".webp", ".svg", ".pdf",
-                ".csv", ".tsv", ".xlsx", ".xls", ".json", ".jsonl", ".txt", ".md",
-                ".html", ".parquet", ".npy", ".npz", ".pkl", ".pt", ".h5", ".hdf5",
-                ".rds", ".loom", ".h5ad",
-            }
-            excluded_parts = {
-                "runs", ".venv", "venv", "env", ".git", "__pycache__", ".chainlit",
-                "site-packages", "dist-info", "node_modules",
-            }
 
             def _is_output(fp: str) -> bool:
                 parts = Path(os.path.relpath(fp, os.getcwd())).parts
@@ -2623,7 +2670,7 @@ Each library is listed with its description to help you understand its functiona
 
             output_files = [f for f in sorted(new_files) if _is_output(f)]
             if output_files:
-                print(f"\n📦 Moving {len(output_files)} new output file(s) to run folder:")
+                print(f"\n📦 Moving {len(output_files)} new output file(s) from working directory to run folder:")
                 for fp in output_files:
                     try:
                         dest = os.path.join(run_dir, os.path.basename(fp))
@@ -2632,6 +2679,37 @@ Each library is listed with its description to help you understand its functiona
                             dest = f"{base}_{int(datetime.now().timestamp())}{ext}"
                         shutil.move(fp, dest)
                         print(f"  ✓ {os.path.relpath(fp, os.getcwd())}")
+                    except Exception as e:
+                        print(f"  ⚠️ Could not move {fp}: {e}")
+
+        # Also collect any new output files that landed in the data root directory
+        # (in case the agent saved there instead of OUTPUT_DIR / cwd).
+        data_root_dir = getattr(self, "data_root_dir", None)
+        if (
+            data_root_dir
+            and os.path.isdir(data_root_dir)
+            and os.path.abspath(data_root_dir) != os.path.abspath(os.getcwd())
+        ):
+            final_data_files = self._get_all_files(data_root_dir)
+            new_data_files = final_data_files - (initial_files or set())
+
+            def _is_data_root_output(fp: str) -> bool:
+                # Skip files that are already in the run folder.
+                if os.path.abspath(fp).startswith(os.path.abspath(run_dir)):
+                    return False
+                return Path(fp).suffix.lower() in allowed_exts
+
+            output_data_files = [f for f in sorted(new_data_files) if _is_data_root_output(f)]
+            if output_data_files:
+                print(f"\n📦 Moving {len(output_data_files)} new output file(s) from data root to run folder:")
+                for fp in output_data_files:
+                    try:
+                        dest = os.path.join(run_dir, os.path.basename(fp))
+                        if os.path.exists(dest):
+                            base, ext = os.path.splitext(dest)
+                            dest = f"{base}_{int(datetime.now().timestamp())}{ext}"
+                        shutil.move(fp, dest)
+                        print(f"  ✓ moved from data root: {os.path.basename(fp)}")
                     except Exception as e:
                         print(f"  ⚠️ Could not move {fp}: {e}")
 

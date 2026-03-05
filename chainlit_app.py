@@ -605,7 +605,27 @@ async def on_message(message: cl.Message):
     # ------------------------------------------------------------------
     history = cl.user_session.get("history", [])
     thread_id = cl.user_session.get("thread_id", "42")
+
+    # Pre-create run directory so OUTPUT_DIR is available during code execution.
+    try:
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        _run_id = f"run_{timestamp}"
+        _runs_root = os.path.abspath(os.path.join(os.getcwd(), "runs"))
+        os.makedirs(_runs_root, exist_ok=True)
+        _current_run_dir = os.path.join(_runs_root, _run_id)
+        os.makedirs(_current_run_dir, exist_ok=True)
+        agent._current_run_dir = _current_run_dir
+        os.environ["BIOMNI_OUTPUT_PATH"] = _current_run_dir
+    except Exception as _e:
+        print(f"Warning: Could not pre-create run directory: {_e}")
+        _current_run_dir = None
+
+    # Snapshot files before execution (cwd + data root) to detect new outputs.
     initial_files = _get_all_files(os.getcwd())
+    _data_root = getattr(agent, "data_root_dir", None)
+    if _data_root and os.path.isdir(_data_root):
+        initial_files |= _get_all_files(_data_root)
+
     final_state = await _stream_execution(agent, prompt, history, thread_id)
 
     # Update conversation history with the user prompt and agent response
@@ -829,12 +849,18 @@ async def _save_ad1_artifacts(agent, final_state: dict, initial_files: set):
 
 async def _save_run_artifacts_for_agent(agent, final_state: dict, initial_files: set):
     """Save run artifacts to ./runs/ for any agent and notify the user."""
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    run_id = f"run_{timestamp}"
-    runs_root = os.path.abspath(os.path.join(os.getcwd(), "runs"))
-    os.makedirs(runs_root, exist_ok=True)
-    current_run_dir = os.path.join(runs_root, run_id)
-    os.makedirs(current_run_dir, exist_ok=True)
+    # Reuse the pre-created run directory if the agent already has one set
+    # (created before streaming so OUTPUT_DIR was available during execution).
+    if hasattr(agent, "_current_run_dir") and agent._current_run_dir:
+        current_run_dir = agent._current_run_dir
+        run_id = os.path.basename(current_run_dir)
+    else:
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        run_id = f"run_{timestamp}"
+        runs_root = os.path.abspath(os.path.join(os.getcwd(), "runs"))
+        os.makedirs(runs_root, exist_ok=True)
+        current_run_dir = os.path.join(runs_root, run_id)
+        os.makedirs(current_run_dir, exist_ok=True)
 
     # Sync internal state so artifact methods work correctly
     if "messages" in final_state:

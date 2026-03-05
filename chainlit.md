@@ -14,7 +14,10 @@ Tell me a research question to get started, or pick one of the examples below.
   - `AD_high_confidence_genes_ranked.csv`
   - `AD_prioritized_druggable_targets.csv`
   - `Biomn-AD_dataset.csv`
+  - `RADR_V3.xlsx`
+  - `RADR_pathogenicity_stacked_bar.png`
   - `biomni_data`
+  - `crisprbrain_volcano_plot.png`
 - Data lake files detected: **20**
   - `BindingDB_All_202409.tsv`
   - `DepMap_CRISPRGeneDependency.csv`
