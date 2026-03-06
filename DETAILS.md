@@ -1,364 +1,280 @@
-# DETAILS.md
-
-🔍 **Powered by [Detailer](https://detailer.ginylil.com)** - Context-aware codebase analysis
+# DETAILS.md — Biomni-AD Technical Reference
 
 
+**Related docs:** [README.md](README.md) | [ARCHITECTURE.md](ARCHITECTURE.md) | [CONTRIBUTION.md](CONTRIBUTION.md)
 
 ---
 
 ## 1. Project Overview
 
-### Project Purpose & Domain
+### Purpose
 
-This project is a comprehensive **biomedical AI toolkit and research platform** designed to facilitate **biomedical data analysis, knowledge extraction, and AI-driven reasoning**. It integrates large language models (LLMs), domain-specific bioinformatics tools, and scientific data processing pipelines to enable:
+Biomni-AD is a **biomedical AI agent platform** specialized for Alzheimer's disease and neurodegeneration research. It provides:
 
-- Automated extraction of biomedical knowledge from literature (e.g., bioRxiv papers)
-- Querying and integration of diverse biomedical databases and APIs
-- Execution of domain-specific computational biology and physiology analyses
-- AI agent orchestration for complex biomedical reasoning and tool invocation
-- Benchmarking and evaluation of biomedical tasks and datasets
+- Autonomous execution of complex AD research tasks via LLM-powered agents
+- 180+ domain-specific biomedical tools across 20 subfields
+- 53 natural-language interfaces to major biomedical databases
+- A curated data lake (~11GB, 77 files) with AD-specific catalogs
+- A Know-How Library of curated protocols and best practices
+- An interactive Chainlit UI with plan-then-approve workflow
+- Multi-provider LLM support (Claude, GPT, Gemini, Bedrock, Ollama, Groq)
 
-### Target Users and Use Cases
+### Target Users
 
-- **Biomedical researchers and data scientists** seeking to automate literature mining, data retrieval, and analysis workflows.
-- **Bioinformaticians** requiring integrated access to multiple biological databases and computational tools.
-- **AI researchers** interested in applying LLMs and autonomous agents to biomedical problem solving.
-- **Developers and integrators** building domain-specific AI pipelines and scientific workflows.
-- Use cases include:
-  - Extracting structured biomedical tasks and entities from scientific papers
-  - Querying gene, protein, disease, and pathway databases via natural language prompts
-  - Running computational models of biological systems (e.g., metabolic networks, signaling)
-  - Performing image analysis and quantitative pathology workflows
-  - Orchestrating multi-step AI reasoning with tool use and self-criticism
-
-### Core Business Logic and Domain Models
-
-- **Biomedical domain models**: gene IDs, protein structures, pathways, disease ontologies, experimental assays.
-- **Task abstractions**: benchmark tasks with prompt/response evaluation (e.g., humanity last exam, lab bench).
-- **Tool metadata schemas**: declarative descriptions of biomedical tools and APIs for dynamic invocation.
-- **AI agent workflows**: ReAct-style reasoning graphs integrating LLMs, tool calls, retrieval, and self-critique.
-- **Data models**: structured JSON, pandas DataFrames, numpy arrays representing biological data and analysis results.
+- Biomedical researchers automating literature mining, database queries, and analysis workflows
+- Bioinformaticians requiring integrated access to biological databases and computational tools
+- AI researchers applying LLMs and agents to biomedical problem-solving
+- AD/dementia researchers needing specialized data sourcing and analysis pipelines
 
 ---
 
-## 2. Architecture and Structure
-
-### High-Level Architecture
-
-The system is organized into modular layers and components:
-
-- **Core Library (`biomni/`)**: Contains main application logic, including:
-  - **Agent framework (`biomni/agent/`)**: Implements autonomous AI agents using LLMs and workflow graphs.
-  - **Task definitions (`biomni/task/`)**: Abstract base and concrete biomedical benchmark tasks.
-  - **Tool implementations (`biomni/tool/`)**: Domain-specific analysis functions, API clients, and computational biology workflows.
-  - **Tool metadata (`biomni/tool/tool_description/`)**: Declarative schemas describing tool APIs and parameters.
-  - **Model components (`biomni/model/`)**: AI-driven resource retriever for selecting relevant tools and data.
-  - **Utility modules (`biomni/utils.py`, `biomni/llm.py`, `biomni/env_desc.py`)**: Helpers for LLM instantiation, system commands, environment descriptions.
-  - **Versioning (`biomni/version.py`)**: Package version management.
-
-- **Environment Setup (`biomni_env/`)**: Scripts and configuration files for reproducible environment provisioning, including:
-  - Conda environment YAMLs (`environment.yml`, `bio_env.yml`)
-  - R package specifications (`r_packages.yml`)
-  - CLI tools installer (`install_cli_tools.sh`)
-  - Shell scripts for environment setup (`setup.sh`, `setup_path.sh`)
-
-- **Scripts (`biomni/biorxiv_scripts/`)**: Data processing pipelines for literature mining and task extraction.
-
-- **Documentation and Configuration**:
-  - Root-level files: `README.md`, `CONTRIBUTION.md`, `pyproject.toml`, `.pre-commit-config.yaml`.
-
----
-
-### Complete Repository Structure
+## 2. Repository Structure
 
 ```
-.
-├── biomni/ (90 items)
+Biomni/
+├── biomni/                        # Main library package
 │   ├── agent/
-│   │   ├── __init__.py
-│   │   ├── a1.py
-│   │   ├── env_collection.py
-│   │   ├── qa_llm.py
-│   │   └── react.py
-│   ├── biorxiv_scripts/
-│   │   ├── extract_biorxiv_tasks.py
-│   │   ├── generate_function.py
-│   │   └── process_all_subjects.py
+│   │   ├── a1.py                  # A1: general-purpose biomedical agent (~3000 lines)
+│   │   ├── ad1.py                 # AD1: Alzheimer's specialist agent (extends A1)
+│   │   ├── react.py               # ReAct engine (LangGraph state machine)
+│   │   ├── env_collection.py      # Environment and data retrieval utilities
+│   │   ├── function_generator.py  # Dynamic function generation
+│   │   └── qa_llm.py              # Question-answering LLM wrappers
+│   ├── tool/
+│   │   ├── tool_description/      # Declarative tool schemas (18 files, one per domain)
+│   │   ├── schema_db/             # Pickled database API schemas (25 files)
+│   │   ├── biochemistry.py        # Molecular structure, protein analysis
+│   │   ├── bioengineering.py      # CRISPR, synthetic biology
+│   │   ├── bioimaging.py          # Microscopy, histopathology
+│   │   ├── biophysics.py          # Molecular dynamics
+│   │   ├── cancer_biology.py      # DepMap, oncogenomics
+│   │   ├── cell_biology.py        # Single-cell analysis
+│   │   ├── database.py            # 53 external database API functions
+│   │   ├── genetics.py            # GWAS, variant analysis
+│   │   ├── genomics.py            # NGS, sequence analysis
+│   │   ├── glycoengineering.py    # Glycan analysis
+│   │   ├── immunology.py          # TCR, immune profiling
+│   │   ├── lab_automation.py      # PyLabRobot integration
+│   │   ├── literature.py          # PubMed, arXiv search
+│   │   ├── microbiology.py        # Microbiome, phylogenetics
+│   │   ├── molecular_biology.py   # Cloning, primers
+│   │   ├── pathology.py           # Histology analysis
+│   │   ├── pharmacology.py        # Drug discovery, ADMET
+│   │   ├── physiology.py          # Organ systems
+│   │   ├── support_tools.py       # Python REPL, Bash, R runners
+│   │   ├── synthetic_biology.py   # Plasmid design
+│   │   ├── systems_biology.py     # Network analysis
+│   │   └── tool_registry.py       # Tool metadata management and discovery
 │   ├── model/
-│   │   ├── __init__.py
-│   │   └── retriever.py
+│   │   └── retriever.py           # LLM-powered tool/dataset selection
 │   ├── task/
-│   │   ├── __init__.py
-│   │   ├── base_task.py
-│   │   ├── hle.py
-│   │   └── lab_bench.py
-│   ├── tool/ (65 items)
-│   │   ├── schema_db/ (25 items)
-│   │   │   ├── cbioportal.pkl
-│   │   │   ├── clinvar.pkl
-│   │   │   ├── dbsnp.pkl
-│   │   │   ├── emdb.pkl
-│   │   │   ├── ensembl.pkl
-│   │   │   ├── geo.pkl
-│   │   │   ├── gnomad.pkl
-│   │   │   ├── gtopdb.pkl
-│   │   │   ├── gwas_catalog.pkl
-│   │   │   ├── interpro.pkl
-│   │   │   └── ... (15 more files)
-│   │   ├── tool_description/ (18 items)
-│   │   │   ├── biochemistry.py
-│   │   │   ├── bioengineering.py
-│   │   │   ├── biophysics.py
-│   │   │   ├── cancer_biology.py
-│   │   │   ├── cell_biology.py
-│   │   │   ├── database.py
-│   │   │   ├── genetics.py
-│   │   │   ├── genomics.py
-│   │   │   ├── immunology.py
-│   │   │   ├── literature.py
-│   │   │   ├── microbiology.py
-│   │   │   ├── molecular_biology.py
-│   │   │   ├── pathology.py
-│   │   │   ├── pharmacology.py
-│   │   │   ├── physiology.py
-│   │   │   ├── support_tools.py
-│   │   │   ├── synthetic_biology.py
-│   │   │   └── systems_biology.py
-│   │   ├── __init__.py
-│   │   ├── biochemistry.py
-│   │   ├── bioengineering.py
-│   │   ├── biophysics.py
-│   │   ├── cancer_biology.py
-│   │   ├── cell_biology.py
-│   │   ├── database.py
-│   │   ├── genetics.py
-│   │   └── ... (12 more files)
-│   ├── __init__.py
-│   ├── env_desc.py
-│   ├── llm.py
-│   ├── utils.py
-│   └── version.py
-├── biomni_env/ (9 items)
-│   ├── README.md
-│   ├── bio_env.yml
-│   ├── cli_tools_config.json
-│   ├── environment.yml
-│   ├── install_cli_tools.sh
-│   ├── install_r_packages.R
-│   ├── r_packages.yml
-│   ├── setup.sh
-│   └── setup_path.sh
-├── figs/
-│   └── biomni_logo.png
+│   │   ├── base_task.py           # Abstract benchmark task interface
+│   │   ├── hle.py                 # Humanity's Last Exam benchmark
+│   │   └── lab_bench.py           # Lab bench dataset evaluation
+│   ├── eval/                      # BiomniEval1 evaluation framework
+│   ├── biorxiv_scripts/           # Literature mining pipelines
+│   ├── know_how/
+│   │   ├── loader.py              # Know-How retrieval logic
+│   │   ├── single_cell_annotation.md    # scRNA-seq best practices
+│   │   ├── sgRNA_design_guide.md        # CRISPR guide RNA design
+│   │   ├── biomniAD_data_sourcing.md    # AD data access guide
+│   │   └── resource/
+│   │       ├── NIAGADS_datasets_with_files.json  # 27 AD genetics datasets
+│   │       ├── SinaiADRD.json                     # 5 Sinai AD datasets
+│   │       ├── CRISPick_download_links.txt        # CRISPR resources
+│   │       └── addgene_grna_sequences.csv         # sgRNA library
+│   ├── config.py                  # Centralized configuration (BiomniConfig dataclass)
+│   ├── env_desc.py                # Data lake dictionary (~77 files, 11GB)
+│   ├── env_desc_cm.py             # Commercial-mode data lake variant
+│   ├── llm.py                     # Multi-provider LLM factory
+│   ├── utils.py                   # Utility functions
+│   └── version.py                 # Package version (0.0.8)
+│
+├── chainlit_app.py                # Chainlit UI entry point (plan-then-approve workflow)
+├── run_chainlit.sh                # Chainlit launcher script
+├── chainlit.md                    # Chainlit welcome page content
+├── docker/                        # Docker entrypoint scripts
+├── docker-compose.yml             # Docker Compose configuration
+├── Dockerfile                     # Micromamba-based container image
+├── pyproject.toml                 # Package metadata (Python >=3.11, Apache 2.0)
+├── biomni_env/
+│   ├── README.md                  # Environment setup instructions
+│   ├── environment.yml            # Base conda environment
+│   ├── bio_env.yml                # Full environment with R (200+ packages)
+│   ├── bio_env_py310.yml          # Python 3.10 environment for cnvkit
+│   ├── r_packages.yml             # R package specifications
+│   ├── setup.sh                   # Main setup script (>10 hours)
+│   ├── install_cli_tools.sh       # Bioinformatics CLI tool installer
+│   └── cli_tools_config.json      # CLI tools configuration
 ├── tutorials/
-│   ├── examples/
-│   │   └── cloning.ipynb
-│   ├── 101_biomni.ipynb
-│   └── biomni_101.ipynb
-├── .gitignore
-├── .pre-commit-config.yaml
-├── CONTRIBUTION.md
-├── LICENSE
+│   ├── biomni_101.ipynb           # Getting started notebook
+│   └── examples/                  # Use case examples (MCP, cloning, etc.)
+├── data/
+│   └── biomni_data/
+│       ├── data_lake/             # ~77 data files (~11GB), auto-downloaded
+│       └── benchmark_data/        # Evaluation datasets
+├── docs/
+│   ├── configuration.md           # Configuration management guide
+│   ├── known_conflicts.md         # Package conflict workarounds
+│   ├── docker_vm_deployment.md    # VM/Docker deployment guide
+│   ├── mcp_integration.md         # MCP server integration guide
+│   └── building_documentation.md  # Sphinx documentation build guide
 ├── README.md
-└── pyproject.toml
+├── ARCHITECTURE.md
+├── CONTRIBUTION.md
+├── DETAILS.md                     # This file
+├── license_info.md                # Data source licensing for commercial use
+└── LICENSE                        # Apache 2.0
 ```
 
 ---
 
-## 3. Technical Implementation Details
+## 3. Core Module Descriptions
 
-### Core Modules and Their Roles
+### `biomni/agent/a1.py` — A1 General Agent
 
-#### `biomni/agent/`
+The primary agent class (~3000 lines). Manages the full task lifecycle:
+- Initializes the data lake and tool registry on startup
+- Selects relevant tools via the `ToolRetriever`
+- Executes a LangGraph-based ReAct loop (reason → act → observe → repeat)
+- Supports MCP tool integration via `add_mcp()`
+- Exports execution traces as PDF via `save_conversation_history()`
+- Launches Gradio and Chainlit UIs
 
-- Implements autonomous AI agents using the **ReAct paradigm**:
-  - `react.py`: Main ReAct agent class managing reasoning, tool invocation, retrieval, and self-criticism workflows.
-  - `env_collection.py`: Environment and data retrieval utilities.
-  - `qa_llm.py`: Question-answering LLM wrappers.
-  - `a1.py`: Possibly experimental or auxiliary agent code.
+### `biomni/agent/ad1.py` — AD1 Alzheimer's Agent
 
-- Uses **langgraph** for workflow graph orchestration and **langchain** for LLM integration.
+Extends A1 with AD-specific capabilities (developed by Kuan-lin Huang, PhD):
+- Detects AD-related keywords (Alzheimer, dementia, MCI, amyloid, tau, etc.)
+- Injects curated AD dataset catalogs into the system prompt (NIAGADS, SinaiADRD, CRISPRbrain)
+- Enforces local-data-first policy via `_enforce_local_data_priority()`
+- Downloads AD-specific data subsets to `data/biomniad/`
+- Provides `launch_ui()` for the Chainlit plan-then-approve interface
 
-#### `biomni/task/`
+### `biomni/agent/react.py` — ReAct Engine
 
-- Defines **benchmark tasks** with a common interface:
-  - `base_task.py`: Abstract base class specifying methods like `get_example()`, `evaluate()`, `output_class()`.
-  - `hle.py`: "Humanity Last Exam" task implementation.
-  - `lab_bench.py`: Lab bench dataset task.
+Core reasoning loop built on LangGraph:
+- State machine: `Agent node → Tool node → Agent node → ...`
+- Handles tool call dispatch and result injection
+- Applies timeout management to individual tool executions
+- Supports custom callback handlers for logging
 
-- Tasks load data (e.g., parquet files), generate prompts, and evaluate LLM responses.
+### `biomni/model/retriever.py` — Tool Retriever
 
-#### `biomni/tool/`
+LLM-powered resource selector:
+- Parses user queries to identify relevant tools, datasets, and libraries
+- Returns ranked lists of tools/data for inclusion in the agent's context
+- Uses Anthropic or OpenAI LLMs for selection
 
-- Contains **domain-specific scientific analysis functions** organized by subdomains:
-  - `biochemistry.py`, `bioengineering.py`, `biophysics.py`, `cancer_biology.py`, `cell_biology.py`, `genetics.py`, `pathology.py`, `physiology.py`, `systems_biology.py`, etc.
-  - Each file implements multiple functions performing analyses, simulations, or data processing workflows.
-  - Functions accept input files/parameters and return detailed textual logs and output files.
+### `biomni/config.py` — Configuration
 
-- **API client modules** (e.g., `database.py`) provide facade functions to query external biomedical databases (UniProt, GWAS Catalog, Ensembl, etc.) via REST or GraphQL APIs, often using LLMs to generate query payloads from natural language prompts.
+`BiomniConfig` dataclass providing centralized defaults:
+- `llm`: model name (default: `claude-sonnet-4-5`)
+- `source`: provider (default: `Anthropic`)
+- `timeout_seconds`: tool execution timeout (default: 600)
+- `commercial_mode`: filter non-commercial content (default: False)
+- Reads from environment variables; overridable at runtime via `default_config`
 
-- **Tool registry (`tool_registry.py`)** manages metadata about available tools, supporting dynamic registration and lookup.
+### `biomni/llm.py` — LLM Factory
 
-#### `biomni/tool/tool_description/`
+Instantiates LangChain LLM objects for multiple providers:
+- Anthropic (Claude), OpenAI (GPT), Azure OpenAI, Google Gemini, AWS Bedrock, Groq, Ollama, Custom (OpenAI-compatible)
 
-- Contains **declarative metadata schemas** describing tool APIs:
-  - Each file exports a `description` list of dictionaries defining tool names, descriptions, required and optional parameters with types and defaults.
-  - Supports **dynamic API generation, validation, and documentation**.
-  - Organized by biological domain (e.g., genetics, immunology, pathology).
+### `biomni/env_desc.py` — Data Lake Registry
 
-#### `biomni/model/retriever.py`
+Contains `data_lake_dict`: a mapping of dataset names to S3 download URLs and descriptions. Drives automatic data lake initialization on first agent run.
 
-- Implements `ToolRetriever` class for **AI-driven resource selection**:
-  - Uses LLMs (OpenAI or Anthropic) to parse user queries and select relevant tools, datasets, and libraries.
-  - Encapsulates prompt formatting and response parsing logic.
+### `biomni/know_how/` — Know-How Library
 
-#### `biomni/utils.py` and `biomni/llm.py`
+Markdown documents with curated protocols and best practices. Loaded by `loader.py` and retrieved based on query relevance. Metadata headers track authors, affiliations, license, and commercial-use eligibility.
 
-- `utils.py`: Utility functions for running system commands (R, Bash), file operations, schema generation, logging, and colorized printing.
-- `llm.py`: Factory functions to instantiate LLMs (OpenAI, Anthropic) with configurable parameters.
+### `chainlit_app.py` — Chainlit UI
 
-#### `biomni/env_desc.py`
-
-- Contains **environment and dataset descriptions**, acting as a centralized metadata repository for datasets and experimental environments.
-
----
-
-### Environment Setup (`biomni_env/`)
-
-- `setup.sh`: Main shell script to create conda environment, install R packages, and CLI bioinformatics tools.
-- `install_cli_tools.sh`: Automates downloading, compiling, and installing external bioinformatics command-line tools, managing PATH and verification.
-- `r_packages.yml`: Lists R packages required.
-- `environment.yml` and `bio_env.yml`: Conda environment specifications.
-- `setup_path.sh`: Shell script to update environment variables for CLI tools.
-
----
-
-### Entry Points and Execution Flow
-
-- **Agent usage**: Instantiate `react` agent from `biomni.agent.react`, configure with tools and retrieval, then call `go(prompt)` to run reasoning workflows.
-- **Task evaluation**: Use classes in `biomni.task` to load datasets, generate prompts, and evaluate LLM outputs.
-- **Tool invocation**: Call functions in `biomni.tool` modules or use API facades in `database.py` to query external resources.
-- **Metadata-driven tool discovery**: Use `tool_registry.py` and `tool_description` schemas to dynamically discover and validate tools.
-- **Environment setup**: Run `biomni_env/setup.sh` to provision environment and install dependencies.
+Interactive plan-then-approve interface:
+1. Agent generates a numbered research plan (3–7 steps)
+2. User reviews and chooses: Approve & Execute, Revise Plan, or Cancel
+3. Full ReAct loop runs with collapsible step traces (Thinking → Code → Observation → Answer)
 
 ---
 
-## 4. Development Patterns and Standards
+## 4. Key Entry Points
 
-### Code Organization Principles
+**Python API (notebooks or scripts):**
 
-- **Modular design**: Clear separation of concerns by domain and functionality (agent, task, tool, model).
-- **Functional programming style**: Most analysis modules use standalone functions with explicit inputs and outputs.
-- **Declarative metadata**: Tool descriptions and schemas are separated from implementation, enabling dynamic validation and UI generation.
-- **Abstract base classes**: Used in `biomni.task.base_task` to enforce consistent task interfaces.
-- **Factory pattern**: Used in `llm.py` to instantiate LLMs based on configuration.
-- **Strategy pattern**: Task implementations and tool retrieval use interchangeable strategies.
+```python
+# General-purpose agent
+from biomni.agent import A1
+agent = A1(llm='claude-sonnet-4-5', path='./data')
+agent.go("Plan a CRISPR screen to identify T cell exhaustion regulators")
 
-### Testing and Coverage
+# Alzheimer's specialist agent
+from biomni.agent.ad1 import AD1
+agent = AD1(llm='claude-sonnet-4-5')
+agent.go("Analyze APOE variants in Alzheimer's disease risk")
 
-- No explicit test files detected; testing likely manual or via notebooks (`tutorials/`).
-- Tasks and tools return detailed logs suitable for manual verification.
-- Metadata schemas facilitate automated validation of inputs.
+# Gradio web interface
+A1().launch_gradio_demo()    # General agent
+AD1().launch_ui()            # AD agent (Chainlit)
+```
 
-### Error Handling and Logging
+**Chainlit interactive UI (plan-then-approve):**
 
-- Use of try-except blocks around external calls and subprocesses.
-- Logging via custom callback handlers (`PromptLogger`, `NodeLogger`) in LLM interactions.
-- Utilities provide colorized printing and error wrappers for robustness.
+```bash
+bash run_chainlit.sh                 # http://localhost:8000
+bash run_chainlit.sh --port 8080     # custom port
+bash run_chainlit.sh --headless      # no browser (servers/CI)
+```
 
-### Configuration Management
+**Docker deployment:**
 
-- Environment variables for API keys (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`).
-- YAML and JSON files for environment and tool configuration.
-- Dynamic loading of schemas from pickle files for API request generation.
-- CLI tools and R packages installed via scripted environment setup.
-
----
-
-## 5. Integration and Dependencies
-
-### External Libraries
-
-- **LLM & AI Frameworks**: `langchain_core`, `langchain_openai`, `langchain_anthropic`
-- **Scientific Computing**: `numpy`, `pandas`, `scipy`, `scikit-image`, `matplotlib`, `BioPython`, `cobra`, `sklearn`
-- **Data Processing**: `pickle`, `json`, `requests`, `PyPDF2`
-- **System and OS**: `subprocess`, `os`, `sys`, `tempfile`, `multiprocessing`
-- **Others**: `tqdm` (progress bars), `enum`, `ast` (code introspection)
-
-### External APIs and Data Sources
-
-- Biomedical databases: UniProt, GWAS Catalog, Ensembl, ClinVar, dbSNP, EMDB, GEO, GnomAD, InterPro, etc.
-- Bioinformatics tools: PLINK, IQ-TREE, GCTA, MACS2, samtools, LUMPY, installed via CLI tools installer.
-- R packages for statistical and bioinformatics analyses.
-
-### Build and Deployment Dependencies
-
-- Python 3 environment managed via Conda (`environment.yml`).
-- R environment with specified packages (`r_packages.yml`).
-- Shell scripts for CLI tool installation and environment setup.
-- Pre-commit hooks for code quality and security.
+```bash
+cp .env.example .env
+docker compose build
+docker compose up -d
+# Access at http://localhost:8000
+```
 
 ---
 
-## 6. Usage and Operational Guidance
+## 5. Development Patterns
 
-### Getting Started
+| Pattern | Usage |
+|---------|-------|
+| **ReAct loop** | LangGraph state machine in `react.py` |
+| **Factory** | LLM provider selection in `llm.py` |
+| **Registry** | Tool discovery via `tool_registry.py` |
+| **Declarative schemas** | Tool metadata in `tool_description/` separates spec from implementation |
+| **Abstract base** | `base_task.py` enforces consistent benchmark interface |
+| **Dataclass config** | `BiomniConfig` in `config.py` for centralized defaults |
 
-1. **Environment Setup**
-   - Run `biomni_env/setup.sh` to create the Conda environment, install R packages, and CLI tools.
-   - Source `biomni_env/setup_path.sh` or add it to your shell profile to configure PATH.
+### Code Style
+- Python >=3.11, formatted with `ruff`
+- Pre-commit hooks for linting and security checks (`ruff`, `bandit`)
+- Functional style in tool modules (standalone functions, explicit I/O)
+- Type annotations in core agent and config modules
 
-2. **API Keys**
-   - Set environment variables `OPENAI_API_KEY` and/or `ANTHROPIC_API_KEY` for LLM access.
-
-3. **Running Agents**
-   - Import and instantiate the `react` agent from `biomni.agent.react`.
-   - Configure with desired tools and retrieval options.
-   - Call `go(prompt)` to execute reasoning workflows.
-
-4. **Executing Tasks**
-   - Use classes in `biomni.task` to load datasets and evaluate LLM responses.
-   - Implement new tasks by subclassing `base_task` and following the interface.
-
-5. **Querying Databases**
-   - Use `biomni.tool.database` functions (e.g., `query_uniprot`, `query_gwas_catalog`) to retrieve data via natural language or direct parameters.
-
-6. **Extending Tools**
-   - Add new tool metadata in `biomni/tool/tool_description/` as structured dictionaries.
-   - Implement corresponding analysis functions in `biomni/tool/`.
-   - Register tools in `tool_registry.py` for discovery.
-
-### Monitoring and Debugging
-
-- Use logging callbacks (`PromptLogger`, `NodeLogger`) to trace LLM interactions.
-- Check output logs returned by analysis functions for detailed execution info.
-- Use pre-commit hooks to maintain code quality.
-
-### Performance and Scalability
-
-- Modular design allows parallel execution of tasks and tools.
-- Timeout wrappers in agent tools prevent hanging executions.
-- Use of efficient numerical libraries (`numpy`, `scipy`) for computational tasks.
-- Large data handled via streaming and chunking (e.g., PDF text extraction).
-
-### Security Considerations
-
-- API keys managed via environment variables, not hardcoded.
-- Pre-commit hooks include security checks.
-- External tool installations verified via version commands.
-
-### Observability
-
-- Progress bars (`tqdm`) used in data processing scripts.
-- Structured logs and JSON outputs facilitate downstream analysis.
-- Agent workflows produce detailed message histories for audit.
+### Testing
+- No automated test suite; verification is via notebook examples and agent runs
+- Each tool contribution requires a test prompt demonstrating correct agent behavior
+- See `tutorials/biomni_101.ipynb` for interactive exploration
 
 ---
 
-## Summary
+## 6. Configuration Reference
 
-This project is a **modular, extensible biomedical AI platform** integrating **LLM-powered agents**, **domain-specific scientific tools**, and **metadata-driven APIs** to automate complex biomedical research workflows. It emphasizes **declarative tool descriptions**, **dynamic resource retrieval**, and **robust environment provisioning** to enable researchers and developers to build, evaluate, and extend AI-driven biomedical applications efficiently.
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `ANTHROPIC_API_KEY` | — | Required for Claude models |
+| `OPENAI_API_KEY` | — | Required for OpenAI/Azure models |
+| `GEMINI_API_KEY` | — | For Google Gemini models |
+| `GROQ_API_KEY` | — | For Groq-hosted models |
+| `AWS_BEARER_TOKEN_BEDROCK` | — | For AWS Bedrock models |
+| `BIOMNI_DATA_PATH` | `./data` | Data directory for the agent |
+| `BIOMNI_TIMEOUT_SECONDS` | `600` | Tool execution timeout |
+| `BIOMNI_LLM` | `claude-sonnet-4-5` | Default LLM for Chainlit UI |
+| `BIOMNI_AUTO_NETWORK_LIMITED_MODE` | `true` | Fall back to local data on network failure |
+
+See [docs/configuration.md](docs/configuration.md) for full details.
 
 ---
 
-# End of DETAILS.md
+*Last updated: March 2026*

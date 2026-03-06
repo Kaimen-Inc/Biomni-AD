@@ -26,49 +26,69 @@
 
 ## Overview
 
-
 Biomni is a general-purpose biomedical AI agent designed to autonomously execute a wide range of research tasks across diverse biomedical subfields. By integrating cutting-edge large language model (LLM) reasoning with retrieval-augmented planning and code-based execution, Biomni helps scientists dramatically enhance research productivity and generate testable hypotheses.
+
+## Biomni-AD
+
+**Biomni-AD** is an Alzheimer's disease-specialized extension of [Biomni](https://github.com/snap-stanford/Biomni) (Stanford SNAP Lab), additionally developed by **Kuan-lin Huang, PhD**. It adds the **AD1 agent** — a domain-expert variant of the general A1 agent — along with an AD-focused data lake, curated dataset catalogs (NIAGADS, SinaiADRD, CRISPRbrain), and a plan-then-approve Chainlit UI optimized for neurodegeneration research workflows.
+
+## Documentation Index
+
+| Document | Description |
+|----------|-------------|
+| [README.md](README.md) | This file — quick start, usage, and feature overview |
+| [ARCHITECTURE.md](ARCHITECTURE.md) | System design, agent framework, tool ecosystem, and data lake |
+| [CONTRIBUTION.md](CONTRIBUTION.md) | How to contribute tools, data, software, benchmarks, and know-how |
+| [DETAILS.md](DETAILS.md) | Technical reference: module roles, code organization, and entry points |
+| [chainlit.md](chainlit.md) | Chainlit interactive UI welcome page content |
+| [biomni_env/README.md](biomni_env/README.md) | Environment installation instructions |
+| [docs/configuration.md](docs/configuration.md) | Configuration management guide |
+| [docs/known_conflicts.md](docs/known_conflicts.md) | Known package conflicts and workarounds |
+| [docs/docker_vm_deployment.md](docs/docker_vm_deployment.md) | Docker and VM deployment guide |
+| [docs/mcp_integration.md](docs/mcp_integration.md) | Model Context Protocol (MCP) server integration |
+| [docs/building_documentation.md](docs/building_documentation.md) | Building Sphinx API documentation |
 
 
 ## Quick Start
 
 ### Installation
 
-Our software environment is massive and we provide a single setup.sh script to setup.
-Follow this [file](biomni_env/README.md) to setup the env first.
+**Step 1 — Set up the environment**
 
-Then activate the environment E1:
+The Biomni environment includes 200+ scientific Python packages, R packages, and CLI bioinformatics tools. Follow [biomni_env/README.md](biomni_env/README.md) to run the setup script (choose the option that fits your needs).
+
+**Step 2 — Activate the environment**
 
 ```bash
 conda activate biomni_e1
 ```
 
-then install the biomni official pip package:
+**Step 3 — Install the Biomni-AD package**
+
+Install from this repository (recommended for Biomni-AD features):
+
+```bash
+pip install git+https://github.com/kuanlinhuang/Biomni.git@biomni-ad
+```
+
+Or install the latest stable release from PyPI:
 
 ```bash
 pip install biomni --upgrade
 ```
 
-For the latest update, install from the github source version, or do:
+**Step 4 — Configure your API keys**
 
-```bash
-pip install git+https://github.com/snap-stanford/Biomni.git@main
-```
-
-Lastly, configure your API keys using one of the following methods:
+Choose one of the two methods below:
 
 <details>
-<summary>Click to expand</summary>
+<summary>Click to expand API key setup options</summary>
 
-#### Option 1: Using .env file (Recommended)
-
-Create a `.env` file in your project directory:
+#### Option 1: .env file (Recommended)
 
 ```bash
-# Copy the example file
 cp .env.example .env
-
-# Edit the .env file with your actual API keys
+# Then open .env and fill in your API keys
 ```
 
 Your `.env` file should look like:
@@ -112,21 +132,23 @@ AWS_REGION=us-east-1
 # BIOMNI_AUTO_NETWORK_LIMITED_MODE=true
 ```
 
-#### Option 2: Using shell environment variables
+#### Option 2: Shell environment variables
 
-Alternatively, configure your API keys in bash profile `~/.bashrc`:
+Add to your `~/.bashrc` (or `~/.zshrc`):
 
 ```bash
-export ANTHROPIC_API_KEY="YOUR_API_KEY"
-export OPENAI_API_KEY="YOUR_API_KEY" # optional if you just use Claude
-export OPENAI_ENDPOINT="https://your-resource-name.openai.azure.com/" # optional unless you are using Azure
-export AWS_BEARER_TOKEN_BEDROCK="YOUR_BEDROCK_API_KEY" # optional for AWS Bedrock models
-export AWS_REGION="us-east-1" # optional, defaults to us-east-1 for Bedrock
-export GEMINI_API_KEY="YOUR_GEMINI_API_KEY" #optional if you want to use a gemini model
-export GROQ_API_KEY="YOUR_GROQ_API_KEY" # Optional: set this to use models served by Groq
-export LLM_SOURCE="Groq" # Optional: set this to use models served by Groq
+# Required — at least one LLM provider key:
+export ANTHROPIC_API_KEY="your_key"   # Claude models
+export OPENAI_API_KEY="your_key"      # GPT models (optional)
+export GEMINI_API_KEY="your_key"      # Gemini models (optional)
+export GROQ_API_KEY="your_key"        # Groq models (optional)
 
+# Azure OpenAI (optional):
+export OPENAI_ENDPOINT="https://your-resource.openai.azure.com/"
 
+# AWS Bedrock (optional):
+export AWS_BEARER_TOKEN_BEDROCK="your_key"
+export AWS_REGION="us-east-1"
 ```
 </details>
 
@@ -209,21 +231,19 @@ pip install "chainlit>=1.0"
 
 **Launch:**
 ```bash
-# Works from any shell state — no need to manually activate biomni_e1 first.
-# The script always uses biomni_e1's Python via `conda run`, so a .venv
-# active in the same shell cannot shadow the wrong interpreter.
 bash run_chainlit.sh                   # opens http://localhost:8000
 bash run_chainlit.sh --port 8080       # custom port
 bash run_chainlit.sh --headless        # no browser auto-open (servers/CI)
 ```
 
+> **Note:** Always use `bash run_chainlit.sh` — not `chainlit run chainlit_app.py` directly. The script ensures the correct `biomni_e1` Python is used even when another virtual environment (`.venv`) is active in the same shell.
+
 **Environment variables (optional):**
+
 | Variable | Default | Description |
-|---|---|---|
+|----------|---------|-------------|
 | `BIOMNI_LLM` | `claude-sonnet-4-5` | LLM model used by both agents |
 | `BIOMNI_PATH` | `./data` | Data directory for the agent |
-
-> **Note:** Always use `bash run_chainlit.sh` rather than calling `chainlit run chainlit_app.py` directly. The script pins execution to `biomni_e1`'s Python via `conda run`, which is necessary when a virtualenv (`.venv`) is also active in the same shell.
 
 #### 4. Docker Deployment (Local or VM)
 
@@ -418,7 +438,7 @@ We're actively seeking community contributions to expand our Know-How Library! S
 - **Experimental design guidelines** (sample size, controls, validation)
 - **Domain-specific knowledge** (drug formulation, animal models, clinical trials, etc.)
 
-Know-how documents should be practical, succinct, and include proper attribution. Use [this know-how](know_how/single_cell_annotation.md) as an example.
+Know-how documents should be practical, succinct, and include proper attribution. Use [this know-how](biomni/know_how/single_cell_annotation.md) as an example.
 
 **To contribute:** Create a markdown file following our template and submit a pull request.
 

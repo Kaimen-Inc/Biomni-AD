@@ -2,6 +2,8 @@
 
 Thank you for your interest in contributing to Biomni! We're building the infrastructure layer for biomedical AI agents, and we welcome contributions from the community. Contributors with significant contributions will be invited to co-author publications in top-tier journals and conferences.
 
+**Related docs:** [README.md](README.md) | [ARCHITECTURE.md](ARCHITECTURE.md) | [DETAILS.md](DETAILS.md)
+
 ## Getting Started
 
 Before contributing, please ensure you:
@@ -27,7 +29,7 @@ Tools are implemented as Python functions in `biomni/tool/XXX.py`, organized by 
    from biomni.utils import function_to_api_schema
    from biomni.llm import get_llm
 
-   llm = get_llm('claude-sonnet-4-20250514')
+   llm = get_llm('claude-sonnet-4-5')
    desc = function_to_api_schema(function_code, llm)
    ```
 4. **Create a test prompt** that uses your tool and verify the agent works correctly
@@ -54,8 +56,6 @@ If the data source has no API access, follow the process below:
 2. **Prepare download link** with verified redistribution rights
 3. **Add entry** to `data_lake_dict` in `biomni/env_desc.py`
 4. **Submit a pull request** with the download link
-
-Then, make a PR.
 
 ### 💻 Adding New Software
 
@@ -100,6 +100,34 @@ class YourBenchmark:
 2. **Implement required methods** as shown above
 3. **Provide data download link** for associated datasets
 4. **Submit a pull request**
+
+### 📚 Adding Know-How Documents
+
+The Know-How Library (`biomni/know_how/`) provides curated protocols, best practices, and troubleshooting guides automatically retrieved by agents during reasoning. Community contributions expand the library's coverage and quality.
+
+**Suitable contributions:**
+- Lab protocols (cell culture, flow cytometry, western blotting, etc.)
+- Computational analysis best practices (NGS workflows, microscopy, single-cell, etc.)
+- Troubleshooting guides (common pitfalls and solutions)
+- Experimental design guidelines (sample size, controls, validation)
+- Domain-specific knowledge (drug formulation, animal models, clinical trials, etc.)
+
+**Steps:**
+1. **Write a markdown file** following the format of [biomni/know_how/single_cell_annotation.md](biomni/know_how/single_cell_annotation.md) — include a metadata header (authors, affiliations, license, commercial use flag) and practical, succinct content
+2. **Place it** in `biomni/know_how/`
+3. **Submit a pull request** with a brief description of the domain and source material
+
+### 🧠 Biomni-AD Contributions
+
+Contributions specific to Alzheimer's disease and neurodegeneration research are especially welcome in this repository. Biomni-AD is maintained by **Kuan-lin Huang, PhD**.
+
+**AD-specific contribution types:**
+- **AD Tools**: New analysis functions for AD/dementia data (e.g., GWAS, eQTL, proteomics, imaging) in `biomni/tool/`
+- **AD Data**: New AD dataset registrations in `biomni/env_desc.py`, or new dataset catalogs in `biomni/know_how/resource/`
+- **AD Know-How**: Protocols and best practices for AD research in `biomni/know_how/biomniAD_data_sourcing.md` or new know-how files
+- **AD Benchmarks**: Evaluation tasks for AD reasoning in `biomni/task/`
+
+For Biomni-AD-specific issues, please open issues on the Biomni-AD repository (this repo) rather than the upstream snap-stanford/Biomni repository.
 
 ### 🐛 Bug Fixes & Enhancements
 

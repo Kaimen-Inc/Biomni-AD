@@ -2,7 +2,17 @@
 
 This directory contains scripts and configuration files to set up a comprehensive bioinformatics environment with various tools and packages.
 
+**Biomni-AD** (this repository) is developed by **Kuan-lin Huang, PhD**, building on the foundational [Biomni](https://github.com/snap-stanford/Biomni) platform by Stanford's SNAP Lab.
+
 1. Clone the repository:
+
+   **Biomni-AD (this fork — recommended for AD research):**
+   ```bash
+   git clone https://github.com/kuanlinhuang/Biomni.git
+   cd Biomni/biomni_env
+   ```
+
+   **Upstream Biomni (Stanford SNAP Lab):**
    ```bash
    git clone https://github.com/snap-stanford/Biomni.git
    cd Biomni/biomni_env

@@ -4,6 +4,10 @@
 
 **Biomni** is a general-purpose biomedical AI agent platform developed by Stanford's SNAP Lab. It enables autonomous execution of complex research tasks across diverse biomedical subfields by integrating large language model (LLM) reasoning with retrieval-augmented planning and code-based execution.
 
+**Biomni-AD** is the Alzheimer's disease-specialized extension of Biomni. It introduces the AD1 agent, AD-specific data catalogs, and an interactive Chainlit UI with a plan-then-approve workflow.
+
+**Related docs:** [README.md](README.md) | [CONTRIBUTION.md](CONTRIBUTION.md) | [DETAILS.md](DETAILS.md) | [docs/configuration.md](docs/configuration.md)
+
 ---
 
 ## Table of Contents
@@ -26,6 +30,7 @@ graph TB
     subgraph User Interface
         CLI[CLI Interface]
         Gradio[Gradio Web UI]
+        Chainlit[Chainlit UI<br/>Plan-Approve]
         API[Python API]
     end
     
@@ -56,6 +61,8 @@ graph TB
     
     CLI --> A1
     Gradio --> A1
+    Chainlit --> AD1
+    Chainlit --> A1
     API --> A1
     A1 --> ReAct
     AD1 --> A1
@@ -296,7 +303,7 @@ biomni/know_how/
 The `AD1` agent extends `A1` with AD-specific capabilities:
 
 ```python
-from biomni.agent import AD1
+from biomni.agent.ad1 import AD1
 
 agent = AD1(llm='claude-sonnet-4-20250514')
 agent.go("Analyze APOE variants in Alzheimer's disease")
@@ -489,4 +496,4 @@ Biomni is **Apache 2.0 licensed**, but individual tools and datasets may carry m
 
 ---
 
-*Generated from codebase analysis on 2026-02-08*
+*Last updated: March 2026*
