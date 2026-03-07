@@ -46,7 +46,7 @@ class AD1(A1):
         if hasattr(self, "_get_data_lake_items"):
             local_items = self._get_data_lake_items()
 
-        # Also gather data root items (datasets at BIOMNI_DATA_PATH root)
+        # Also gather data root items (datasets under BIOMNI_USER_DATA_PATH / BIOMNI_DATA_PATH)
         data_root_items = []
         data_root_dir = getattr(self, "data_root_dir", None)
         if hasattr(self, "_get_data_root_items"):
@@ -84,7 +84,7 @@ class AD1(A1):
 AD1 GLOBAL PRIORITY (APPLIES TO ALL TASKS):
 1. Local data first: always inspect the built-in data lake and user data directory before web search.
    - Built-in data lake: {getattr(self, 'data_lake_dir', 'not set')}
-   - User data directory (BIOMNI_DATA_PATH): {data_root_dir or 'not set'}
+    - User data directory (BIOMNI_USER_DATA_PATH / BIOMNI_DATA_PATH): {data_root_dir or 'not set'}
    - Use os.listdir() on both locations to discover available datasets.
 2. BiomniAD catalogs: scan JSON catalogs in biomni/know_how/resource/ for AD datasets with download URIs.
 3. External sources third: use web/literature/databases only to supplement missing local evidence.

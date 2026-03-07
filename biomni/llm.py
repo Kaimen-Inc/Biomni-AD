@@ -1,5 +1,5 @@
 import os
-from typing import TYPE_CHECKING, Literal, Optional
+from typing import TYPE_CHECKING, Literal, Optional, cast
 
 from dotenv import load_dotenv
 from langchain_core.language_models.chat_models import BaseChatModel
@@ -38,11 +38,12 @@ def get_llm(
     # Use config values for any unspecified parameters
     if config is not None:
         if model is None:
-            model = config.llm_model
+            model = config.llm
         if temperature is None:
             temperature = config.temperature
         if source is None:
-            source = config.source
+            if config.source in ALLOWED_SOURCES:
+                source = cast(SourceType, config.source)
         if base_url is None:
             base_url = config.base_url
         if api_key is None:
@@ -57,9 +58,9 @@ def get_llm(
         api_key = "EMPTY"
     # Auto-detect source from model name if not specified
     if source is None:
-        env_source = os.getenv("LLM_SOURCE")
+        env_source = os.getenv("LLM_SOURCE") or os.getenv("BIOMNI_SOURCE")
         if env_source in ALLOWED_SOURCES:
-            source = env_source
+            source = cast(SourceType, env_source)
         else:
             if model[:7] == "claude-":
                 source = "Anthropic"
@@ -94,6 +95,12 @@ def get_llm(
                 ("anthropic.claude-", "amazon.titan-", "meta.llama-", "mistral.", "cohere.", "ai21.", "us.")
             ):
                 source = "Bedrock"
+            elif (
+                os.getenv("AZURE_ANTHROPIC_API_KEY")
+                and os.getenv("ENDPOINT_URL")
+                and "anthropic" in os.getenv("ENDPOINT_URL", "")
+            ):
+                source = "Anthropic"
             else:
                 raise ValueError("Unable to determine model source. Please specify 'source' parameter.")
 
@@ -132,6 +139,7 @@ def get_llm(
                 model=model,
                 temperature=1,  # Set to default value for gpt-5, will be removed in payload
                 stop_sequences=stop_sequences,
+                base_url=os.getenv("OPENAI_BASE_URL"),
                 use_responses_api=True,
                 output_version="v0",
             )
@@ -140,6 +148,7 @@ def get_llm(
                 model=model,
                 temperature=temperature,
                 stop_sequences=stop_sequences,
+                base_url=os.getenv("OPENAI_BASE_URL"),
             )
 
     elif source == "AzureOpenAI":
@@ -178,6 +187,22 @@ def get_llm(
             raise ImportError(  # noqa: B904
                 "langchain-anthropic package is required for Anthropic models. Install with: pip install langchain-anthropic"
             )
+
+        azure_endpoint = os.getenv("ENDPOINT_URL")
+        uses_azure_anthropic = bool(azure_endpoint and "azure.com" in azure_endpoint and "anthropic" in azure_endpoint)
+        azure_deployment = os.getenv("DEPLOYMENT_NAME")
+
+        # Azure Anthropic routes by deployment name rather than canonical Claude model IDs.
+        if uses_azure_anthropic and azure_deployment and model.startswith("claude-"):
+            model = azure_deployment
+
+        # Allow Azure Anthropic credentials while keeping backwards compatibility.
+        # Anthropic SDK reads ANTHROPIC_API_KEY / ANTHROPIC_BASE_URL from environment.
+        azure_anthropic_key = os.getenv("AZURE_ANTHROPIC_API_KEY")
+        if uses_azure_anthropic and azure_anthropic_key:
+            os.environ["ANTHROPIC_API_KEY"] = azure_anthropic_key
+        if uses_azure_anthropic and azure_endpoint:
+            os.environ["ANTHROPIC_BASE_URL"] = azure_endpoint
 
         # Ensure ANTHROPIC_API_KEY is loaded from bash_profile if not in environment
         if not os.environ.get("ANTHROPIC_API_KEY"):

@@ -263,8 +263,12 @@ docker compose up -d
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `ANTHROPIC_API_KEY` | — | Required for Claude models |
-| `OPENAI_API_KEY` | — | Required for OpenAI/Azure models |
+| `ANTHROPIC_API_KEY` | — | Required for direct Anthropic Claude models |
+| `OPENAI_API_KEY` | — | Required for direct OpenAI GPT models |
+| `AZURE_ANTHROPIC_API_KEY` | — | Required for Claude models via Azure AI Foundry |
+| `AZURE_OPENAI_API_KEY` | — | Required for GPT models via Azure OpenAI |
+| `ENDPOINT_URL` | — | Azure endpoint (used by Azure Anthropic and optionally Azure OpenAI) |
+| `DEPLOYMENT_NAME` | — | Azure deployment name |
 | `GEMINI_API_KEY` | — | For Google Gemini models |
 | `GROQ_API_KEY` | — | For Groq-hosted models |
 | `AWS_BEARER_TOKEN_BEDROCK` | — | For AWS Bedrock models |

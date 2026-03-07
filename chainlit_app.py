@@ -9,7 +9,8 @@ Usage:
 Environment variables:
     BIOMNI_LLM      LLM model name (default: claude-sonnet-4-5)
     BIOMNI_PATH     Data directory (default: ./data)
-    ANTHROPIC_API_KEY / OPENAI_API_KEY  (as needed by your chosen LLM)
+    Provider keys as needed: ANTHROPIC_API_KEY / OPENAI_API_KEY /
+    AZURE_ANTHROPIC_API_KEY / AZURE_OPENAI_API_KEY
 """
 
 import asyncio
@@ -101,19 +102,26 @@ AD1_PLANNING_SYSTEM_PROMPT = (
     "Be specific and tailor the plan to user's question. Do not execute any code yet."
 )
 
-# Auto-detect Azure setup: if DEPLOYMENT_NAME + ENDPOINT_URL are set, default to Azure
+# Auto-detect Azure OpenAI setup: require deployment + endpoint + Azure OpenAI key.
+# This avoids misrouting users who configure Azure Anthropic with the same
+# ENDPOINT_URL/DEPLOYMENT_NAME fields.
 _azure_deployment = os.getenv("DEPLOYMENT_NAME")
 _azure_endpoint = os.getenv("ENDPOINT_URL")
-_azure_default = f"azure-{_azure_deployment}" if (_azure_deployment and _azure_endpoint) else None
-DEFAULT_LLM = os.getenv("BIOMNI_LLM") or _azure_default or "claude-sonnet-4-5"
+_azure_openai_key = os.getenv("AZURE_OPENAI_API_KEY")
+_azure_default = f"azure-{_azure_deployment}" if (_azure_deployment and _azure_endpoint and _azure_openai_key) else None
+_azure_anthropic_key = os.getenv("AZURE_ANTHROPIC_API_KEY")
+_azure_anthropic_default = (
+    _azure_deployment
+    if (_azure_deployment and _azure_endpoint and "anthropic" in _azure_endpoint and _azure_anthropic_key)
+    else None
+)
+DEFAULT_LLM = os.getenv("BIOMNI_LLM") or _azure_default or _azure_anthropic_default or "claude-sonnet-4-5"
 DEFAULT_PATH = os.getenv("BIOMNI_PATH", "./data")
 # Set BIOMNI_AGENT=a1 to force the A1 agent on startup (skips the profile selector)
 FORCE_AGENT = os.getenv("BIOMNI_AGENT", "").lower()  # "a1" | "ad1" | ""
 
 SUPPORTED_IMAGE_EXTENSIONS = (".png", ".jpg", ".jpeg", ".gif", ".bmp", ".webp")
 
-# Optional user-specified data folder shown alongside the datalake in the portal
-USER_DATA_PATH = os.getenv("BIOMNI_USER_DATA_PATH", "").strip()
 CHAINLIT_MD_PATH = Path(__file__).with_name("chainlit.md")
 _WELCOME_DATASET_BLOCK_START = "<!-- BIOMNI_LOCAL_DATASET_SECTION_START -->"
 _WELCOME_DATASET_BLOCK_END = "<!-- BIOMNI_LOCAL_DATASET_SECTION_END -->"
@@ -128,6 +136,172 @@ def _list_path_entries(path: str, max_items: int = 40) -> list[str]:
     except OSError:
         return []
     return entries[:max_items]
+
+
+def _resolve_user_data_roots() -> list[tuple[str, str]]:
+    """Resolve configured user data roots from supported env vars (deduplicated)."""
+    candidates = [
+        ("BIOMNI_USER_DATA_PATH", os.getenv("BIOMNI_USER_DATA_PATH", "").strip()),
+        ("BIOMNI_DATA_PATH", os.getenv("BIOMNI_DATA_PATH", "").strip()),
+        ("BIOMNI_PATH", os.getenv("BIOMNI_PATH", "").strip()),
+    ]
+
+    resolved: list[tuple[str, str]] = []
+    seen: set[str] = set()
+    for env_name, raw_path in candidates:
+        if not raw_path:
+            continue
+        abs_path = os.path.abspath(raw_path)
+        if abs_path in seen:
+            continue
+        seen.add(abs_path)
+        resolved.append((env_name, abs_path))
+    return resolved
+
+
+def _list_path_entries_recursive(path: str, max_items: int = 80, max_depth: int = 10) -> tuple[list[str], int]:
+    """Recursively list non-hidden files under a directory.
+
+    Returns a (preview_items, total_file_count) tuple. Preview items are
+    relative POSIX-style paths suitable for UI display.
+    """
+    if not path or not os.path.isdir(path):
+        return [], 0
+
+    excluded_dirs = {
+        ".git", "__pycache__", ".venv", "venv", "env", "node_modules", "site-packages"
+    }
+
+    preview: list[str] = []
+    total_count = 0
+
+    for root, dirs, files in os.walk(path):
+        rel_root = os.path.relpath(root, path)
+        depth = 0 if rel_root == "." else rel_root.count(os.sep) + 1
+        if depth > max_depth:
+            dirs[:] = []
+            continue
+
+        dirs[:] = sorted([d for d in dirs if not d.startswith(".") and d not in excluded_dirs])
+
+        for file_name in sorted(files):
+            if file_name.startswith("."):
+                continue
+            total_count += 1
+            rel = file_name if rel_root == "." else f"{rel_root}/{file_name}"
+            rel = rel.replace(os.sep, "/")
+            if len(preview) < max_items:
+                preview.append(rel)
+
+    return preview, total_count
+
+
+def _build_tree_preview_lines(paths: list[str], max_lines: int = 60, max_depth: int = 3) -> list[str]:
+    """Render relative file paths as a compact folder tree preview.
+
+    Directory counts are computed from the provided path sample.
+    """
+    # Tree node shape: {"dirs": {name: node}, "files": [name, ...]}
+    tree: dict[str, object] = {"dirs": {}, "files": []}
+
+    for rel_path in sorted(paths):
+        parts = [p for p in rel_path.split("/") if p]
+        if not parts:
+            continue
+
+        node = tree
+        for idx, part in enumerate(parts):
+            is_file = idx == len(parts) - 1
+            if is_file:
+                files = node.setdefault("files", [])
+                if isinstance(files, list):
+                    files.append(part)
+            else:
+                dirs = node.setdefault("dirs", {})
+                if not isinstance(dirs, dict):
+                    break
+                if part not in dirs:
+                    dirs[part] = {"dirs": {}, "files": []}
+                child = dirs.get(part)
+                if not isinstance(child, dict):
+                    break
+                node = child
+
+    lines: list[str] = []
+
+    def _count_files(node: dict[str, object]) -> int:
+        count = 0
+        files = node.get("files", [])
+        dirs = node.get("dirs", {})
+
+        if isinstance(files, list):
+            count += len(files)
+        if isinstance(dirs, dict):
+            for child in dirs.values():
+                if isinstance(child, dict):
+                    count += _count_files(child)
+        return count
+
+    def _render(node: dict[str, object], prefix: str, depth: int) -> bool:
+        if len(lines) >= max_lines:
+            return False
+        dirs = node.get("dirs", {})
+        files = node.get("files", [])
+
+        dir_names = sorted(dirs.keys()) if isinstance(dirs, dict) else []
+        file_names = sorted(str(f) for f in files) if isinstance(files, list) else []
+        entries: list[tuple[str, str, object | None]] = []
+        for dirname in dir_names:
+            child = dirs.get(dirname) if isinstance(dirs, dict) else None
+            entries.append(("dir", dirname, child))
+        for filename in file_names:
+            entries.append(("file", filename, None))
+
+        for idx, (kind, name, child) in enumerate(entries):
+            is_last = idx == len(entries) - 1
+            branch = "└─ " if is_last else "├─ "
+            next_prefix = prefix + ("   " if is_last else "│  ")
+
+            if kind == "dir":
+                child_count = _count_files(child) if isinstance(child, dict) else 0
+                lines.append(f"{prefix}{branch}📁 {name}/ ({child_count})")
+                if len(lines) >= max_lines:
+                    return False
+                if isinstance(child, dict):
+                    if depth + 1 < max_depth:
+                        if not _render(child, next_prefix, depth + 1):
+                            return False
+                    elif child_count > 0:
+                        lines.append(f"{next_prefix}…")
+                        if len(lines) >= max_lines:
+                            return False
+            else:
+                lines.append(f"{prefix}{branch}📄 {name}")
+                if len(lines) >= max_lines:
+                    return False
+
+        return True
+
+    _render(tree, prefix="", depth=0)
+    return lines
+
+
+def _build_user_data_tree_content(root_path: str, preview_files: int = 300) -> tuple[str, int]:
+    """Build detailed tree text for one configured user data root."""
+    preview, total_files = _list_path_entries_recursive(root_path, max_items=preview_files)
+    if total_files == 0:
+        return "(no files found)", 0
+
+    lines = _build_tree_preview_lines(preview, max_lines=140, max_depth=4)
+    if total_files > len(preview):
+        lines.append(f"... and {total_files - len(preview)} more file(s)")
+    return "\n".join(lines), total_files
+
+
+def _resolve_builtin_data_lake_root() -> str:
+    """Return the default repo-local data lake directory path."""
+    repo_root = Path(__file__).resolve().parent
+    return str((repo_root / "data" / "biomni_data" / "data_lake").resolve())
 
 
 def _list_local_data_lake_files(base_path: str, max_items: int = 30) -> list[str]:
@@ -163,14 +337,18 @@ def _build_welcome_local_dataset_section() -> str:
     builtin_data_lake = _repo_root / "data" / "biomni_data" / "data_lake"
     data_lake_files = _list_local_data_lake_files(str(_repo_root / "data"), max_items=200)
 
-    # User data from BIOMNI_DATA_PATH — optional, for additional user datasets only
-    user_data_root = os.getenv("BIOMNI_DATA_PATH") or os.getenv("BIOMNI_PATH") or ""
-    user_entries = _list_path_entries(user_data_root, max_items=12) if user_data_root else []
+    # User data can come from BIOMNI_USER_DATA_PATH and legacy BIOMNI_DATA_PATH/BIOMNI_PATH.
+    user_roots = _resolve_user_data_roots()
+    user_total_files = 0
+    user_preview: list[str] = []
+    if user_roots:
+        first_root = user_roots[0][1]
+        user_preview, user_total_files = _list_path_entries_recursive(first_root, max_items=20)
 
     # One-line summary for the collapsed header
     summary_parts = [f"{len(data_lake_files)} data lake files"]
-    if user_entries:
-        summary_parts.append(f"{len(user_entries)} user data entries")
+    if user_total_files:
+        summary_parts.append(f"{user_total_files} user data files")
 
     lines: list[str] = []
     lines.append(f"<details><summary>📊 {' · '.join(summary_parts)} available — click to expand</summary>")
@@ -183,13 +361,22 @@ def _build_welcome_local_dataset_section() -> str:
     else:
         lines.append("- *(none found)*")
 
-    if user_data_root:
+    if user_roots:
         lines.append("")
-        lines.append(f"**User Data (BIOMNI_DATA_PATH)** — `{user_data_root}`")
+        lines.append("**User Data** — from `BIOMNI_USER_DATA_PATH` / `BIOMNI_DATA_PATH` / `BIOMNI_PATH`")
         lines.append("")
-        if user_entries:
-            for name in user_entries:
+        lines.append(f"Primary path: `{user_roots[0][1]}`")
+        if len(user_roots) > 1:
+            lines.append("Additional configured paths:")
+            for env_name, root in user_roots[1:]:
+                lines.append(f"- `{env_name}`: `{root}`")
+        lines.append("")
+        if user_preview:
+            lines.append(f"Detected files: {user_total_files}")
+            for name in user_preview:
                 lines.append(f"- `{name}`")
+            if user_total_files > len(user_preview):
+                lines.append(f"- `... and {user_total_files - len(user_preview)} more`")
         else:
             lines.append("- *(none found)*")
 
@@ -292,102 +479,32 @@ _DATALAKE_CATEGORIES: list[tuple[str, list[str]]] = [
 
 
 def _build_dataset_listing(agent) -> str:
-    """Return a plain-text listing for Chainlit sidebar text element."""
-    data_lake_dict: dict = getattr(agent, "data_lake_dict", {})
-    local_items: list[str] = []
-    if hasattr(agent, "_get_data_lake_items"):
-        try:
-            local_items = agent._get_data_lake_items()
-        except Exception:
-            local_items = []
-    if not local_items:
-        local_items = sorted(data_lake_dict.keys())
+    """Return a compact sidebar summary (tree details are in separate elements)."""
+    _ = agent
+    user_roots = _resolve_user_data_roots()
+    builtin_root = _resolve_builtin_data_lake_root()
+    if not user_roots and not os.path.isdir(builtin_root):
+        return "No local data tree available"
+    return "Open a Tree item below"
 
-    lines: list[str] = [
-        "🗂️  BIOMNI LOCAL DATA INVENTORY",
-        "━━━━━━━━━━━━━",
-    ]
 
-    # User data directory — BIOMNI_DATA_PATH is for additional user-supplied datasets only
-    user_data_root = os.getenv("BIOMNI_DATA_PATH") or os.getenv("BIOMNI_PATH") or ""
-    lines.append("")
-    lines.append("📍 USER DATA DIRECTORY (BIOMNI_DATA_PATH)")
-    lines.append(f"Path: {user_data_root or '(not configured)'}")
-    root_entries = _list_path_entries(user_data_root, max_items=25) if user_data_root else []
-    if root_entries:
-        lines.append(f"Items: {len(root_entries)}")
-        for name in root_entries:
-            lines.append(f"  • {name}")
-    else:
-        lines.append("Items: (none found or not configured)")
-    lines.append("")
+def _build_user_data_sidebar_elements() -> list[cl.Text]:
+    """Build tree elements for built-in data lake and configured user data roots."""
+    elements: list[cl.Text] = []
 
-    if local_items:
-        lines.append("🧪 DATA LAKE")
-        lines.append(f"Detected files: {len(local_items)}")
-        categorised: set[str] = set()
+    for env_name, root in _resolve_user_data_roots():
+        tree_content, total_files = _build_user_data_tree_content(root)
+        label = f"Tree [{env_name}] ({total_files})"
+        content = f"Path: {root}\n\n{tree_content}"
+        elements.append(cl.Text(name=label, content=content, display="page"))
 
-        for category, stems in _DATALAKE_CATEGORIES:
-            matched = []
-            for filename in local_items:
-                desc = data_lake_dict.get(filename, f"Local data lake file: {filename}")
-                stem = Path(filename).stem
-                if stem in stems:
-                    matched.append((filename, desc))
-                    categorised.add(filename)
-            if matched:
-                lines.append(f"  {category}")
-                for filename, desc in sorted(matched):
-                    lines.append(f"    • {filename}")
-                    lines.append(f"      {desc}")
-                lines.append("")
-
-        # Any remaining files not in the category map
-        uncategorised = [
-            (filename, data_lake_dict.get(filename, f"Local data lake file: {filename}"))
-            for filename in local_items
-            if filename not in categorised
-        ]
-        if uncategorised:
-            lines.append("  Other")
-            for filename, desc in sorted(uncategorised):
-                lines.append(f"    • {filename}")
-                lines.append(f"      {desc}")
-            lines.append("")
-    else:
-        lines.append("🧪 DATA LAKE")
-        lines.append("Detected files: 0 (not yet loaded)")
-        lines.append("")
-
-    # User-specified folder
-    if USER_DATA_PATH:
-        folder = Path(USER_DATA_PATH)
-        lines.append("👤 USER DATA FOLDER")
-        lines.append(f"Path: {folder}")
-        if folder.is_dir():
-            entries = sorted(p for p in folder.iterdir() if not p.name.startswith("."))
-            if entries:
-                lines.append(f"Items: {len(entries)}")
-                for p in entries:
-                    size = ""
-                    if p.is_file():
-                        try:
-                            mb = p.stat().st_size / (1024 * 1024)
-                            size = f" ({mb:.1f} MB)" if mb >= 0.1 else f" ({p.stat().st_size / 1024:.1f} KB)"
-                        except OSError:
-                            pass
-                    icon = "📁" if p.is_dir() else "📄"
-                    lines.append(f"  • {icon} {p.name}{size}")
-            else:
-                lines.append("Items: (folder is empty)")
-        else:
-            lines.append("Items: (path does not exist or is not a directory)")
-        lines.append("")
-
-    lines.append("━━━━━━━━━━━━━━")
-    lines.append("Tip: put files in BIOMNI_DATA_PATH root or biomni_data/data_lake")
-
-    return "\n".join(lines)
+    builtin_root = _resolve_builtin_data_lake_root()
+    if os.path.isdir(builtin_root):
+        tree_content, total_files = _build_user_data_tree_content(builtin_root)
+        label = f"Tree [DEFAULT_DATA_LAKE] ({total_files})"
+        content = f"Path: {builtin_root}\n\n{tree_content}"
+        elements.append(cl.Text(name=label, content=content, display="page"))
+    return elements
 
 
 # ---------------------------------------------------------------------------
@@ -460,7 +577,7 @@ AD1_STARTERS = [
     cl.Starter(
         label="Scan local AD data & catalogs",
         message=(
-            "Scan my local BIOMNI_DATA_PATH directory and the BiomniAD catalogs "
+            "Scan my local BIOMNI_USER_DATA_PATH (or BIOMNI_DATA_PATH) directory and the BiomniAD catalogs "
             "(BiomniAD*.json, NIAGADS*.json, SinaiADRD.json) in your know-how resources. "
             "List every locally available dataset with its modality, then suggest the 3 most "
             "impactful quick analyses I could run right now using only local files."
@@ -542,10 +659,11 @@ async def on_chat_start():
     # Render local-data panel in the native sidebar at startup,
     # keeping the center welcome/search screen unchanged.
     sidebar_content = cl.user_session.get("dataset_listing") or _build_dataset_listing(agent)
+    sidebar_elements = _build_user_data_sidebar_elements()
+    if not sidebar_elements:
+        sidebar_elements = [cl.Text(name="Local Data", content=sidebar_content)]
     await cl.ElementSidebar.set_title("Local Data")
-    await cl.ElementSidebar.set_elements([
-        cl.Text(name="Local Data", content=sidebar_content),
-    ])
+    await cl.ElementSidebar.set_elements(sidebar_elements)
     cl.user_session.set("dataset_panel_shown", True)
 
 

@@ -94,14 +94,25 @@ cp .env.example .env
 Your `.env` file should look like:
 
 ```env
-# Required: Anthropic API Key for Claude models
+# Set at least ONE provider profile below (leave unused keys empty)
+
+# Profile A: Anthropic direct
 ANTHROPIC_API_KEY=your_anthropic_api_key_here
+# Optional custom Anthropic endpoint
+# ANTHROPIC_BASE_URL=https://api.anthropic.com
 
-# Optional: OpenAI API Key (if using OpenAI models)
+# Profile B: OpenAI direct
 OPENAI_API_KEY=your_openai_api_key_here
+# Optional custom OpenAI-compatible endpoint
+# OPENAI_BASE_URL=https://api.openai.com/v1
 
-# Optional: Azure OpenAI API Key (if using Azure OpenAI models)
-OPENAI_API_KEY=your_azure_openai_api_key
+# Optional: Azure Anthropic (if using Claude via Azure AI Foundry)
+ENDPOINT_URL=https://your-resource.services.ai.azure.com/anthropic/
+DEPLOYMENT_NAME=your_claude_deployment_name
+AZURE_ANTHROPIC_API_KEY=your_azure_anthropic_api_key
+
+# Optional: Azure OpenAI (if using GPT via Azure OpenAI)
+AZURE_OPENAI_API_KEY=your_azure_openai_api_key
 OPENAI_ENDPOINT=https://your-resource-name.openai.azure.com/
 
 # Optional: AI Studio Gemini API Key (if using Gemini models)
@@ -113,6 +124,8 @@ GROQ_API_KEY=your_groq_api_key_here
 # Optional: Set the source of your LLM for example:
 #"OpenAI", "AzureOpenAI", "Anthropic", "Ollama", "Gemini", "Bedrock", "Groq", "Custom"
 LLM_SOURCE=your_LLM_source_here
+# BIOMNI_SOURCE is also accepted for backward compatibility
+# BIOMNI_SOURCE=your_LLM_source_here
 
 # Optional: AWS Bedrock Configuration (if using AWS Bedrock models)
 AWS_BEARER_TOKEN_BEDROCK=your_bedrock_api_key_here
@@ -143,8 +156,18 @@ export OPENAI_API_KEY="your_key"      # GPT models (optional)
 export GEMINI_API_KEY="your_key"      # Gemini models (optional)
 export GROQ_API_KEY="your_key"        # Groq models (optional)
 
+# Optional custom endpoints for direct providers:
+export ANTHROPIC_BASE_URL="https://api.anthropic.com"
+export OPENAI_BASE_URL="https://api.openai.com/v1"
+
 # Azure OpenAI (optional):
 export OPENAI_ENDPOINT="https://your-resource.openai.azure.com/"
+export AZURE_OPENAI_API_KEY="your_key"
+
+# Azure Anthropic (optional):
+export ENDPOINT_URL="https://your-resource.services.ai.azure.com/anthropic/"
+export DEPLOYMENT_NAME="your_claude_deployment_name"
+export AZURE_ANTHROPIC_API_KEY="your_key"
 
 # AWS Bedrock (optional):
 export AWS_BEARER_TOKEN_BEDROCK="your_key"

@@ -26,7 +26,7 @@ agent = A1()  # Uses your configuration
 Create a `.env` file in your project:
 
 ```bash
-# Required API Keys (at least one)
+# Required API Keys (set at least one provider profile)
 ANTHROPIC_API_KEY=your_key
 OPENAI_API_KEY=your_key
 
@@ -95,8 +95,18 @@ GROQ_API_KEY=your_key
 AWS_BEARER_TOKEN_BEDROCK=your_key
 AWS_REGION=us-east-1
 
-# Azure OpenAI
+# Azure Anthropic (Claude via Azure AI Foundry)
+ENDPOINT_URL=https://your-resource.services.ai.azure.com/anthropic/
+DEPLOYMENT_NAME=your_claude_deployment_name
+AZURE_ANTHROPIC_API_KEY=your_key
+
+# Azure OpenAI (GPT via Azure OpenAI)
 OPENAI_ENDPOINT=https://your-resource.openai.azure.com/
+AZURE_OPENAI_API_KEY=your_key
+
+# Optional custom direct endpoints
+ANTHROPIC_BASE_URL=https://api.anthropic.com
+OPENAI_BASE_URL=https://api.openai.com/v1
 
 # Biomni Settings
 BIOMNI_PATH=/path/to/data                   # Default: ./data
@@ -105,7 +115,8 @@ BIOMNI_LLM=model_name                        # Default: claude-sonnet-4-20250514
 BIOMNI_TEMPERATURE=0.7                      # Default: 0.7
 BIOMNI_USE_TOOL_RETRIEVER=true             # Default: true
 BIOMNI_AUTO_NETWORK_LIMITED_MODE=true      # Default: true
-BIOMNI_SOURCE=Anthropic                     # Auto-detected if not set
+LLM_SOURCE=Anthropic                        # Preferred source selector
+BIOMNI_SOURCE=Anthropic                     # Also supported (backward compatibility)
 BIOMNI_CUSTOM_BASE_URL=http://localhost:8000/v1
 BIOMNI_CUSTOM_API_KEY=custom_key
 ```
@@ -147,3 +158,8 @@ default_config.api_key = None  # For custom models
 - Check spelling of model name
 - For Azure, prefix with "azure-" (e.g., "azure-gpt-4o")
 - Ensure you have the right API key for that provider
+
+**Provider Collision Avoidance**:
+- Keep unused provider keys empty in `.env` to avoid accidental routing
+- For Azure Anthropic, set `LLM_SOURCE=Anthropic` and `BIOMNI_LLM` to your `DEPLOYMENT_NAME`
+- For Azure OpenAI, set `LLM_SOURCE=AzureOpenAI` and `BIOMNI_LLM` to `azure-<deployment_name>`
