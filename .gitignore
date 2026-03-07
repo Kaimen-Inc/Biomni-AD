@@ -27,6 +27,7 @@ ENV/
 # Secrets & environment variables
 # =============================================================================
 .env
+.adworkbench
 # .env.example is intentionally committed (no real secrets)
 
 # =============================================================================

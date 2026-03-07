@@ -8,7 +8,7 @@ COPY ${BIOMNI_ENV_FILE} /tmp/biomni_env.yml
 
 RUN micromamba create -y -n biomni_e1 -f /tmp/biomni_env.yml && \
     micromamba run -n biomni_e1 pip install --no-cache-dir --upgrade pip && \
-    micromamba run -n biomni_e1 pip install --no-cache-dir "chainlit>=1.0" && \
+    micromamba run -n biomni_e1 pip install --no-cache-dir "chainlit>=1.0" --index-url https://pypi.org/simple/ && \
     micromamba clean --all --yes
 
 COPY pyproject.toml README.md MANIFEST.in /app/
