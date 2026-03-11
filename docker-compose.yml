@@ -13,10 +13,16 @@ services:
       CHAINLIT_HOST: 0.0.0.0
       CHAINLIT_PORT: 8000
       BIOMNI_PATH: /app/data
+      BIOMNI_USER_DATA_PATH: /app/user-data
       MPLBACKEND: Agg
     ports:
       - "${HOST_PORT:-8000}:8000"
     volumes:
-      - ./data:/app/data
-      - ./runs:/app/runs
+      - biomni_app_data:/app/data
+      - biomni_runs:/app/runs
+      - ${BIOMNI_USER_DATA_HOST_PATH:-/tmp/biomni_user_data}:/app/user-data:ro
     restart: unless-stopped
+
+volumes:
+  biomni_app_data:
+  biomni_runs:
