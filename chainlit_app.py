@@ -25,6 +25,21 @@ from pathlib import Path
 from dotenv import load_dotenv
 load_dotenv(override=True)
 
+if sys.version_info >= (3, 14):
+    print(
+        "\n"
+        "ERROR: Biomni Chainlit UI is not currently supported on Python 3.14+.\n"
+        "\n"
+        "  Reason: current Chainlit/AnyIO stack may fail with NoEventLoopError.\n"
+        "\n"
+        "  Please run with Python 3.11/3.12 (recommended: conda env 'biomni_e1').\n"
+        "\n"
+        "  Launch command:\n"
+        "    bash run_chainlit.sh\n",
+        file=sys.stderr,
+    )
+    sys.exit(1)
+
 # ---------------------------------------------------------------------------
 # Environment guard — all biomni dependencies live in the biomni_e1 conda env.
 # Catch the most common mistake (running from the bare .venv) early.
@@ -196,6 +211,60 @@ def _list_path_entries_recursive(path: str, max_items: int = 80, max_depth: int 
     return preview, total_count
 
 
+def _collect_path_stats(path: str, max_depth: int = 10) -> dict:
+    """Collect compact stats for a directory tree for sidebar summaries."""
+    stats = {
+        "total_files": 0,
+        "total_dirs": 0,
+        "top_level_counts": {},
+        "extension_counts": {},
+    }
+    if not path or not os.path.isdir(path):
+        return stats
+
+    excluded_dirs = {
+        ".git", "__pycache__", ".venv", "venv", "env", "node_modules", "site-packages"
+    }
+
+    for root, dirs, files in os.walk(path):
+        rel_root = os.path.relpath(root, path)
+        depth = 0 if rel_root == "." else rel_root.count(os.sep) + 1
+        if depth > max_depth:
+            dirs[:] = []
+            continue
+
+        visible_dirs = [d for d in dirs if not d.startswith(".") and d not in excluded_dirs]
+        dirs[:] = sorted(visible_dirs)
+        stats["total_dirs"] += len(visible_dirs)
+
+        for file_name in files:
+            if file_name.startswith("."):
+                continue
+
+            stats["total_files"] += 1
+
+            ext = Path(file_name).suffix.lower() or "[no_ext]"
+            ext_counts = stats["extension_counts"]
+            ext_counts[ext] = ext_counts.get(ext, 0) + 1
+
+            if rel_root == ".":
+                top = "[root]"
+            else:
+                top = rel_root.split(os.sep, 1)[0]
+            top_counts = stats["top_level_counts"]
+            top_counts[top] = top_counts.get(top, 0) + 1
+
+    return stats
+
+
+def _format_compact_counts(counts: dict[str, int], max_items: int = 8) -> str:
+    """Format a frequency map as a compact markdown bullet list."""
+    if not counts:
+        return "- *(none)*"
+    top_items = sorted(counts.items(), key=lambda kv: (-kv[1], kv[0]))[:max_items]
+    return "\n".join(f"- `{name}`: {value}" for name, value in top_items)
+
+
 def _build_tree_preview_lines(paths: list[str], max_lines: int = 60, max_depth: int = 3) -> list[str]:
     """Render relative file paths as a compact folder tree preview.
 
@@ -287,15 +356,52 @@ def _build_tree_preview_lines(paths: list[str], max_lines: int = 60, max_depth: 
 
 
 def _build_user_data_tree_content(root_path: str, preview_files: int = 300) -> tuple[str, int]:
-    """Build detailed tree text for one configured user data root."""
+    """Build concise per-root content for sidebar readability."""
     preview, total_files = _list_path_entries_recursive(root_path, max_items=preview_files)
     if total_files == 0:
         return "(no files found)", 0
 
-    lines = _build_tree_preview_lines(preview, max_lines=140, max_depth=4)
+    tree_lines = _build_tree_preview_lines(preview, max_lines=70, max_depth=3)
+    lines: list[str] = [
+        f"Directory structure preview (showing first {len(preview)} files)",
+        "",
+        *tree_lines,
+    ]
     if total_files > len(preview):
-        lines.append(f"... and {total_files - len(preview)} more file(s)")
+        lines.append(f"... and {total_files - len(preview)} more files")
+
     return "\n".join(lines), total_files
+
+
+def _build_sidebar_overview_content() -> str:
+    """Build an at-a-glance overview across all configured roots."""
+    root_entries: list[tuple[str, str]] = list(_resolve_user_data_roots())
+    builtin_root = _resolve_builtin_data_lake_root()
+    if os.path.isdir(builtin_root):
+        root_entries.append(("DEFAULT_DATA_LAKE", builtin_root))
+
+    if not root_entries:
+        return "No local data roots found."
+
+    lines: list[str] = ["At-a-glance overview", ""]
+
+    grand_files = 0
+    grand_dirs = 0
+    for label, root in root_entries:
+        stats = _collect_path_stats(root)
+        grand_files += int(stats.get("total_files", 0))
+        grand_dirs += int(stats.get("total_dirs", 0))
+        lines.extend([
+            f"{label}: {stats['total_files']} files, {stats['total_dirs']} folders",
+            "",
+        ])
+
+    lines.extend([
+        "Combined totals",
+        f"Files: {grand_files}",
+        f"Folders: {grand_dirs}",
+    ])
+    return "\n".join(lines)
 
 
 def _resolve_builtin_data_lake_root() -> str:
@@ -490,7 +596,9 @@ def _build_dataset_listing(agent) -> str:
 
 def _build_user_data_sidebar_elements() -> list[cl.Text]:
     """Build tree elements for built-in data lake and configured user data roots."""
-    elements: list[cl.Text] = []
+    elements: list[cl.Text] = [
+        cl.Text(name="Summary", content=_build_sidebar_overview_content(), display="page")
+    ]
 
     for env_name, root in _resolve_user_data_roots():
         tree_content, total_files = _build_user_data_tree_content(root)
@@ -661,8 +769,8 @@ async def on_chat_start():
     sidebar_content = cl.user_session.get("dataset_listing") or _build_dataset_listing(agent)
     sidebar_elements = _build_user_data_sidebar_elements()
     if not sidebar_elements:
-        sidebar_elements = [cl.Text(name="Local Data", content=sidebar_content)]
-    await cl.ElementSidebar.set_title("Local Data")
+        sidebar_elements = [cl.Text(name="Local Datasets", content=sidebar_content)]
+    await cl.ElementSidebar.set_title("Local Datasets")
     await cl.ElementSidebar.set_elements(sidebar_elements)
     cl.user_session.set("dataset_panel_shown", True)
 

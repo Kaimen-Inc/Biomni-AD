@@ -98,6 +98,31 @@ if ! "$CONDA_CMD" env list | grep -q "^${REQUIRED_ENV}[[:space:]]"; then
     exit 1
 fi
 
+# Verify target Python version is compatible with current Chainlit stack.
+TARGET_PY_MM="$($CONDA_CMD run -n "$REQUIRED_ENV" python -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")' 2>/dev/null || true)"
+if [[ -z "$TARGET_PY_MM" ]]; then
+    echo ""
+    echo "ERROR: Unable to determine Python version for '$REQUIRED_ENV'."
+    echo ""
+    echo "  Try rebuilding the environment:"
+    echo "    cd biomni_env && bash setup.sh"
+    echo ""
+    exit 1
+fi
+
+if [[ "$TARGET_PY_MM" =~ ^3\.1[4-9]$ || "$TARGET_PY_MM" =~ ^[4-9]\.[0-9]+$ ]]; then
+    echo ""
+    echo "ERROR: Python $TARGET_PY_MM in '$REQUIRED_ENV' is not currently supported for Biomni Chainlit UI."
+    echo ""
+    echo "  Detected issue: Chainlit/AnyIO can fail with NoEventLoopError on Python 3.14+."
+    echo "  Please use Python 3.11/3.12 for this environment."
+    echo ""
+    echo "  Suggested fix:"
+    echo "    cd biomni_env && bash setup.sh"
+    echo ""
+    exit 1
+fi
+
 # ---- Locate the app file ---------------------------------------------------
 if [[ ! -f "$APP" ]]; then
     echo "ERROR: chainlit_app.py not found at $APP"
@@ -120,8 +145,8 @@ echo "  Port        : $PORT"
 echo ""
 
 # Use `conda run` to guarantee we use biomni_e1's Python, not any .venv.
-# Force headless matplotlib backend to avoid macOS GUI/thread crashes.
-export MPLBACKEND=Agg
-
-exec "$CONDA_CMD" run --no-capture-output -n "$REQUIRED_ENV" \
+# Strip virtualenv/Python path overrides from the parent shell to avoid package
+# leakage into the conda runtime.
+exec env -u VIRTUAL_ENV -u PYTHONPATH -u PYTHONHOME MPLBACKEND=Agg \
+    "$CONDA_CMD" run --no-capture-output -n "$REQUIRED_ENV" \
     python -m chainlit run "$APP" --port "$PORT" "${CHAINLIT_ARGS[@]}"

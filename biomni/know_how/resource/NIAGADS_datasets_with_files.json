@@ -11,19 +11,23 @@
       "files": [
         {
           "name": "Summary_Statistics_Ab42_allSamples_add_Upenn_assoc_linear.txt",
-          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00049/fileset/41609"
+          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00049/fileset/41609",
+          "size_bytes": 339829391
         },
         {
           "name": "Summary_Statistics_Ptau_allSamples_add_upenn_assoc_linear.txt",
-          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00049/fileset/41610"
+          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00049/fileset/41610",
+          "size_bytes": 339307809
         },
         {
           "name": "Summary_Statistics_tau_allSamples_add_upenn_assoc_linear.txt",
-          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00049/fileset/41611"
+          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00049/fileset/41611",
+          "size_bytes": 339232883
         },
         {
           "name": "README_Summary_statistics_gwas_csf.docx",
-          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00049/fileset/41612"
+          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00049/fileset/41612",
+          "size_bytes": 16467
         }
       ]
     },
@@ -38,11 +42,13 @@
       "files": [
         {
           "name": "README_Summary_statistics_csf_clusterin.docx",
-          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00052/fileset/41613"
+          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00052/fileset/41613",
+          "size_bytes": 15181
         },
         {
           "name": "Summary_statistics_csf_clusterin_dataset_neurobiolaging_cruchaga_0.txt",
-          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00052/fileset/41614"
+          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00052/fileset/41614",
+          "size_bytes": 16298932
         }
       ]
     },
@@ -57,459 +63,573 @@
       "files": [
         {
           "name": "r4.wgs.annotation.2023.12.01.tar.gz",
-          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00067/fileset/32484"
+          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00067/fileset/32484",
+          "size_bytes": 7435897621
         },
         {
           "name": "r4_wgs_FAVOR_annotation_README.txt",
-          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00067/fileset/38831"
+          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00067/fileset/38831",
+          "size_bytes": 29298
         },
         {
           "name": "r4.wgs.annotation.2023.12.01.README.txt",
-          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00067/fileset/38832"
+          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00067/fileset/38832",
+          "size_bytes": 4888
         },
         {
           "name": "r4_wgs_FAVOR_annotation_chr22.gds",
-          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00067/fileset/38834"
+          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00067/fileset/38834",
+          "size_bytes": 1169338484
         },
         {
           "name": "r4_wgs_FAVOR_annotation_chr21.gds",
-          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00067/fileset/38835"
+          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00067/fileset/38835",
+          "size_bytes": 1087950652
         },
         {
           "name": "r4_wgs_FAVOR_annotation_chr20.gds",
-          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00067/fileset/38836"
+          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00067/fileset/38836",
+          "size_bytes": 1861790297
         },
         {
           "name": "r4_wgs_FAVOR_annotation_chr13.gds",
-          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00067/fileset/38837"
+          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00067/fileset/38837",
+          "size_bytes": 2791526398
         },
         {
           "name": "r4_wgs_FAVOR_annotation_chr12.gds",
-          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00067/fileset/38838"
+          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00067/fileset/38838",
+          "size_bytes": 3840919796
         },
         {
           "name": "r4_wgs_FAVOR_annotation_chr6.gds",
-          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00067/fileset/38839"
+          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00067/fileset/38839",
+          "size_bytes": 4817981292
         },
         {
           "name": "r4_wgs_FAVOR_annotation_chr18.gds",
-          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00067/fileset/38840"
+          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00067/fileset/38840",
+          "size_bytes": 2207989935
         },
         {
           "name": "r4_wgs_FAVOR_annotation_chr19.gds",
-          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00067/fileset/38841"
+          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00067/fileset/38841",
+          "size_bytes": 1782042673
         },
         {
           "name": "r4_wgs_FAVOR_annotation_chr17.gds",
-          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00067/fileset/38842"
+          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00067/fileset/38842",
+          "size_bytes": 2402785981
         },
         {
           "name": "r4_wgs_FAVOR_annotation_chr2.gds",
-          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00067/fileset/38843"
+          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00067/fileset/38843",
+          "size_bytes": 7002474645
         },
         {
           "name": "r4_wgs_FAVOR_annotation_chr15.gds",
-          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00067/fileset/38844"
+          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00067/fileset/38844",
+          "size_bytes": 2421426921
         },
         {
           "name": "r4_wgs_FAVOR_annotation_chr1.gds",
-          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00067/fileset/38845"
+          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00067/fileset/38845",
+          "size_bytes": 6799769551
         },
         {
           "name": "r4_wgs_FAVOR_annotation_chr16.gds",
-          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00067/fileset/38846"
+          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00067/fileset/38846",
+          "size_bytes": 2641200075
         },
         {
           "name": "r4_wgs_FAVOR_annotation_chr10.gds",
-          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00067/fileset/38847"
+          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00067/fileset/38847",
+          "size_bytes": 3897321161
         },
         {
           "name": "r4_wgs_FAVOR_annotation_chr14.gds",
-          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00067/fileset/38848"
+          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00067/fileset/38848",
+          "size_bytes": 2553722720
         },
         {
           "name": "r4_wgs_FAVOR_annotation_chr9.gds",
-          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00067/fileset/38849"
+          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00067/fileset/38849",
+          "size_bytes": 3703243827
         },
         {
           "name": "r4_wgs_FAVOR_annotation_chr3.gds",
-          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00067/fileset/38850"
+          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00067/fileset/38850",
+          "size_bytes": 5684933083
         },
         {
           "name": "r4_wgs_FAVOR_annotation_chr11.gds",
-          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00067/fileset/38851"
+          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00067/fileset/38851",
+          "size_bytes": 4018846042
         },
         {
           "name": "r4_wgs_FAVOR_annotation_chr7.gds",
-          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00067/fileset/38852"
+          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00067/fileset/38852",
+          "size_bytes": 4627273917
         },
         {
           "name": "r4_wgs_FAVOR_annotation_chr8.gds",
-          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00067/fileset/38853"
+          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00067/fileset/38853",
+          "size_bytes": 4340585962
         },
         {
           "name": "r4_wgs_FAVOR_annotation_chr5.gds",
-          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00067/fileset/38854"
+          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00067/fileset/38854",
+          "size_bytes": 5120603103
         },
         {
           "name": "r4_wgs_FAVOR_annotation_chr4.gds",
-          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00067/fileset/38855"
+          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00067/fileset/38855",
+          "size_bytes": 5399062016
         },
         {
           "name": "adsp.wgs.r4.AA.chr1.5096.2024.11.03.ld.output.txt.gz",
-          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00067/fileset/39303"
+          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00067/fileset/39303",
+          "size_bytes": 3986714888
         },
         {
           "name": "adsp.wgs.r4.AA.chr2.5096.2024.11.03.ld.output.txt.gz",
-          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00067/fileset/39304"
+          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00067/fileset/39304",
+          "size_bytes": 4817657688
         },
         {
           "name": "adsp.wgs.r4.AA.chr3.5096.2024.11.03.ld.output.txt.gz",
-          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00067/fileset/39305"
+          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00067/fileset/39305",
+          "size_bytes": 4485749804
         },
         {
           "name": "adsp.wgs.r4.AA.chr4.5096.2024.11.03.ld.output.txt.gz",
-          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00067/fileset/39306"
+          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00067/fileset/39306",
+          "size_bytes": 4387507901
         },
         {
           "name": "adsp.wgs.r4.AA.chr5.5096.2024.11.03.ld.output.txt.gz",
-          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00067/fileset/39307"
+          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00067/fileset/39307",
+          "size_bytes": 3902010817
         },
         {
           "name": "adsp.wgs.r4.AA.chr6.5096.2024.11.03.ld.output.txt.gz",
-          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00067/fileset/39308"
+          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00067/fileset/39308",
+          "size_bytes": 4977806368
         },
         {
           "name": "adsp.wgs.r4.AA.chr7.5096.2024.11.03.ld.output.txt.gz",
-          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00067/fileset/39309"
+          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00067/fileset/39309",
+          "size_bytes": 3452222437
         },
         {
           "name": "adsp.wgs.r4.AA.chr8.5096.2024.11.03.ld.output.txt.gz",
-          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00067/fileset/39310"
+          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00067/fileset/39310",
+          "size_bytes": 3572832008
         },
         {
           "name": "adsp.wgs.r4.AA.chr9.5096.2024.11.03.ld.output.txt.gz",
-          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00067/fileset/39311"
+          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00067/fileset/39311",
+          "size_bytes": 2114958691
         },
         {
           "name": "adsp.wgs.r4.AA.chr10.5096.2024.11.03.ld.output.txt.gz",
-          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00067/fileset/39312"
+          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00067/fileset/39312",
+          "size_bytes": 2786178322
         },
         {
           "name": "adsp.wgs.r4.AA.chr11.5096.2024.11.03.ld.output.txt.gz",
-          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00067/fileset/39313"
+          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00067/fileset/39313",
+          "size_bytes": 3563580152
         },
         {
           "name": "adsp.wgs.r4.AA.chr12.5096.2024.11.03.ld.output.txt.gz",
-          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00067/fileset/39314"
+          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00067/fileset/39314",
+          "size_bytes": 2822768072
         },
         {
           "name": "adsp.wgs.r4.AA.chr13.5096.2024.11.03.ld.output.txt.gz",
-          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00067/fileset/39315"
+          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00067/fileset/39315",
+          "size_bytes": 1871056983
         },
         {
           "name": "adsp.wgs.r4.AA.chr14.5096.2024.11.03.ld.output.txt.gz",
-          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00067/fileset/39316"
+          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00067/fileset/39316",
+          "size_bytes": 1767117335
         },
         {
           "name": "adsp.wgs.r4.AA.chr15.5096.2024.11.03.ld.output.txt.gz",
-          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00067/fileset/39317"
+          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00067/fileset/39317",
+          "size_bytes": 1447611092
         },
         {
           "name": "adsp.wgs.r4.AA.chr16.5096.2024.11.03.ld.output.txt.gz",
-          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00067/fileset/39318"
+          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00067/fileset/39318",
+          "size_bytes": 1354630306
         },
         {
           "name": "adsp.wgs.r4.AA.chr17.5096.2024.11.03.ld.output.txt.gz",
-          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00067/fileset/39319"
+          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00067/fileset/39319",
+          "size_bytes": 1194613932
         },
         {
           "name": "adsp.wgs.r4.AA.chr18.5096.2024.11.03.ld.output.txt.gz",
-          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00067/fileset/39320"
+          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00067/fileset/39320",
+          "size_bytes": 1228654654
         },
         {
           "name": "adsp.wgs.r4.AA.chr19.5096.2024.11.03.ld.output.txt.gz",
-          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00067/fileset/39321"
+          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00067/fileset/39321",
+          "size_bytes": 1045645310
         },
         {
           "name": "adsp.wgs.r4.AA.chr20.5096.2024.11.03.ld.output.txt.gz",
-          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00067/fileset/39322"
+          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00067/fileset/39322",
+          "size_bytes": 1007706167
         },
         {
           "name": "adsp.wgs.r4.AA.chr21.5096.2024.11.03.ld.output.txt.gz",
-          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00067/fileset/39323"
+          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00067/fileset/39323",
+          "size_bytes": 523044788
         },
         {
           "name": "adsp.wgs.r4.AA.chr22.5096.2024.11.03.ld.output.txt.gz",
-          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00067/fileset/39324"
+          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00067/fileset/39324",
+          "size_bytes": 540984458
         },
         {
           "name": "adsp.wgs.r4.Asian.chr1.2777.2024.11.03.ld.output.txt.gz",
-          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00067/fileset/39325"
+          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00067/fileset/39325",
+          "size_bytes": 1978380059
         },
         {
           "name": "adsp.wgs.r4.Asian.chr2.2777.2024.11.03.ld.output.txt.gz",
-          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00067/fileset/39326"
+          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00067/fileset/39326",
+          "size_bytes": 2343653503
         },
         {
           "name": "adsp.wgs.r4.Asian.chr3.2777.2024.11.03.ld.output.txt.gz",
-          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00067/fileset/39327"
+          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00067/fileset/39327",
+          "size_bytes": 2214528134
         },
         {
           "name": "adsp.wgs.r4.Asian.chr4.2777.2024.11.03.ld.output.txt.gz",
-          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00067/fileset/39328"
+          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00067/fileset/39328",
+          "size_bytes": 2235955645
         },
         {
           "name": "adsp.wgs.r4.Asian.chr5.2777.2024.11.03.ld.output.txt.gz",
-          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00067/fileset/39329"
+          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00067/fileset/39329",
+          "size_bytes": 1968067343
         },
         {
           "name": "adsp.wgs.r4.Asian.chr6.2777.2024.11.03.ld.output.txt.gz",
-          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00067/fileset/39330"
+          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00067/fileset/39330",
+          "size_bytes": 3233431941
         },
         {
           "name": "adsp.wgs.r4.Asian.chr7.2777.2024.11.03.ld.output.txt.gz",
-          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00067/fileset/39331"
+          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00067/fileset/39331",
+          "size_bytes": 1771149520
         },
         {
           "name": "adsp.wgs.r4.Asian.chr8.2777.2024.11.03.ld.output.txt.gz",
-          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00067/fileset/39332"
+          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00067/fileset/39332",
+          "size_bytes": 1754698886
         },
         {
           "name": "adsp.wgs.r4.Asian.chr9.2777.2024.11.03.ld.output.txt.gz",
-          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00067/fileset/39333"
+          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00067/fileset/39333",
+          "size_bytes": 1061569370
         },
         {
           "name": "adsp.wgs.r4.Asian.chr10.2777.2024.11.03.ld.output.txt.gz",
-          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00067/fileset/39334"
+          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00067/fileset/39334",
+          "size_bytes": 1541808531
         },
         {
           "name": "adsp.wgs.r4.Asian.chr11.2777.2024.11.03.ld.output.txt.gz",
-          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00067/fileset/39335"
+          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00067/fileset/39335",
+          "size_bytes": 1924005272
         },
         {
           "name": "adsp.wgs.r4.Asian.chr12.2777.2024.11.03.ld.output.txt.gz",
-          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00067/fileset/39336"
+          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00067/fileset/39336",
+          "size_bytes": 1410650240
         },
         {
           "name": "adsp.wgs.r4.Asian.chr13.2777.2024.11.03.ld.output.txt.gz",
-          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00067/fileset/39337"
+          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00067/fileset/39337",
+          "size_bytes": 950931929
         },
         {
           "name": "adsp.wgs.r4.Asian.chr14.2777.2024.11.03.ld.output.txt.gz",
-          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00067/fileset/39338"
+          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00067/fileset/39338",
+          "size_bytes": 912052685
         },
         {
           "name": "adsp.wgs.r4.Asian.chr15.2777.2024.11.03.ld.output.txt.gz",
-          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00067/fileset/39339"
+          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00067/fileset/39339",
+          "size_bytes": 737513445
         },
         {
           "name": "adsp.wgs.r4.Asian.chr16.2777.2024.11.03.ld.output.txt.gz",
-          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00067/fileset/39340"
+          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00067/fileset/39340",
+          "size_bytes": 624401513
         },
         {
           "name": "adsp.wgs.r4.Asian.chr17.2777.2024.11.03.ld.output.txt.gz",
-          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00067/fileset/39341"
+          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00067/fileset/39341",
+          "size_bytes": 556691938
         },
         {
           "name": "adsp.wgs.r4.Asian.chr18.2777.2024.11.03.ld.output.txt.gz",
-          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00067/fileset/39342"
+          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00067/fileset/39342",
+          "size_bytes": 621752097
         },
         {
           "name": "adsp.wgs.r4.Asian.chr19.2777.2024.11.03.ld.output.txt.gz",
-          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00067/fileset/39343"
+          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00067/fileset/39343",
+          "size_bytes": 512078312
         },
         {
           "name": "adsp.wgs.r4.Asian.chr20.2777.2024.11.03.ld.output.txt.gz",
-          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00067/fileset/39344"
+          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00067/fileset/39344",
+          "size_bytes": 484583070
         },
         {
           "name": "adsp.wgs.r4.Asian.chr21.2777.2024.11.03.ld.output.txt.gz",
-          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00067/fileset/39345"
+          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00067/fileset/39345",
+          "size_bytes": 271241820
         },
         {
           "name": "adsp.wgs.r4.Asian.chr22.2777.2024.11.03.ld.output.txt.gz",
-          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00067/fileset/39346"
+          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00067/fileset/39346",
+          "size_bytes": 261311200
         },
         {
           "name": "adsp.wgs.r4.Hispanic.chr1.10438.2024.11.03.ld.output.txt.gz",
-          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00067/fileset/39347"
+          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00067/fileset/39347",
+          "size_bytes": 6316018980
         },
         {
           "name": "adsp.wgs.r4.Hispanic.chr2.10438.2024.11.03.ld.output.txt.gz",
-          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00067/fileset/39348"
+          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00067/fileset/39348",
+          "size_bytes": 7886448867
         },
         {
           "name": "adsp.wgs.r4.Hispanic.chr3.10438.2024.11.03.ld.output.txt.gz",
-          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00067/fileset/39349"
+          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00067/fileset/39349",
+          "size_bytes": 6733963774
         },
         {
           "name": "adsp.wgs.r4.Hispanic.chr4.10438.2024.11.03.ld.output.txt.gz",
-          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00067/fileset/39350"
+          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00067/fileset/39350",
+          "size_bytes": 6791679876
         },
         {
           "name": "adsp.wgs.r4.Hispanic.chr5.10438.2024.11.03.ld.output.txt.gz",
-          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00067/fileset/39351"
+          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00067/fileset/39351",
+          "size_bytes": 6087111941
         },
         {
           "name": "adsp.wgs.r4.Hispanic.chr6.10438.2024.11.03.ld.output.txt.gz",
-          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00067/fileset/39352"
+          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00067/fileset/39352",
+          "size_bytes": 7347264245
         },
         {
           "name": "adsp.wgs.r4.Hispanic.chr7.10438.2024.11.03.ld.output.txt.gz",
-          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00067/fileset/39353"
+          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00067/fileset/39353",
+          "size_bytes": 5125165663
         },
         {
           "name": "adsp.wgs.r4.Hispanic.chr8.10438.2024.11.03.ld.output.txt.gz",
-          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00067/fileset/39354"
+          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00067/fileset/39354",
+          "size_bytes": 5598981447
         },
         {
           "name": "adsp.wgs.r4.Hispanic.chr9.10438.2024.11.03.ld.output.txt.gz",
-          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00067/fileset/39355"
+          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00067/fileset/39355",
+          "size_bytes": 3359901179
         },
         {
           "name": "adsp.wgs.r4.Hispanic.chr10.10438.2024.11.03.ld.output.txt.gz",
-          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00067/fileset/39356"
+          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00067/fileset/39356",
+          "size_bytes": 4328080791
         },
         {
           "name": "adsp.wgs.r4.Hispanic.chr11.10438.2024.11.03.ld.output.txt.gz",
-          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00067/fileset/39357"
+          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00067/fileset/39357",
+          "size_bytes": 5152698220
         },
         {
           "name": "adsp.wgs.r4.Hispanic.chr12.10438.2024.11.03.ld.output.txt.gz",
-          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00067/fileset/39358"
+          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00067/fileset/39358",
+          "size_bytes": 4402952473
         },
         {
           "name": "adsp.wgs.r4.Hispanic.chr13.10438.2024.11.03.ld.output.txt.gz",
-          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00067/fileset/39359"
+          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00067/fileset/39359",
+          "size_bytes": 2908514849
         },
         {
           "name": "adsp.wgs.r4.Hispanic.chr14.10438.2024.11.03.ld.output.txt.gz",
-          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00067/fileset/39360"
+          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00067/fileset/39360",
+          "size_bytes": 2769914013
         },
         {
           "name": "adsp.wgs.r4.Hispanic.chr15.10438.2024.11.03.ld.output.txt.gz",
-          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00067/fileset/39361"
+          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00067/fileset/39361",
+          "size_bytes": 2307579531
         },
         {
           "name": "adsp.wgs.r4.Hispanic.chr16.10438.2024.11.03.ld.output.txt.gz",
-          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00067/fileset/39362"
+          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00067/fileset/39362",
+          "size_bytes": 2244034125
         },
         {
           "name": "adsp.wgs.r4.Hispanic.chr17.10438.2024.11.03.ld.output.txt.gz",
-          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00067/fileset/39363"
+          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00067/fileset/39363",
+          "size_bytes": 1891950876
         },
         {
           "name": "adsp.wgs.r4.Hispanic.chr18.10438.2024.11.03.ld.output.txt.gz",
-          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00067/fileset/39364"
+          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00067/fileset/39364",
+          "size_bytes": 1996474431
         },
         {
           "name": "adsp.wgs.r4.Hispanic.chr19.10438.2024.11.03.ld.output.txt.gz",
-          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00067/fileset/39365"
+          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00067/fileset/39365",
+          "size_bytes": 1546014821
         },
         {
           "name": "adsp.wgs.r4.Hispanic.chr20.10438.2024.11.03.ld.output.txt.gz",
-          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00067/fileset/39366"
+          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00067/fileset/39366",
+          "size_bytes": 1577079405
         },
         {
           "name": "adsp.wgs.r4.Hispanic.chr21.10438.2024.11.03.ld.output.txt.gz",
-          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00067/fileset/39367"
+          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00067/fileset/39367",
+          "size_bytes": 892400021
         },
         {
           "name": "adsp.wgs.r4.Hispanic.chr22.10438.2024.11.03.ld.output.txt.gz",
-          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00067/fileset/39368"
+          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00067/fileset/39368",
+          "size_bytes": 870138378
         },
         {
           "name": "adsp.wgs.r4.NHW.chr1.12692.2024.11.03.ld.output.txt.gz",
-          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00067/fileset/39369"
+          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00067/fileset/39369",
+          "size_bytes": 3642283363
         },
         {
           "name": "adsp.wgs.r4.NHW.chr2.12692.2024.11.03.ld.output.txt.gz",
-          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00067/fileset/39370"
+          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00067/fileset/39370",
+          "size_bytes": 4359444427
         },
         {
           "name": "adsp.wgs.r4.NHW.chr3.12692.2024.11.03.ld.output.txt.gz",
-          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00067/fileset/39371"
+          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00067/fileset/39371",
+          "size_bytes": 4037293150
         },
         {
           "name": "adsp.wgs.r4.NHW.chr4.12692.2024.11.03.ld.output.txt.gz",
-          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00067/fileset/39372"
+          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00067/fileset/39372",
+          "size_bytes": 4046340904
         },
         {
           "name": "adsp.wgs.r4.NHW.chr5.12692.2024.11.03.ld.output.txt.gz",
-          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00067/fileset/39373"
+          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00067/fileset/39373",
+          "size_bytes": 3569722978
         },
         {
           "name": "adsp.wgs.r4.NHW.chr6.12692.2024.11.03.ld.output.txt.gz",
-          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00067/fileset/39374"
+          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00067/fileset/39374",
+          "size_bytes": 5730867252
         },
         {
           "name": "adsp.wgs.r4.NHW.chr7.12692.2024.11.03.ld.output.txt.gz",
-          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00067/fileset/39375"
+          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00067/fileset/39375",
+          "size_bytes": 3079691481
         },
         {
           "name": "adsp.wgs.r4.NHW.chr8.12692.2024.11.03.ld.output.txt.gz",
-          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00067/fileset/39376"
+          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00067/fileset/39376",
+          "size_bytes": 3332661090
         },
         {
           "name": "adsp.wgs.r4.NHW.chr9.12692.2024.11.03.ld.output.txt.gz",
-          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00067/fileset/39377"
+          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00067/fileset/39377",
+          "size_bytes": 1910847307
         },
         {
           "name": "adsp.wgs.r4.NHW.chr10.12692.2024.11.03.ld.output.txt.gz",
-          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00067/fileset/39378"
+          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00067/fileset/39378",
+          "size_bytes": 2670741640
         },
         {
           "name": "adsp.wgs.r4.NHW.chr11.12692.2024.11.03.ld.output.txt.gz",
-          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00067/fileset/39379"
+          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00067/fileset/39379",
+          "size_bytes": 3198071606
         },
         {
           "name": "adsp.wgs.r4.NHW.chr12.12692.2024.11.03.ld.output.txt.gz",
-          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00067/fileset/39380"
+          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00067/fileset/39380",
+          "size_bytes": 2568622430
         },
         {
           "name": "adsp.wgs.r4.NHW.chr13.12692.2024.11.03.ld.output.txt.gz",
-          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00067/fileset/39381"
+          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00067/fileset/39381",
+          "size_bytes": 1765135669
         },
         {
           "name": "adsp.wgs.r4.NHW.chr14.12692.2024.11.03.ld.output.txt.gz",
-          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00067/fileset/39382"
+          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00067/fileset/39382",
+          "size_bytes": 1698977833
         },
         {
           "name": "adsp.wgs.r4.NHW.chr15.12692.2024.11.03.ld.output.txt.gz",
-          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00067/fileset/39383"
+          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00067/fileset/39383",
+          "size_bytes": 1293402765
         },
         {
           "name": "adsp.wgs.r4.NHW.chr16.12692.2024.11.03.ld.output.txt.gz",
-          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00067/fileset/39384"
+          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00067/fileset/39384",
+          "size_bytes": 1180326188
         },
         {
           "name": "adsp.wgs.r4.NHW.chr17.12692.2024.11.03.ld.output.txt.gz",
-          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00067/fileset/39385"
+          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00067/fileset/39385",
+          "size_bytes": 1073647561
         },
         {
           "name": "adsp.wgs.r4.NHW.chr18.12692.2024.11.03.ld.output.txt.gz",
-          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00067/fileset/39386"
+          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00067/fileset/39386",
+          "size_bytes": 1166562082
         },
         {
           "name": "adsp.wgs.r4.NHW.chr19.12692.2024.11.03.ld.output.txt.gz",
-          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00067/fileset/39387"
+          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00067/fileset/39387",
+          "size_bytes": 967482299
         },
         {
           "name": "adsp.wgs.r4.NHW.chr20.12692.2024.11.03.ld.output.txt.gz",
-          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00067/fileset/39388"
+          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00067/fileset/39388",
+          "size_bytes": 873181621
         },
         {
           "name": "adsp.wgs.r4.NHW.chr21.12692.2024.11.03.ld.output.txt.gz",
-          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00067/fileset/39389"
+          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00067/fileset/39389",
+          "size_bytes": 515300702
         },
         {
           "name": "adsp.wgs.r4.NHW.chr22.12692.2024.11.03.ld.output.txt.gz",
-          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00067/fileset/39390"
+          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00067/fileset/39390",
+          "size_bytes": 482131658
         },
         {
           "name": "adsp.wgs.r4.2024.11.03.ld.output.README.docx",
-          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00067/fileset/39421"
+          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00067/fileset/39421",
+          "size_bytes": 29945
         }
       ]
     },
@@ -524,15 +644,18 @@
       "files": [
         {
           "name": "NG00075_Kunkle_IGAP_SummaryStats_P-val_only_README.docx",
-          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00075/fileset/53055"
+          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00075/fileset/53055",
+          "size_bytes": 18213
         },
         {
           "name": "NG00075_Kunkle_etal_Stage1_P-val_only_results.txt",
-          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00075/fileset/53057"
+          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00075/fileset/53057",
+          "size_bytes": 569380789
         },
         {
           "name": "NG00075_Kunkle_etal_Stage2_P-val_only_results.txt",
-          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00075/fileset/53058"
+          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00075/fileset/53058",
+          "size_bytes": 570183
         }
       ]
     },
@@ -547,15 +670,18 @@
       "files": [
         {
           "name": "Kunkle_etal_2020_ADGC_summary_statistics_pval_README.docx",
-          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00100/fileset/39662"
+          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00100/fileset/39662",
+          "size_bytes": 17788
         },
         {
           "name": "Kunkle2020_ADGC_AA_META_Model1_SummaryStats_p-value_only.txt",
-          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00100/fileset/39663"
+          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00100/fileset/39663",
+          "size_bytes": 1060637005
         },
         {
           "name": "Kunkle2020_ADGC_AA_META_Model2_SummaryStats_p-value_only.txt",
-          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00100/fileset/39664"
+          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00100/fileset/39664",
+          "size_bytes": 1133153992
         }
       ]
     },
@@ -570,31 +696,38 @@
       "files": [
         {
           "name": "readme_2023_06",
-          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00102/fileset/32375"
+          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00102/fileset/32375",
+          "size_bytes": 2139
         },
         {
           "name": "brain_somascan1.3k_hg38.tar.gz",
-          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00102/fileset/32379"
+          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00102/fileset/32379",
+          "size_bytes": 130601773786
         },
         {
           "name": "csf_somascan1.3k_hg38.tar.gz",
-          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00102/fileset/32380"
+          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00102/fileset/32380",
+          "size_bytes": 108982135033
         },
         {
           "name": "plasma_somascan1.3k_hg38.tar.gz",
-          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00102/fileset/32381"
+          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00102/fileset/32381",
+          "size_bytes": 148021040141
         },
         {
           "name": "Brain_SOMAscan1.3k_analyte_info.csv",
-          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00102/fileset/32383"
+          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00102/fileset/32383",
+          "size_bytes": 91251
         },
         {
           "name": "CSF_SOMAscan1.3k_analyte_info.csv",
-          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00102/fileset/32384"
+          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00102/fileset/32384",
+          "size_bytes": 60722
         },
         {
           "name": "Plasma_SOMAscan1.3k_analyte_info.csv",
-          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00102/fileset/32385"
+          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00102/fileset/32385",
+          "size_bytes": 67357
         }
       ]
     },
@@ -609,11 +742,13 @@
       "files": [
         {
           "name": "Amyloid_PET_GWAS_metaanalysis_b37_p-valueonly.txt",
-          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00103/fileset/35529"
+          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00103/fileset/35529",
+          "size_bytes": 161312079
         },
         {
           "name": "README_AmyloidPET_p-valueonly.txt",
-          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00103/fileset/35531"
+          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00103/fileset/35531",
+          "size_bytes": 1043
         }
       ]
     },
@@ -628,103 +763,128 @@
       "files": [
         {
           "name": "Nominal_eQTL_DD.xlsx",
-          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00105/fileset/5697"
+          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00105/fileset/5697",
+          "size_bytes": 48747
         },
         {
           "name": "Nominal_sQTL_DD.xlsx",
-          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00105/fileset/5698"
+          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00105/fileset/5698",
+          "size_bytes": 48827
         },
         {
           "name": "Permuted_eQTL_DD.xlsx",
-          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00105/fileset/5699"
+          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00105/fileset/5699",
+          "size_bytes": 9952
         },
         {
           "name": "Permuted_sQTL_DD.xlsx",
-          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00105/fileset/5700"
+          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00105/fileset/5700",
+          "size_bytes": 10039
         },
         {
           "name": "README_association_summary.pdf",
-          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00105/fileset/5701"
+          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00105/fileset/5701",
+          "size_bytes": 116423
         },
         {
           "name": "MFG_eur_expression_peer10.cis_qtl_nominal.txt.gz",
-          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00105/fileset/5704"
+          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00105/fileset/5704",
+          "size_bytes": 1572260066
         },
         {
           "name": "STG_eur_expression_peer10.cis_qtl_nominal.txt.gz",
-          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00105/fileset/5705"
+          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00105/fileset/5705",
+          "size_bytes": 1536803565
         },
         {
           "name": "SVZ_eur_expression_peer5.cis_qtl_nominal.txt.gz",
-          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00105/fileset/5706"
+          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00105/fileset/5706",
+          "size_bytes": 1496228565
         },
         {
           "name": "THA_eur_expression_peer10.cis_qtl_nominal.txt.gz",
-          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00105/fileset/5707"
+          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00105/fileset/5707",
+          "size_bytes": 1529273104
         },
         {
           "name": "MFG_eur_expression_peer10.cis_qtl.txt.gz",
-          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00105/fileset/5708"
+          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00105/fileset/5708",
+          "size_bytes": 1185804
         },
         {
           "name": "STG_eur_expression_peer10.cis_qtl.txt.gz",
-          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00105/fileset/5709"
+          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00105/fileset/5709",
+          "size_bytes": 1178511
         },
         {
           "name": "SVZ_eur_expression_peer5.cis_qtl.txt.gz",
-          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00105/fileset/5710"
+          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00105/fileset/5710",
+          "size_bytes": 1183607
         },
         {
           "name": "THA_eur_expression_peer10.cis_qtl.txt.gz",
-          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00105/fileset/5711"
+          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00105/fileset/5711",
+          "size_bytes": 1188579
         },
         {
           "name": "MFG_eur_splicing_peer5_gene.cis_qtl_nominal_tabixed.tsv.gz",
-          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00105/fileset/5712"
+          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00105/fileset/5712",
+          "size_bytes": 10571730066
         },
         {
           "name": "STG_eur_splicing_peer5_gene.cis_qtl_nominal_tabixed.tsv.gz",
-          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00105/fileset/5713"
+          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00105/fileset/5713",
+          "size_bytes": 10911328409
         },
         {
           "name": "SVZ_eur_splicing_peer0_gene.cis_qtl_nominal_tabixed.tsv.gz",
-          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00105/fileset/5714"
+          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00105/fileset/5714",
+          "size_bytes": 11375045439
         },
         {
           "name": "THA_eur_splicing_peer5_gene.cis_qtl_nominal_tabixed.tsv.gz",
-          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00105/fileset/5715"
+          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00105/fileset/5715",
+          "size_bytes": 10720029378
         },
         {
           "name": "MFG_eur_splicing_peer5_cluster.cis_qtl.txt.gz",
-          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00105/fileset/5716"
+          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00105/fileset/5716",
+          "size_bytes": 2541368
         },
         {
           "name": "STG_eur_splicing_peer5_cluster.cis_qtl.txt.gz",
-          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00105/fileset/5717"
+          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00105/fileset/5717",
+          "size_bytes": 2458452
         },
         {
           "name": "SVZ_eur_splicing_peer0_cluster.cis_qtl.txt.gz",
-          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00105/fileset/5718"
+          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00105/fileset/5718",
+          "size_bytes": 2432193
         },
         {
           "name": "THA_eur_splicing_peer5_cluster.cis_qtl.txt.gz",
-          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00105/fileset/5719"
+          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00105/fileset/5719",
+          "size_bytes": 2408710
         },
         {
           "name": "MFG_eur_splicing_peer5_gene.cis_qtl.txt.gz",
-          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00105/fileset/5720"
+          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00105/fileset/5720",
+          "size_bytes": 971570
         },
         {
           "name": "STG_eur_splicing_peer5_gene.cis_qtl.txt.gz",
-          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00105/fileset/5721"
+          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00105/fileset/5721",
+          "size_bytes": 959559
         },
         {
           "name": "SVZ_eur_splicing_peer0_gene.cis_qtl.txt.gz",
-          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00105/fileset/5722"
+          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00105/fileset/5722",
+          "size_bytes": 961254
         },
         {
           "name": "THA_eur_splicing_peer5_gene.cis_qtl.txt.gz",
-          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00105/fileset/5723"
+          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00105/fileset/5723",
+          "size_bytes": 953811
         }
       ]
     },
@@ -739,63 +899,78 @@
       "files": [
         {
           "name": "README_association_summary.pdf",
-          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00118/fileset/18380"
+          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00118/fileset/18380",
+          "size_bytes": 140711
         },
         {
           "name": "SVeQTL_DD.xlsx",
-          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00118/fileset/18381"
+          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00118/fileset/18381",
+          "size_bytes": 49966
         },
         {
           "name": "SVeQTL_Mayo_CBE_nominal.tsv.gz",
-          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00118/fileset/18382"
+          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00118/fileset/18382",
+          "size_bytes": 9336491
         },
         {
           "name": "SVeQTL_Mayo_TCX_nominal.tsv.gz",
-          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00118/fileset/18383"
+          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00118/fileset/18383",
+          "size_bytes": 9333899
         },
         {
           "name": "SVeQTL_MSBB_BM10_nominal.tsv.gz",
-          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00118/fileset/18384"
+          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00118/fileset/18384",
+          "size_bytes": 8933519
         },
         {
           "name": "SVeQTL_MSBB_BM22_nominal.tsv.gz",
-          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00118/fileset/18385"
+          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00118/fileset/18385",
+          "size_bytes": 8924256
         },
         {
           "name": "SVeQTL_MSBB_BM36_nominal.tsv.gz",
-          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00118/fileset/18386"
+          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00118/fileset/18386",
+          "size_bytes": 8903904
         },
         {
           "name": "SVeQTL_MSBB_BM44_nominal.tsv.gz",
-          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00118/fileset/18387"
+          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00118/fileset/18387",
+          "size_bytes": 8925607
         },
         {
           "name": "SVeQTL_ROSMAP_DLPFC_nominal.tsv.gz",
-          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00118/fileset/18388"
+          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00118/fileset/18388",
+          "size_bytes": 9023452
         },
         {
           "name": "SVhaQTL_DD.xlsx",
-          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00118/fileset/18389"
+          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00118/fileset/18389",
+          "size_bytes": 50168
         },
         {
           "name": "SVhaQTL_ROSMAP_DLPFC_nominal.tsv.gz",
-          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00118/fileset/18390"
+          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00118/fileset/18390",
+          "size_bytes": 17124401
         },
         {
           "name": "SVpQTL_DD.xlsx",
-          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00118/fileset/18391"
+          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00118/fileset/18391",
+          "size_bytes": 49996
         },
         {
           "name": "SVpQTL_ROSMAP_DLPFC_nominal.tsv.gz",
-          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00118/fileset/18392"
+          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00118/fileset/18392",
+          "size_bytes": 4431068
         },
         {
           "name": "SVsQTL_DD.xlsx",
-          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00118/fileset/18393"
+          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00118/fileset/18393",
+          "size_bytes": 50204
         },
         {
           "name": "SVsQTL_ROSMAP_DLPFC_nominal.tsv.gz",
-          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00118/fileset/18394"
+          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00118/fileset/18394",
+          "size_bytes": 8020441
         }
       ]
     },
@@ -810,15 +985,18 @@
       "files": [
         {
           "name": "ADSP_WES_EU_Belloy_2022_NIAGADS_summary_stats_p-value_only.txt",
-          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00126/fileset/18370"
+          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00126/fileset/18370",
+          "size_bytes": 15949793
         },
         {
           "name": "ADSP_WGS_EU_Belloy_2022_NIAGADS_summary_stats_p-value_only.txt",
-          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00126/fileset/18371"
+          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00126/fileset/18371",
+          "size_bytes": 1082307214
         },
         {
           "name": "NG00126_README_p-value_only.txt",
-          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00126/fileset/18372"
+          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00126/fileset/18372",
+          "size_bytes": 2059
         }
       ]
     },
@@ -833,15 +1011,18 @@
       "files": [
         {
           "name": "Suppl_1_plasma",
-          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00133/fileset/18412"
+          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00133/fileset/18412",
+          "size_bytes": 479714
         },
         {
           "name": "Suppl_2_urine",
-          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00133/fileset/18413"
+          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00133/fileset/18413",
+          "size_bytes": 304571
         },
         {
           "name": "Suppl_3_PK_Summary",
-          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00133/fileset/18414"
+          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00133/fileset/18414",
+          "size_bytes": 278068
         }
       ]
     },
@@ -856,19 +1037,23 @@
       "files": [
         {
           "name": "AD_all_pchem_for_all_IR_receptor_CDR3s_Blanck_July_2022.csv",
-          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00148/fileset/32359"
+          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00148/fileset/32359",
+          "size_bytes": 3112277
         },
         {
           "name": "Huda_et_al_2022_JAD220119.pdf",
-          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00148/fileset/32360"
+          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00148/fileset/32360",
+          "size_bytes": 141420
         },
         {
           "name": "Huda_et_al_article_Table_S2_TRA_Brain_AD_Blanck_July_2022.csv",
-          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00148/fileset/32361"
+          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00148/fileset/32361",
+          "size_bytes": 26676
         },
         {
           "name": "Huda_et_al_article_Table_S3_TRA_Blood_AD_Blanck_July_2022.csv",
-          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00148/fileset/32362"
+          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00148/fileset/32362",
+          "size_bytes": 655669
         }
       ]
     },
@@ -883,23 +1068,28 @@
       "files": [
         {
           "name": "Meta_autopsy_pet.COGRES_b37_p-valueonly.txt",
-          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00156/fileset/35532"
+          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00156/fileset/35532",
+          "size_bytes": 169538616
         },
         {
           "name": "Meta_autopsy_pet.COGRES_NC_b37_p-valueonly.txt",
-          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00156/fileset/35533"
+          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00156/fileset/35533",
+          "size_bytes": 169537900
         },
         {
           "name": "Meta_autopsy_pet.GLOBALRES_b37_p-valueonly.txt",
-          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00156/fileset/35534"
+          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00156/fileset/35534",
+          "size_bytes": 169537866
         },
         {
           "name": "Meta_autopsy_pet.GLOBALRES_NC_b37_p-valueonly.txt",
-          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00156/fileset/35535"
+          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00156/fileset/35535",
+          "size_bytes": 169535175
         },
         {
           "name": "README_Resilience_p-valueonly.txt",
-          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00156/fileset/35537"
+          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00156/fileset/35537",
+          "size_bytes": 2243
         }
       ]
     },
@@ -914,43 +1104,53 @@
       "files": [
         {
           "name": "CSF_Ab42_females_age_PCs_series_noHB_b37_p-valueonly.txt",
-          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00157/fileset/35510"
+          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00157/fileset/35510",
+          "size_bytes": 201676361
         },
         {
           "name": "CSF_Ab42_males_age_PCs_series_noHB_b37_p-valueonly.txt",
-          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00157/fileset/35511"
+          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00157/fileset/35511",
+          "size_bytes": 201691305
         },
         {
           "name": "CSF_Ab42_sexinteraction_age_PCs_series_noHB_b37_p-valueonly.txt",
-          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00157/fileset/35512"
+          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00157/fileset/35512",
+          "size_bytes": 201703228
         },
         {
           "name": "CSF_Ptau_females_age_PCs_series_b37_p-valueonly.txt",
-          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00157/fileset/35513"
+          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00157/fileset/35513",
+          "size_bytes": 214224238
         },
         {
           "name": "CSF_Ptau_males_age_PCs_series_b37_p-valueonly.txt",
-          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00157/fileset/35514"
+          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00157/fileset/35514",
+          "size_bytes": 214237953
         },
         {
           "name": "CSF_Ptau_sexinteraction_age_PCs_series_b37_p-valueonly.txt",
-          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00157/fileset/35515"
+          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00157/fileset/35515",
+          "size_bytes": 201653405
         },
         {
           "name": "CSF_Tau_females_age_PCs_series_noHB_b37_p-valueonly.txt",
-          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00157/fileset/35516"
+          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00157/fileset/35516",
+          "size_bytes": 201692617
         },
         {
           "name": "CSF_Tau_males_age_PCs_series_noHB_b37_p-valueonly.txt",
-          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00157/fileset/35517"
+          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00157/fileset/35517",
+          "size_bytes": 201667949
         },
         {
           "name": "CSF_Tau_sexinteraction_age_PCs_series_noHB_b37_p-valueonly.txt",
-          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00157/fileset/35518"
+          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00157/fileset/35518",
+          "size_bytes": 201642758
         },
         {
           "name": "README_SexDifferences_CSF_p-valueonly.txt",
-          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00157/fileset/35519"
+          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00157/fileset/35519",
+          "size_bytes": 2341
         }
       ]
     },
@@ -965,31 +1165,38 @@
       "files": [
         {
           "name": "Neuropath_AMYLOID_females_b37_p-valueonly.txt",
-          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00158/fileset/35521"
+          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00158/fileset/35521",
+          "size_bytes": 218217635
         },
         {
           "name": "Neuropath_AMYLOID_males_b37_p-valueonly.txt",
-          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00158/fileset/35522"
+          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00158/fileset/35522",
+          "size_bytes": 217660777
         },
         {
           "name": "Neuropath_AMYLOID_sexinteraction_b37_p-valueonly.txt",
-          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00158/fileset/35523"
+          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00158/fileset/35523",
+          "size_bytes": 219363038
         },
         {
           "name": "Neuropath_TAU_females_b37_p-valueonly.txt",
-          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00158/fileset/35524"
+          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00158/fileset/35524",
+          "size_bytes": 218021977
         },
         {
           "name": "Neuropath_TAU_males_b37_p-valueonly.txt",
-          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00158/fileset/35525"
+          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00158/fileset/35525",
+          "size_bytes": 217077907
         },
         {
           "name": "Neuropath_TAU_sexinteraction_b37_p-valueonly.txt",
-          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00158/fileset/35526"
+          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00158/fileset/35526",
+          "size_bytes": 219031321
         },
         {
           "name": "README_SexDifferences_Neuropath_p-valueonly.txt",
-          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00158/fileset/35527"
+          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00158/fileset/35527",
+          "size_bytes": 1868
         }
       ]
     },
@@ -1004,31 +1211,38 @@
       "files": [
         {
           "name": "Meta_memory_NHB_b38_p-valueonly.txt",
-          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00159/fileset/35326"
+          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00159/fileset/35326",
+          "size_bytes": 181083612
         },
         {
           "name": "Meta_memory_NHW_b38_p-valueonly.txt",
-          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00159/fileset/35327"
+          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00159/fileset/35327",
+          "size_bytes": 255545734
         },
         {
           "name": "Meta_memory_transancestry_b38_p-valueonly.txt",
-          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00159/fileset/35328"
+          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00159/fileset/35328",
+          "size_bytes": 177428062
         },
         {
           "name": "Meta_memoryslopes_NHB_b38_p-valueonly.txt",
-          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00159/fileset/35329"
+          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00159/fileset/35329",
+          "size_bytes": 181084969
         },
         {
           "name": "Meta_memoryslopes_NHW_b38_p-valueonly.txt",
-          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00159/fileset/35330"
+          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00159/fileset/35330",
+          "size_bytes": 255543626
         },
         {
           "name": "Meta_memoryslopes_transancestry_b38_p-valueonly.txt",
-          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00159/fileset/35331"
+          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00159/fileset/35331",
+          "size_bytes": 177428000
         },
         {
           "name": "README_Archer_Memory_p-valueonly.txt",
-          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00159/fileset/35332"
+          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00159/fileset/35332",
+          "size_bytes": 1540
         }
       ]
     },
@@ -1043,79 +1257,98 @@
       "files": [
         {
           "name": "Meta_ADSP_Cross_Ancestry_memslopes_Interaction_ALL_p-valueonly.txt",
-          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00160/fileset/32661"
+          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00160/fileset/32661",
+          "size_bytes": 216457737
         },
         {
           "name": "Meta_ADSP_Cross_Ancestry_memslopes_Interaction_Impaired_p-valueonly.txt",
-          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00160/fileset/32662"
+          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00160/fileset/32662",
+          "size_bytes": 160434294
         },
         {
           "name": "Meta_ADSP_Cross_Ancestry_memslopes_Interaction_Normals_p-valueonly.txt",
-          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00160/fileset/32663"
+          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00160/fileset/32663",
+          "size_bytes": 214515161
         },
         {
           "name": "Meta_ADSP_Cross_Ancestry_memslopes_Men_ALL_p-valueonly.txt",
-          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00160/fileset/32664"
+          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00160/fileset/32664",
+          "size_bytes": 218620558
         },
         {
           "name": "Meta_ADSP_Cross_Ancestry_memslopes_Men_Impaired_p-valueonly.txt",
-          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00160/fileset/32665"
+          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00160/fileset/32665",
+          "size_bytes": 162208557
         },
         {
           "name": "Meta_ADSP_Cross_Ancestry_memslopes_Men_Normals_p-valueonly.txt",
-          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00160/fileset/32666"
+          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00160/fileset/32666",
+          "size_bytes": 219804556
         },
         {
           "name": "Meta_ADSP_Cross_Ancestry_memslopes_Women_ALL_p-valueonly.txt",
-          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00160/fileset/32667"
+          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00160/fileset/32667",
+          "size_bytes": 219436623
         },
         {
           "name": "Meta_ADSP_Cross_Ancestry_memslopes_Women_Impaired_p-valueonly.txt",
-          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00160/fileset/32668"
+          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00160/fileset/32668",
+          "size_bytes": 167966426
         },
         {
           "name": "Meta_ADSP_Cross_Ancestry_memslopes_Women_Normals_p-valueonly.txt",
-          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00160/fileset/32669"
+          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00160/fileset/32669",
+          "size_bytes": 220165045
         },
         {
           "name": "Meta_ADSP_Cross_Ancestry_MEM_Interaction_ALL_p-valueonly.txt",
-          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00160/fileset/32670"
+          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00160/fileset/32670",
+          "size_bytes": 216840727
         },
         {
           "name": "Meta_ADSP_Cross_Ancestry_MEM_Interaction_Impaired_p-valueonly.txt",
-          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00160/fileset/32671"
+          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00160/fileset/32671",
+          "size_bytes": 161645717
         },
         {
           "name": "Meta_ADSP_Cross_Ancestry_MEM_Interaction_Normals_p-valueonly.txt",
-          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00160/fileset/32672"
+          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00160/fileset/32672",
+          "size_bytes": 215154975
         },
         {
           "name": "Meta_ADSP_Cross_Ancestry_MEM_Men_ALL_p-valueonly.txt",
-          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00160/fileset/32673"
+          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00160/fileset/32673",
+          "size_bytes": 218909034
         },
         {
           "name": "Meta_ADSP_Cross_Ancestry_MEM_Men_Impaired_p-valueonly.txt",
-          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00160/fileset/32674"
+          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00160/fileset/32674",
+          "size_bytes": 162907543
         },
         {
           "name": "Meta_ADSP_Cross_Ancestry_MEM_Men_Normals_p-valueonly.txt",
-          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00160/fileset/32675"
+          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00160/fileset/32675",
+          "size_bytes": 220903394
         },
         {
           "name": "Meta_ADSP_Cross_Ancestry_MEM_Women_ALL_p-valueonly.txt",
-          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00160/fileset/32676"
+          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00160/fileset/32676",
+          "size_bytes": 219592681
         },
         {
           "name": "Meta_ADSP_Cross_Ancestry_MEM_Women_Impaired_p-valueonly.txt",
-          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00160/fileset/32677"
+          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00160/fileset/32677",
+          "size_bytes": 167936685
         },
         {
           "name": "Meta_ADSP_Cross_Ancestry_MEM_Women_Normals_p-valueonly.txt",
-          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00160/fileset/32678"
+          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00160/fileset/32678",
+          "size_bytes": 220352521
         },
         {
           "name": "README_Eissman_SexDiff_Memory_p-valueonly.txt",
-          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00160/fileset/32679"
+          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00160/fileset/32679",
+          "size_bytes": 3892
         }
       ]
     },
@@ -1130,55 +1363,68 @@
       "files": [
         {
           "name": "Meta_COGRES_NC_females_p-valueonly.txt",
-          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00161/fileset/35496"
+          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00161/fileset/35496",
+          "size_bytes": 297092156
         },
         {
           "name": "Meta_COGRES_NC_interaction_p-valueonly.txt",
-          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00161/fileset/35497"
+          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00161/fileset/35497",
+          "size_bytes": 289976915
         },
         {
           "name": "Meta_COGRES_NC_males_p-valueonly.txt",
-          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00161/fileset/35498"
+          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00161/fileset/35498",
+          "size_bytes": 297080840
         },
         {
           "name": "Meta_COGRES_females_p-valueonly.txt",
-          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00161/fileset/35499"
+          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00161/fileset/35499",
+          "size_bytes": 297098428
         },
         {
           "name": "Meta_COGRES_interaction_p-valueonly.txt",
-          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00161/fileset/35500"
+          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00161/fileset/35500",
+          "size_bytes": 290003430
         },
         {
           "name": "Meta_COGRES_males_p-valueonly.txt",
-          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00161/fileset/35501"
+          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00161/fileset/35501",
+          "size_bytes": 297096691
         },
         {
           "name": "Meta_GLOBALRES_NC_females_p-valueonly.txt",
-          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00161/fileset/35502"
+          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00161/fileset/35502",
+          "size_bytes": 297098370
         },
         {
           "name": "Meta_GLOBALRES_NC_interaction_p-valueonly.txt",
-          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00161/fileset/35503"
+          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00161/fileset/35503",
+          "size_bytes": 289981257
         },
         {
           "name": "Meta_GLOBALRES_NC_males_p-valueonly.txt",
-          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00161/fileset/35504"
+          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00161/fileset/35504",
+          "size_bytes": 297082382
         },
         {
           "name": "Meta_GLOBALRES_females_p-valueonly.txt",
-          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00161/fileset/35505"
+          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00161/fileset/35505",
+          "size_bytes": 297098147
         },
         {
           "name": "Meta_GLOBALRES_interaction_p-valueonly.txt",
-          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00161/fileset/35506"
+          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00161/fileset/35506",
+          "size_bytes": 290001795
         },
         {
           "name": "Meta_GLOBALRES_males_p-valueonly.txt",
-          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00161/fileset/35507"
+          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00161/fileset/35507",
+          "size_bytes": 297099322
         },
         {
           "name": "README_Sex_Differences_Resilience_p-valueonly.txt",
-          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00161/fileset/35508"
+          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00161/fileset/35508",
+          "size_bytes": 3973
         }
       ]
     },
@@ -1193,47 +1439,58 @@
       "files": [
         {
           "name": "adsp.charge.r1.wgs.all.AA.GENESIS.2024_0221.snv_indels_p-valueonly.csv",
-          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00165/fileset/35566"
+          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00165/fileset/35566",
+          "size_bytes": 5308177503
         },
         {
           "name": "adsp.charge.r1.wgs.all.EA.GENESIS.2024_0221.snv_indels_p-valueonly.csv",
-          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00165/fileset/35567"
+          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00165/fileset/35567",
+          "size_bytes": 4729177584
         },
         {
           "name": "adsp.charge.r1.wgs.all.HI.GENESIS.2024_0221.snv_indels_p-valueonly.csv",
-          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00165/fileset/35568"
+          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00165/fileset/35568",
+          "size_bytes": 5100669001
         },
         {
           "name": "adsp.charge.r1.wgs.all.pooled.CMC_0.01_EPACTS.2024_0221.snv_indels_p-valueonly.txt",
-          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00165/fileset/35569"
+          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00165/fileset/35569",
+          "size_bytes": 1619236
         },
         {
           "name": "adsp.charge.r1.wgs.all.pooled.CMC_0.05_EPACTS.2024_0221.snv_indels_p-valueonly.txt",
-          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00165/fileset/35570"
+          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00165/fileset/35570",
+          "size_bytes": 1619668
         },
         {
           "name": "adsp.charge.r1.wgs.all.pooled.GENESIS.2024_0221.snv_indels_p-valueonly.csv",
-          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00165/fileset/35571"
+          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00165/fileset/35571",
+          "size_bytes": 2425791771
         },
         {
           "name": "adsp.charge.r1.wgs.all.pooled.Metasoft.2024_0221.snv_indels_p-valueonly.out",
-          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00165/fileset/35572"
+          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00165/fileset/35572",
+          "size_bytes": 2029583362
         },
         {
           "name": "adsp.charge.r1.wgs.all.pooled.SKAT_0.01_EPACTS.2024_0221.snv_indels_p-valueonly.txt",
-          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00165/fileset/35573"
+          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00165/fileset/35573",
+          "size_bytes": 1759309
         },
         {
           "name": "adsp.charge.r1.wgs.all.pooled.SKAT_0.05_EPACTS.2024_0221.snv_indels_p-valueonly.txt",
-          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00165/fileset/35574"
+          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00165/fileset/35574",
+          "size_bytes": 1753697
         },
         {
           "name": "adsp.charge.r1.wgs.all.pooled.STAAR.2024_0221.snv_indels_p-valueonly.txt",
-          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00165/fileset/35575"
+          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00165/fileset/35575",
+          "size_bytes": 5145553
         },
         {
           "name": "README_CHARGE_ADSP_5k_p-valueonly.txt",
-          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00165/fileset/35576"
+          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00165/fileset/35576",
+          "size_bytes": 6558
         }
       ]
     },
@@ -1248,55 +1505,68 @@
       "files": [
         {
           "name": "ADSP.r3.wgs.aa.SNVresults.2024.0303_p-valueOnly.txt",
-          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00166/fileset/35578"
+          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00166/fileset/35578",
+          "size_bytes": 675498492
         },
         {
           "name": "ADSP.r3.wgs.his.SNVresults.2024.0303_p-valueOnly.txt",
-          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00166/fileset/35579"
+          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00166/fileset/35579",
+          "size_bytes": 595207853
         },
         {
           "name": "ADSP.r3.wgs.nhw.SNVresults.2024.0303_p-valueOnly.txt",
-          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00166/fileset/35580"
+          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00166/fileset/35580",
+          "size_bytes": 374773715
         },
         {
           "name": "ADSP.r3.wgs.pp.SNVresults.2024.0303_p-valueOnly.txt",
-          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00166/fileset/35581"
+          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00166/fileset/35581",
+          "size_bytes": 620606206
         },
         {
           "name": "ADSP.r3.wgs.aa.codingSTAARresults.2024.0303.txt",
-          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00166/fileset/35582"
+          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00166/fileset/35582",
+          "size_bytes": 2563199
         },
         {
           "name": "ADSP.r3.wgs.his.codingSTAARresults.2024.0303.txt",
-          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00166/fileset/35583"
+          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00166/fileset/35583",
+          "size_bytes": 2376932
         },
         {
           "name": "ADSP.r3.wgs.nhw.codingSTAARresults.2024.0303.txt",
-          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00166/fileset/35584"
+          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00166/fileset/35584",
+          "size_bytes": 3002237
         },
         {
           "name": "ADSP.r3.wgs.pp.codingSTAARresults.2024.0303.txt",
-          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00166/fileset/35585"
+          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00166/fileset/35585",
+          "size_bytes": 3251156
         },
         {
           "name": "ADSP.r3.wgs.aa.noncoding.noncodingSTAARresults.2024.0303.txt",
-          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00166/fileset/35586"
+          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00166/fileset/35586",
+          "size_bytes": 4594449
         },
         {
           "name": "ADSP.r3.wgs.his.noncoding.noncodingSTAARresults.2024.0303.txt",
-          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00166/fileset/35587"
+          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00166/fileset/35587",
+          "size_bytes": 4626067
         },
         {
           "name": "ADSP.r3.wgs.nhw.noncoding.noncodingSTAARresults.2024.0303.txt",
-          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00166/fileset/35588"
+          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00166/fileset/35588",
+          "size_bytes": 4757197
         },
         {
           "name": "ADSP.r3.wgs.pp.noncodingSTAARresults.2024.0303.txt",
-          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00166/fileset/35589"
+          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00166/fileset/35589",
+          "size_bytes": 4742913
         },
         {
           "name": "README_ADSP_R3_WGS_P-valueOnly.txt",
-          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00166/fileset/35590"
+          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00166/fileset/35590",
+          "size_bytes": 2366
         }
       ]
     },
@@ -1311,11 +1581,13 @@
       "files": [
         {
           "name": "PSP_final_sum_stats_pvalOnly.txt",
-          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00169/fileset/35592"
+          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00169/fileset/35592",
+          "size_bytes": 243372809
         },
         {
           "name": "README_PSP_GWAS_Summary_Statistic_p-valOnly.txt",
-          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00169/fileset/35593"
+          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00169/fileset/35593",
+          "size_bytes": 5652
         }
       ]
     },
@@ -1330,19 +1602,23 @@
       "files": [
         {
           "name": "PSP_SNV_INDELs_p-valueOnly.txt",
-          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00172/fileset/39501"
+          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00172/fileset/39501",
+          "size_bytes": 1145948383
         },
         {
           "name": "PSP_SNV_INDELs_removing_samples_with_APOE_selection_bias_p-valueOnly.txt",
-          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00172/fileset/39502"
+          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00172/fileset/39502",
+          "size_bytes": 1146826140
         },
         {
           "name": "SVs_p-valueOnly.txt",
-          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00172/fileset/39503"
+          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00172/fileset/39503",
+          "size_bytes": 1911715
         },
         {
           "name": "readme_p-valOnly.txt",
-          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00172/fileset/39505"
+          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00172/fileset/39505",
+          "size_bytes": 1571
         }
       ]
     },
@@ -1357,51 +1633,63 @@
       "files": [
         {
           "name": "rteriol_Shade_2024_p-valueOnly.txt",
-          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00175/fileset/53175"
+          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00175/fileset/53175",
+          "size_bytes": 558681766
         },
         {
           "name": "atheroscler_Shade_2024_p-valueOnly.txt",
-          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00175/fileset/53176"
+          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00175/fileset/53176",
+          "size_bytes": 557404324
         },
         {
           "name": "braak_Shade_2024_p-valueOnly.txt",
-          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00175/fileset/53177"
+          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00175/fileset/53177",
+          "size_bytes": 558257014
         },
         {
           "name": "caa_Shade_2024_p-valueOnly.txt",
-          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00175/fileset/53178"
+          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00175/fileset/53178",
+          "size_bytes": 558326255
         },
         {
           "name": "cerad_Shade_2024_p-valueOnly.txt",
-          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00175/fileset/53179"
+          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00175/fileset/53179",
+          "size_bytes": 557980897
         },
         {
           "name": "diffuse_abeta_Shade_2024_p-valueOnly.txt",
-          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00175/fileset/53180"
+          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00175/fileset/53180",
+          "size_bytes": 543196543
         },
         {
           "name": "grossinf_Shade_2024_p-valueOnly.txt",
-          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00175/fileset/53181"
+          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00175/fileset/53181",
+          "size_bytes": 558262033
         },
         {
           "name": "hs_Shade_2024_p-valueOnly.txt",
-          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00175/fileset/53182"
+          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00175/fileset/53182",
+          "size_bytes": 556750641
         },
         {
           "name": "late_Shade_2024_p-valueOnly.txt",
-          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00175/fileset/53183"
+          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00175/fileset/53183",
+          "size_bytes": 558350329
         },
         {
           "name": "lewy_body_Shade_2024_p-valueOnly.txt",
-          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00175/fileset/53184"
+          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00175/fileset/53184",
+          "size_bytes": 558230373
         },
         {
           "name": "microinf_Shade_2024_p-valueOnly.txt",
-          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00175/fileset/53185"
+          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00175/fileset/53185",
+          "size_bytes": 557782914
         },
         {
           "name": "NG00175_P-values_Only_README.docx",
-          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00175/fileset/53186"
+          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00175/fileset/53186",
+          "size_bytes": 24542
         }
       ]
     },
@@ -1416,87 +1704,108 @@
       "files": [
         {
           "name": "AFA_common_apoe_adj_p-valueOnly.txt",
-          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00177/fileset/53152"
+          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00177/fileset/53152",
+          "size_bytes": 588811126
         },
         {
           "name": "AFA_common_main_p-valueOnly.txt",
-          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00177/fileset/53153"
+          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00177/fileset/53153",
+          "size_bytes": 588087305
         },
         {
           "name": "AFA_rare_apoe_adj_p-valueOnly.txt",
-          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00177/fileset/53154"
+          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00177/fileset/53154",
+          "size_bytes": 5929976800
         },
         {
           "name": "AFA_rare_main_p-valueOnly.txt",
-          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00177/fileset/53155"
+          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00177/fileset/53155",
+          "size_bytes": 5749972936
         },
         {
           "name": "EAS_common_apoe_adj_p-valueOnly.txt",
-          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00177/fileset/53156"
+          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00177/fileset/53156",
+          "size_bytes": 294480675
         },
         {
           "name": "EAS_common_main_p-valueOnly.txt",
-          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00177/fileset/53157"
+          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00177/fileset/53157",
+          "size_bytes": 296062045
         },
         {
           "name": "EAS_rare_apoe_adj_p-valueOnly.txt",
-          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00177/fileset/53158"
+          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00177/fileset/53158",
+          "size_bytes": 148015802
         },
         {
           "name": "EAS_rare_main_p-valueOnly.txt",
-          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00177/fileset/53159"
+          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00177/fileset/53159",
+          "size_bytes": 149414005
         },
         {
           "name": "HISP_common_apoe_adj_p-valueOnly.txt",
-          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00177/fileset/53160"
+          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00177/fileset/53160",
+          "size_bytes": 465016219
         },
         {
           "name": "HISP_common_main_p-valueOnly.txt",
-          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00177/fileset/53161"
+          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00177/fileset/53161",
+          "size_bytes": 466706288
         },
         {
           "name": "HISP_rare_apoe_adj_p-valueOnly.txt",
-          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00177/fileset/53162"
+          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00177/fileset/53162",
+          "size_bytes": 376812823
         },
         {
           "name": "HISP_rare_main_p-valueOnly.txt",
-          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00177/fileset/53163"
+          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00177/fileset/53163",
+          "size_bytes": 374713269
         },
         {
           "name": "METASOFT_common_apoe_adj_p-valueOnly.txt",
-          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00177/fileset/53164"
+          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00177/fileset/53164",
+          "size_bytes": 785024043
         },
         {
           "name": "METASOFT_common_main_p-valueOnly.txt",
-          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00177/fileset/53165"
+          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00177/fileset/53165",
+          "size_bytes": 770464660
         },
         {
           "name": "METASOFT_rare_apoe_adj_p-valueOnly.txt",
-          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00177/fileset/53166"
+          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00177/fileset/53166",
+          "size_bytes": 1267696356
         },
         {
           "name": "METASOFT_rare_main_p-valueOnly.txt",
-          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00177/fileset/53167"
+          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00177/fileset/53167",
+          "size_bytes": 1257941556
         },
         {
           "name": "NHW_common_apoe_adj_p-valueOnly.txt",
-          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00177/fileset/53168"
+          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00177/fileset/53168",
+          "size_bytes": 482299641
         },
         {
           "name": "NHW_common_main_p-valueOnly.txt",
-          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00177/fileset/53169"
+          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00177/fileset/53169",
+          "size_bytes": 470453557
         },
         {
           "name": "NHW_rare_apoe_adj_p-valueOnly.txt",
-          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00177/fileset/53170"
+          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00177/fileset/53170",
+          "size_bytes": 896231180
         },
         {
           "name": "NHW_rare_main_p-valueOnly.txt",
-          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00177/fileset/53171"
+          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00177/fileset/53171",
+          "size_bytes": 905474313
         },
         {
           "name": "README_file_for_ADGC_Multi-Ancestry_GWAS_Summary_Statistic_p-valueOnly.txt",
-          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00177/fileset/53172"
+          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00177/fileset/53172",
+          "size_bytes": 12685
         }
       ]
     },
@@ -1511,63 +1820,78 @@
       "files": [
         {
           "name": "MWASweights_AFRmetab.zip",
-          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00180/fileset/53198"
+          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00180/fileset/53198",
+          "size_bytes": 8941266
         },
         {
           "name": "MWASweights_EURmetab.zip",
-          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00180/fileset/53199"
+          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00180/fileset/53199",
+          "size_bytes": 75000871
         },
         {
           "name": "PWASweights_AFRprot.zip",
-          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00180/fileset/53200"
+          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00180/fileset/53200",
+          "size_bytes": 139776420
         },
         {
           "name": "PWASweights_EURprot.zip",
-          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00180/fileset/53201"
+          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00180/fileset/53201",
+          "size_bytes": 455720319
         },
         {
           "name": "QTLsumstat_AFRmetab.zip",
-          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00180/fileset/53202"
+          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00180/fileset/53202",
+          "size_bytes": 304368955108
         },
         {
           "name": "QTLsumstat_AFRprot.tar",
-          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00180/fileset/53203"
+          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00180/fileset/53203",
+          "size_bytes": 1497053849600
         },
         {
           "name": "QTLsumstat_EURmetab.zip",
-          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00180/fileset/53204"
+          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00180/fileset/53204",
+          "size_bytes": 323163859493
         },
         {
           "name": "QTLsumstat_EURprot.tar",
-          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00180/fileset/53205"
+          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00180/fileset/53205",
+          "size_bytes": 1700316805120
         },
         {
           "name": "NG00180_readme.txt",
-          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00180/fileset/53206"
+          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00180/fileset/53206",
+          "size_bytes": 2534
         },
         {
           "name": "ST03_EURprotFeatureInfo.csv",
-          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00180/fileset/53207"
+          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00180/fileset/53207",
+          "size_bytes": 869286
         },
         {
           "name": "ST04_AFRprotFeatureInfo.csv",
-          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00180/fileset/53208"
+          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00180/fileset/53208",
+          "size_bytes": 869286
         },
         {
           "name": "ST05_EURmetabFeatureInfo.csv",
-          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00180/fileset/53209"
+          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00180/fileset/53209",
+          "size_bytes": 372596
         },
         {
           "name": "ST06_AFRmetabFeatureInfo.csv",
-          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00180/fileset/53210"
+          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00180/fileset/53210",
+          "size_bytes": 372666
         },
         {
           "name": "protFeatureInfo_data_dictionary.xlsx",
-          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00180/fileset/53211"
+          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00180/fileset/53211",
+          "size_bytes": 9438
         },
         {
           "name": "metabFeatureInfo_data_dictionary.xlsx",
-          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00180/fileset/53212"
+          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00180/fileset/53212",
+          "size_bytes": 10249
         }
       ]
     },
@@ -1582,47 +1906,58 @@
       "files": [
         {
           "name": "README.txt",
-          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00182/fileset/53187"
+          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00182/fileset/53187",
+          "size_bytes": 3860
         },
         {
           "name": "gard.gwas.sum.stat_e4.car.txt",
-          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00182/fileset/53188"
+          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00182/fileset/53188",
+          "size_bytes": 1299526240
         },
         {
           "name": "gard.gwas.sum.stat_e4.non.car.txt",
-          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00182/fileset/53189"
+          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00182/fileset/53189",
+          "size_bytes": 1304671730
         },
         {
           "name": "gard.gwas.sum.stat_female.txt",
-          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00182/fileset/53190"
+          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00182/fileset/53190",
+          "size_bytes": 1304033556
         },
         {
           "name": "gard.gwas.sum.stat_male.txt",
-          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00182/fileset/53191"
+          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00182/fileset/53191",
+          "size_bytes": 1301891344
         },
         {
           "name": "gard.gwas.sum.stat_total.txt",
-          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00182/fileset/53192"
+          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00182/fileset/53192",
+          "size_bytes": 1307611351
         },
         {
           "name": "metal.gwas.sum.stat_e4.car.txt",
-          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00182/fileset/53193"
+          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00182/fileset/53193",
+          "size_bytes": 296593721
         },
         {
           "name": "metal.gwas.sum.stat_e4.non.car.txt",
-          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00182/fileset/53194"
+          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00182/fileset/53194",
+          "size_bytes": 296583098
         },
         {
           "name": "metal.gwas.sum.stat_female.txt",
-          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00182/fileset/53195"
+          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00182/fileset/53195",
+          "size_bytes": 296581758
         },
         {
           "name": "metal.gwas.sum.stat_male.txt",
-          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00182/fileset/53196"
+          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00182/fileset/53196",
+          "size_bytes": 296604096
         },
         {
           "name": "metal.gwas.sum.stat_total.txt",
-          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00182/fileset/53197"
+          "uri": "https://st1.niagads.org/portal/v1/download-public/NG00182/fileset/53197",
+          "size_bytes": 296554124
         }
       ]
     }

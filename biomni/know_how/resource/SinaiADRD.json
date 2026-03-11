@@ -2,22 +2,23 @@
   "datasets": [
     {
       "id": "RADR",
-      "title": "RADR – Repository for Rare Alzheimer’s Disease and Related Dementia Variants",
+      "title": "RADR \u2013 Repository for Rare Alzheimer\u2019s Disease and Related Dementia Variants",
       "access": "open",
       "dataset_url": "https://zenodo.org/records/17538285",
       "open_access_portal_url": "https://radrvariants.com",
       "manifest_url": null,
-      "study_description": "The RADR (Repository for Rare Alzheimer’s Disease and Related Dementia Variants) database is a curated reference of rare, protein-altering, and disease-associated variants in genes implicated in Alzheimer’s disease (AD) and related dementias (ADRD). The table aggregates variant annotations from ClinVar, AlzForum, InterVar, and literature sources, harmonized under GRCh38, with per-variant genomic position, predicted functional impact, clinical/neuropathological classification, and risk metrics, enabling variant interpretation and penetrance estimation in large biobank and sequencing cohorts (e.g., All of Us, BioMe, UK Biobank).",
+      "study_description": "The RADR (Repository for Rare Alzheimer\u2019s Disease and Related Dementia Variants) database is a curated reference of rare, protein-altering, and disease-associated variants in genes implicated in Alzheimer\u2019s disease (AD) and related dementias (ADRD). The table aggregates variant annotations from ClinVar, AlzForum, InterVar, and literature sources, harmonized under GRCh38, with per-variant genomic position, predicted functional impact, clinical/neuropathological classification, and risk metrics, enabling variant interpretation and penetrance estimation in large biobank and sequencing cohorts (e.g., All of Us, BioMe, UK Biobank).",
       "files": [
         {
           "name": "RADR_V3.xlsx (curated variant table; latest RADR release)",
-          "uri": "https://zenodo.org/records/17538285"
+          "uri": "https://zenodo.org/records/17538285",
+          "size_bytes": 754514
         }
       ]
     },
     {
       "id": "SingleBrain",
-      "title": "SingleBrain – Single-nucleus eQTL Meta-analysis across Human Brain Cohorts",
+      "title": "SingleBrain \u2013 Single-nucleus eQTL Meta-analysis across Human Brain Cohorts",
       "access": "open",
       "dataset_url": "https://zenodo.org/records/14908182",
       "open_access_portal_url": "https://pmc.ncbi.nlm.nih.gov/articles/PMC11908325/",
@@ -25,29 +26,31 @@
       "study_description": "SingleBrain provides full and top association summary statistics for cis-eQTLs mapped in a meta-analysis of single-nucleus RNA-seq data from four human brain cohorts (Fujita et al., Mathys et al., Bryois et al., Gabitto et al.; 983 European-ancestry donors from 757 unique individuals). QTLs are mapped on hg38 using the mmQTL linear mixed model random-effects framework across major brain cell classes and subtypes (astrocytes, endothelial cells, excitatory and inhibitory neurons, microglia, oligodendrocytes, OPCs).",
       "files": [
         {
-          "name": "{Cell type}_eqtl_{ASSOC}.tsv.gz (cell-type–specific full and top association files for all tested phenotypes)",
-          "uri": "https://zenodo.org/records/14908182"
+          "name": "{Cell type}_eqtl_{ASSOC}.tsv.gz (cell-type\u2013specific full and top association files for all tested phenotypes)",
+          "uri": "https://zenodo.org/records/14908182",
+          "size_bytes": 4329411973
         }
       ]
     },
     {
       "id": "isoMiGA_counts",
-      "title": "isoMiGA – Isoform and Gene-level Counts and TPM in Short-read Human Microglia",
+      "title": "isoMiGA \u2013 Isoform and Gene-level Counts and TPM in Short-read Human Microglia",
       "access": "open",
       "dataset_url": "https://zenodo.org/records/14866476",
       "open_access_portal_url": "https://www.nature.com/articles/s41588-025-02099-0",
       "manifest_url": null,
-      "study_description": "Short-read RNA-seq–based isoform and gene-level quantification in human microglia from four cohorts (Raj, Roussos, Gaffney, iPSC-derived microglia-like cells). Expression is quantified with Salmon at transcript and gene level as TPM and counts, against both GENCODE v38 and an augmented union reference that incorporates 35,879 novel microglia isoforms from isoMiGA long-read sequencing. The resource provides 32 cohort × quantification × reference matrices for downstream eQTL, TWAS, and network analyses.",
+      "study_description": "Short-read RNA-seq\u2013based isoform and gene-level quantification in human microglia from four cohorts (Raj, Roussos, Gaffney, iPSC-derived microglia-like cells). Expression is quantified with Salmon at transcript and gene level as TPM and counts, against both GENCODE v38 and an augmented union reference that incorporates 35,879 novel microglia isoforms from isoMiGA long-read sequencing. The resource provides 32 cohort \u00d7 quantification \u00d7 reference matrices for downstream eQTL, TWAS, and network analyses.",
       "files": [
         {
           "name": "{cohort}_{quantification}_{reference}.tsv.gz (32 isoform/gene quantification matrices across 4 cohorts, 4 quantification types, 2 references)",
-          "uri": "https://zenodo.org/records/14866476"
+          "uri": "https://zenodo.org/records/14866476",
+          "size_bytes": 82411407
         }
       ]
     },
     {
       "id": "isoMiGA_QTL",
-      "title": "isoMiGA – Expression and Splicing QTL Summary Statistics in Human Microglia",
+      "title": "isoMiGA \u2013 Expression and Splicing QTL Summary Statistics in Human Microglia",
       "access": "open",
       "dataset_url": "https://zenodo.org/records/8250771",
       "open_access_portal_url": "https://www.nature.com/articles/s41588-025-02099-0",
@@ -56,7 +59,8 @@
       "files": [
         {
           "name": "{REFERENCE}_{PHENOTYPE}_{ASSOC}.tsv.gz (full and top association files for expression and splicing QTLs across GENCODE and union references)",
-          "uri": "https://zenodo.org/records/8250771"
+          "uri": "https://zenodo.org/records/8250771",
+          "size_bytes": 3816192
         }
       ]
     }

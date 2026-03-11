@@ -10,6 +10,7 @@ from datetime import datetime
 import shutil
 
 from biomni.agent.a1 import A1
+from biomni.agent.ad_data_downloader import download_ad_catalog_data
 from langchain_core.messages import HumanMessage
 
 try:
@@ -32,13 +33,52 @@ except ImportError:
     pass
 
 class AD1(A1):
-    def __init__(self, **kwargs):
+    def __init__(self, download_ad_data: bool = False, **kwargs):
         super().__init__(**kwargs)
         self.ad_keywords = [
             "Alzheimer", "AD", "dementia", "MCI", "amyloid", "tau", 
             "neurodegeneration", "cognition"
         ]
+
+        if download_ad_data:
+            self._bulk_download_ad_data()
+
         self._enforce_local_data_priority()
+
+    def _bulk_download_ad_data(self):
+        """Perform bulk download of BiomniAD catalog data (<100MB)."""
+        try:
+            console.print(Panel("[header]🚀 Initiating Bulk BiomniAD Data Download[/header]\nScanning catalogs for and fetching files < 100MB to local data lake.", border_style="cyan"))
+        except NameError:
+            print("🚀 Initiating Bulk BiomniAD Data Download...")
+
+        results = download_ad_catalog_data(self.data_lake_dir)
+
+        # After download, sync descriptions and inform user
+        self._sync_data_lake_descriptions()
+        self._save_custom_data_index()
+
+        summary_text = (
+            f"✅ [success]Downloaded:[/success] {len(results['downloaded'])} file(s)\n"
+            f"⏭️ [info]Already present:[/info] {len(results['already_present'])} file(s)\n"
+            f"🚫 [warning]Skipped (too large):[/warning] {len(results['skipped_too_large'])} file(s)\n"
+            f"❌ [danger]Failed:[/danger] {len(results['skipped_error'])} file(s)"
+        )
+        
+        try:
+            console.print(Panel(summary_text, title="[header]Download Summary[/header]", border_style="green"))
+            if results["downloaded"]:
+                console.print(f"📁 Files stored in: [bold]{os.path.join(self.data_lake_dir, 'biomniAD')}[/bold]")
+            if results["skipped_error"]:
+                console.print("\n[bold yellow]⚠️  Failed downloads (first 20):[/bold yellow]")
+                for entry in results["skipped_error"][:20]:
+                    console.print(f"  [red]•[/red] {entry}")
+        except NameError:
+            print(summary_text)
+            if results["skipped_error"]:
+                print("\n⚠️  Failed downloads (first 20):")
+                for entry in results["skipped_error"][:20]:
+                    print(f"  • {entry}")
 
     def _build_local_data_priority_instruction(self) -> str:
         """Build AD1 local-data-first policy block for the system prompt."""
@@ -81,12 +121,14 @@ class AD1(A1):
 
         return f"""
 ### AD1_LOCAL_DATA_POLICY_START
-AD1 GLOBAL PRIORITY (APPLIES TO ALL TASKS):
-1. Local data first: always inspect the built-in data lake and user data directory before web search.
+AD1 GLOBAL PRIORITIES:
+1. Local data first: siempre inspeccionar el data lake incorporado y el directorio de datos del usuario antes de buscar en la web.
    - Built-in data lake: {getattr(self, 'data_lake_dir', 'not set')}
-    - User data directory (BIOMNI_USER_DATA_PATH / BIOMNI_DATA_PATH): {data_root_dir or 'not set'}
-   - Use os.listdir() on both locations to discover available datasets.
-2. BiomniAD catalogs: scan JSON catalogs in biomni/know_how/resource/ for AD datasets with download URIs.
+   - BiomniAD directory: {os.path.join(getattr(self, 'data_lake_dir', 'not set'), 'biomniAD')}
+   - User data directory (BIOMNI_USER_DATA_PATH / BIOMNI_DATA_PATH): {data_root_dir or 'not set'}
+   - Use os.listdir() on all locations to discover available datasets.
+2. BiomniAD catalogs: scan JSON catalogs in biomni/know_how/resource/ for AD datasets.
+   - [LOCAL] annotation indicates file is already downloaded and ready to use without fetch tools.
 3. External sources third: use web/literature/databases only to supplement missing local evidence.
 4. Code generation last: write custom code only when built-in tools and available data are insufficient.
 5. Never fabricate data. If local data is missing, explicitly state the gap.
@@ -451,7 +493,40 @@ Data lake files: {len(local_items)}
             lines.append(f"  - {title} ({n_files} file URI(s))")
         if len(datasets) > 20:
             lines.append(f"  ... and {len(datasets) - 20} more datasets")
-        return "\n".join(lines)
+        
+        # Check for local presence of files
+        enriched_lines = []
+        ad_data_lake = os.path.join(getattr(self, "data_lake_dir", ""), "biomniAD")
+        
+        for line in lines:
+            if line.startswith("  - "):
+                # Try to extract the title/id from the line and dataset object to check local files
+                # This matches the title in the loop below
+                pass
+            enriched_lines.append(line)
+
+        # Better loop for checking local availability
+        final_lines = [lines[0], lines[1]]
+        for d in datasets[:25]:
+            title = d.get("title", d.get("id", "?"))
+            ds_id = d.get("id", "unknown")
+            files = d.get("files", [])
+            
+            local_count = 0
+            if ad_data_lake and os.path.isdir(os.path.join(ad_data_lake, ds_id)):
+                ds_dir = os.path.join(ad_data_lake, ds_id)
+                for f in files:
+                    fname = f.get("name", os.path.basename(f.get("uri", "")))
+                    if fname and os.path.exists(os.path.join(ds_dir, fname)):
+                        local_count += 1
+            
+            status = f" ({local_count}/{len(files)} LOCAL)" if local_count > 0 else f" ({len(files)} URIs)"
+            final_lines.append(f"  - {title}{status}")
+            
+        if len(datasets) > 25:
+            final_lines.append(f"  ... and {len(datasets) - 25} more datasets")
+            
+        return "\n".join(final_lines)
 
     def _inject_ad_context(self):
         """Inject BiomniAD data sourcing instructions into the system prompt."""

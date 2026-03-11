@@ -114,6 +114,27 @@ print(df.describe())
 - Download via `files[].uri` or `manifest_url`/`dataset_url` when the dataset modality aligns with the task and expected benefit > cost.
 - Prefer the smallest relevant subset first; escalate to larger downloads only if needed.
 
+## Bulk local download
+
+To download all BiomniAD catalog files less than 100MB locally for the agent:
+
+**Standalone Python:**
+```python
+from biomni.agent.ad_data_downloader import download_ad_catalog_data
+# Specify your local data lake path
+results = download_ad_catalog_data("/path/to/data_lake")
+print(f"Downloaded {len(results['downloaded'])} files.")
+```
+
+**Via AD1 Agent:**
+```python
+from biomni.agent.ad1 import AD1
+# This will automatically download/cache missing files < 100MB during initialization
+agent = AD1(download_ad_data=True)
+```
+
+Files are stored in `<data_lake>/biomniAD/<dataset_id>/` and are automatically annotated as `[LOCAL]` in the agent's sourcing instructions.
+
 ## One-liner
 
 > "Because this is an AD/dementia task, I first scan local data (BIOMNI_DATA_PATH) and BiomniAD catalogs, identify datasets aligned to the task, and proceed accordingly."
