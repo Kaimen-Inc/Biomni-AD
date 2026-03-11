@@ -173,8 +173,7 @@ Data lake files: {len(local_items)}
         self.raw_log = getattr(self, "raw_log", [])
 
         # 1. Setup run directory
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        run_id = f"run_{timestamp}"
+        run_id = self._build_run_id(prompt)
         runs_root = os.path.abspath(os.path.join(os.getcwd(), "runs"))
         current_run_dir = os.path.join(runs_root, run_id)
         os.makedirs(current_run_dir, exist_ok=True)
@@ -1008,8 +1007,7 @@ ALZHEIMER'S & DEMENTIA DATA SOURCING PROTOCOL
                  self.raw_log = list(s["messages"])
 
             # Setup run directory
-            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            run_id = f"run_{timestamp}"
+            run_id = self._build_run_id(prompt)
             runs_root = os.path.abspath(os.path.join(os.getcwd(), "runs"))
             os.makedirs(runs_root, exist_ok=True) # Ensure runs_root exists
             current_run_dir = os.path.join(runs_root, run_id)

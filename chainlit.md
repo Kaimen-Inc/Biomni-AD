@@ -30,6 +30,7 @@ Your local data files and the built-in AD data lake are automatically available.
 - `Virus-Host_PPI_P-HIPSTER_2020.parquet`
 - `affinity_capture-ms.parquet`
 - `affinity_capture-rna.parquet`
+- `biomniAD/GCST90027158/GCST90027158_buildGRCh38.tsv.gz`
 - `biomniAD/NG00052/README_Summary_statistics_csf_clusterin.docx`
 - `biomniAD/NG00052/Summary_statistics_csf_clusterin_dataset_neurobiolaging_cruchaga_0.txt`
 - `biomniAD/NG00075/NG00075_Kunkle_IGAP_SummaryStats_P-val_only_README.docx`
@@ -219,7 +220,6 @@ Your local data files and the built-in AD data lake are automatically available.
 - `genetic_interaction.parquet`
 - `go-plus.json`
 - `gtex_tissue_gene_tpm.parquet`
-- `gwas_catalog.pkl`
 
 </details>
 <!-- BIOMNI_LOCAL_DATASET_SECTION_END -->

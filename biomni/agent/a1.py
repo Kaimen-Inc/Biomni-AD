@@ -2188,8 +2188,7 @@ Each library is listed with its description to help you understand its functiona
 
         # Create run directory BEFORE execution so OUTPUT_DIR is available during code runs.
         try:
-            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            run_id = f"run_{timestamp}"
+            run_id = self._build_run_id(prompt)
             runs_root = os.path.abspath(os.path.join(os.getcwd(), "runs"))
             os.makedirs(runs_root, exist_ok=True)
             current_run_dir = os.path.join(runs_root, run_id)
@@ -2259,8 +2258,7 @@ Each library is listed with its description to help you understand its functiona
 
         # Pre-create run directory so OUTPUT_DIR is available during code execution.
         try:
-            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            run_id = f"run_{timestamp}"
+            run_id = self._build_run_id(prompt)
             runs_root = os.path.abspath(os.path.join(os.getcwd(), "runs"))
             os.makedirs(runs_root, exist_ok=True)
             current_run_dir = os.path.join(runs_root, run_id)
@@ -2288,6 +2286,52 @@ Each library is listed with its description to help you understand its functiona
 
         # Store the conversation state for markdown generation
         self._conversation_state = final_state
+
+    @staticmethod
+    def _build_run_id(topic: str | None = None) -> str:
+        """Build run directory ID as run_YYYYMMDD_HHMMSS_topic1_topic2_topic3."""
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        if not topic:
+            return f"run_{timestamp}"
+
+        topic_slug = A1._summarize_topic_for_run_id(topic)
+        if not topic_slug:
+            return f"run_{timestamp}"
+
+        return f"run_{timestamp}_{topic_slug}"
+
+    @staticmethod
+    def _summarize_topic_for_run_id(topic: str) -> str:
+        """Extract a compact 1-3 word filesystem-safe summary from a prompt."""
+        stopwords = {
+            "a", "an", "and", "are", "as", "at", "be", "by", "for", "from", "in",
+            "into", "is", "it", "of", "on", "or", "that", "the", "this", "to", "with",
+            "using", "use", "please", "can", "could", "would", "should", "do", "does",
+            "analyze", "analysis", "show", "find", "run", "task", "generate", "get",
+        }
+
+        raw_tokens = re.findall(r"[A-Za-z0-9]+", topic)
+        if not raw_tokens:
+            return ""
+
+        selected: list[str] = []
+        for token in raw_tokens:
+            lower = token.lower()
+            if lower in stopwords:
+                continue
+            if len(lower) <= 2 and not lower.isdigit():
+                continue
+            selected.append(lower)
+            if len(selected) == 3:
+                break
+
+        if not selected:
+            selected = [t.lower() for t in raw_tokens[:3]]
+
+        summary = "_".join(selected)
+        summary = re.sub(r"[^0-9a-z_]+", "", summary)
+        summary = re.sub(r"_+", "_", summary).strip("_")
+        return summary[:40]
 
     def update_system_prompt_with_selected_resources(self, selected_resources):
         """Update the system prompt with the selected resources."""

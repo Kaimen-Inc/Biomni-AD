@@ -156,6 +156,7 @@ def _list_path_entries(path: str, max_items: int = 40) -> list[str]:
 def _resolve_user_data_roots() -> list[tuple[str, str]]:
     """Resolve configured user data roots from supported env vars (deduplicated)."""
     candidates = [
+        ("BIOMNI_USER_DATA_HOST_PATH", os.getenv("BIOMNI_USER_DATA_HOST_PATH", "").strip()),
         ("BIOMNI_USER_DATA_PATH", os.getenv("BIOMNI_USER_DATA_PATH", "").strip()),
         ("BIOMNI_DATA_PATH", os.getenv("BIOMNI_DATA_PATH", "").strip()),
         ("BIOMNI_PATH", os.getenv("BIOMNI_PATH", "").strip()),
@@ -172,6 +173,13 @@ def _resolve_user_data_roots() -> list[tuple[str, str]]:
         seen.add(abs_path)
         resolved.append((env_name, abs_path))
     return resolved
+
+
+def _display_data_root_label(env_name: str) -> str:
+    """Map env var names to concise sidebar labels."""
+    if env_name == "BIOMNI_USER_DATA_HOST_PATH":
+        return "AD_WORKBENCH_DATASETS"
+    return env_name
 
 
 def _list_path_entries_recursive(path: str, max_items: int = 80, max_depth: int = 10) -> tuple[list[str], int]:
@@ -391,8 +399,9 @@ def _build_sidebar_overview_content() -> str:
         stats = _collect_path_stats(root)
         grand_files += int(stats.get("total_files", 0))
         grand_dirs += int(stats.get("total_dirs", 0))
+        display_label = _display_data_root_label(label)
         lines.extend([
-            f"{label}: {stats['total_files']} files, {stats['total_dirs']} folders",
+            f"{display_label}: {stats['total_files']} files, {stats['total_dirs']} folders",
             "",
         ])
 
@@ -469,13 +478,14 @@ def _build_welcome_local_dataset_section() -> str:
 
     if user_roots:
         lines.append("")
-        lines.append("**User Data** — from `BIOMNI_USER_DATA_PATH` / `BIOMNI_DATA_PATH` / `BIOMNI_PATH`")
+        lines.append("**User Data** — from `BIOMNI_USER_DATA_HOST_PATH` / `BIOMNI_USER_DATA_PATH` / `BIOMNI_DATA_PATH` / `BIOMNI_PATH`")
         lines.append("")
-        lines.append(f"Primary path: `{user_roots[0][1]}`")
+        primary_label = _display_data_root_label(user_roots[0][0])
+        lines.append(f"Primary path ({primary_label}): `{user_roots[0][1]}`")
         if len(user_roots) > 1:
             lines.append("Additional configured paths:")
             for env_name, root in user_roots[1:]:
-                lines.append(f"- `{env_name}`: `{root}`")
+                lines.append(f"- `{_display_data_root_label(env_name)}`: `{root}`")
         lines.append("")
         if user_preview:
             lines.append(f"Detected files: {user_total_files}")
@@ -602,7 +612,7 @@ def _build_user_data_sidebar_elements() -> list[cl.Text]:
 
     for env_name, root in _resolve_user_data_roots():
         tree_content, total_files = _build_user_data_tree_content(root)
-        label = f"Tree [{env_name}] ({total_files})"
+        label = f"Tree [{_display_data_root_label(env_name)}] ({total_files})"
         content = f"Path: {root}\n\n{tree_content}"
         elements.append(cl.Text(name=label, content=content, display="page"))
 
@@ -855,8 +865,7 @@ async def on_message(message: cl.Message):
 
     # Pre-create run directory so OUTPUT_DIR is available during code execution.
     try:
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        _run_id = f"run_{timestamp}"
+        _run_id = _build_run_id(prompt)
         _runs_root = os.path.abspath(os.path.join(os.getcwd(), "runs"))
         os.makedirs(_runs_root, exist_ok=True)
         _current_run_dir = os.path.join(_runs_root, _run_id)
@@ -888,7 +897,7 @@ async def on_message(message: cl.Message):
     # Phase 5: Artifact saving (all agents)
     # ------------------------------------------------------------------
     if final_state and hasattr(agent, "_save_run_artifacts"):
-        await _save_run_artifacts_for_agent(agent, final_state, initial_files)
+        await _save_run_artifacts_for_agent(agent, final_state, initial_files, topic=prompt)
 
 # ---------------------------------------------------------------------------
 # Interactive planning helpers
@@ -1094,7 +1103,12 @@ async def _save_ad1_artifacts(agent, final_state: dict, initial_files: set):
     await _save_run_artifacts_for_agent(agent, final_state, initial_files)
 
 
-async def _save_run_artifacts_for_agent(agent, final_state: dict, initial_files: set):
+async def _save_run_artifacts_for_agent(
+    agent,
+    final_state: dict,
+    initial_files: set,
+    topic: str | None = None,
+):
     """Save run artifacts to ./runs/ for any agent and notify the user."""
     # Reuse the pre-created run directory if the agent already has one set
     # (created before streaming so OUTPUT_DIR was available during execution).
@@ -1102,8 +1116,7 @@ async def _save_run_artifacts_for_agent(agent, final_state: dict, initial_files:
         current_run_dir = agent._current_run_dir
         run_id = os.path.basename(current_run_dir)
     else:
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        run_id = f"run_{timestamp}"
+        run_id = _build_run_id(topic)
         runs_root = os.path.abspath(os.path.join(os.getcwd(), "runs"))
         os.makedirs(runs_root, exist_ok=True)
         current_run_dir = os.path.join(runs_root, run_id)
@@ -1142,3 +1155,49 @@ def _get_all_files(directory: str) -> set:
             if not fname.startswith("."):
                 result.add(os.path.join(root, fname))
     return result
+
+
+def _build_run_id(topic: str | None = None) -> str:
+    """Build run directory ID as run_YYYYMMDD_HHMMSS_topic1_topic2_topic3."""
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    if not topic:
+        return f"run_{timestamp}"
+
+    topic_slug = _summarize_topic_for_run_id(topic)
+    if not topic_slug:
+        return f"run_{timestamp}"
+
+    return f"run_{timestamp}_{topic_slug}"
+
+
+def _summarize_topic_for_run_id(topic: str) -> str:
+    """Extract a compact 1-3 word filesystem-safe summary from a prompt."""
+    stopwords = {
+        "a", "an", "and", "are", "as", "at", "be", "by", "for", "from", "in",
+        "into", "is", "it", "of", "on", "or", "that", "the", "this", "to", "with",
+        "using", "use", "please", "can", "could", "would", "should", "do", "does",
+        "analyze", "analysis", "show", "find", "run", "task", "generate", "get",
+    }
+
+    raw_tokens = re.findall(r"[A-Za-z0-9]+", topic)
+    if not raw_tokens:
+        return ""
+
+    selected: list[str] = []
+    for token in raw_tokens:
+        lower = token.lower()
+        if lower in stopwords:
+            continue
+        if len(lower) <= 2 and not lower.isdigit():
+            continue
+        selected.append(lower)
+        if len(selected) == 3:
+            break
+
+    if not selected:
+        selected = [t.lower() for t in raw_tokens[:3]]
+
+    summary = "_".join(selected)
+    summary = re.sub(r"[^0-9a-z_]+", "", summary)
+    summary = re.sub(r"_+", "_", summary).strip("_")
+    return summary[:40]
