@@ -865,7 +865,7 @@ async def on_message(message: cl.Message):
 
     # Pre-create run directory so OUTPUT_DIR is available during code execution.
     try:
-        _run_id = _build_run_id(prompt)
+        _run_id = _build_run_id(prompt, llm=getattr(agent, "llm", None))
         _runs_root = os.path.abspath(os.path.join(os.getcwd(), "runs"))
         os.makedirs(_runs_root, exist_ok=True)
         _current_run_dir = os.path.join(_runs_root, _run_id)
@@ -1116,7 +1116,7 @@ async def _save_run_artifacts_for_agent(
         current_run_dir = agent._current_run_dir
         run_id = os.path.basename(current_run_dir)
     else:
-        run_id = _build_run_id(topic)
+        run_id = _build_run_id(topic, llm=getattr(agent, "llm", None))
         runs_root = os.path.abspath(os.path.join(os.getcwd(), "runs"))
         os.makedirs(runs_root, exist_ok=True)
         current_run_dir = os.path.join(runs_root, run_id)
@@ -1157,17 +1157,63 @@ def _get_all_files(directory: str) -> set:
     return result
 
 
-def _build_run_id(topic: str | None = None) -> str:
+def _build_run_id(topic: str | None = None, llm=None) -> str:
     """Build run directory ID as run_YYYYMMDD_HHMMSS_topic1_topic2_topic3."""
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     if not topic:
         return f"run_{timestamp}"
 
-    topic_slug = _summarize_topic_for_run_id(topic)
+    topic_slug = _summarize_topic_with_llm(topic, llm) or _summarize_topic_for_run_id(topic)
     if not topic_slug:
         return f"run_{timestamp}"
 
     return f"run_{timestamp}_{topic_slug}"
+
+
+def _summarize_topic_with_llm(topic: str, llm) -> str:
+    """Use LLM to generate a short, descriptive directory slug (1-3 words)."""
+    if llm is None:
+        return ""
+
+    try:
+        messages = [
+            SystemMessage(
+                content=(
+                    "Generate a concise run folder label for a biomedical analysis prompt. "
+                    "Return ONLY a lowercase snake_case label with 1 to 3 words, no punctuation, no brackets, no explanation."
+                )
+            ),
+            HumanMessage(content=f"Prompt: {topic}"),
+        ]
+        response = llm.invoke(messages)
+        text = _extract_llm_text(response)
+        candidate = text.strip().splitlines()[0] if text.strip() else ""
+        candidate = re.sub(r"[^0-9a-zA-Z_\s-]+", "", candidate)
+        candidate = candidate.replace("-", "_").replace(" ", "_").lower()
+        candidate = re.sub(r"_+", "_", candidate).strip("_")
+        if not candidate:
+            return ""
+
+        words = [w for w in candidate.split("_") if w]
+        return "_".join(words[:3])[:40]
+    except Exception:
+        return ""
+
+
+def _extract_llm_text(response) -> str:
+    """Extract plain text from potentially structured LLM response content."""
+    content = getattr(response, "content", "")
+    if isinstance(content, list):
+        text_parts: list[str] = []
+        for block in content:
+            if isinstance(block, dict):
+                btype = block.get("type")
+                if btype in ("text", "output_text", "redacted_text"):
+                    part = block.get("text") or block.get("content") or ""
+                    if isinstance(part, str):
+                        text_parts.append(part)
+        return "".join(text_parts)
+    return str(content or "")
 
 
 def _summarize_topic_for_run_id(topic: str) -> str:

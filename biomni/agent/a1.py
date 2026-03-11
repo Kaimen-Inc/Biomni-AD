@@ -2287,18 +2287,63 @@ Each library is listed with its description to help you understand its functiona
         # Store the conversation state for markdown generation
         self._conversation_state = final_state
 
-    @staticmethod
-    def _build_run_id(topic: str | None = None) -> str:
+    def _build_run_id(self, topic: str | None = None) -> str:
         """Build run directory ID as run_YYYYMMDD_HHMMSS_topic1_topic2_topic3."""
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         if not topic:
             return f"run_{timestamp}"
 
-        topic_slug = A1._summarize_topic_for_run_id(topic)
+        topic_slug = self._summarize_topic_with_llm(topic) or self._summarize_topic_for_run_id(topic)
         if not topic_slug:
             return f"run_{timestamp}"
 
         return f"run_{timestamp}_{topic_slug}"
+
+    def _summarize_topic_with_llm(self, topic: str) -> str:
+        """Use configured LLM to generate a short, descriptive directory slug."""
+        llm = getattr(self, "llm", None)
+        if llm is None:
+            return ""
+
+        try:
+            messages = [
+                SystemMessage(
+                    content=(
+                        "Generate a concise run folder label for a biomedical analysis prompt. "
+                        "Return ONLY a lowercase snake_case label with 1 to 3 words, no punctuation, no brackets, no explanation."
+                    )
+                ),
+                HumanMessage(content=f"Prompt: {topic}"),
+            ]
+            response = llm.invoke(messages)
+            text = self._extract_llm_text(response)
+            candidate = text.strip().splitlines()[0] if text.strip() else ""
+            candidate = re.sub(r"[^0-9a-zA-Z_\s-]+", "", candidate)
+            candidate = candidate.replace("-", "_").replace(" ", "_").lower()
+            candidate = re.sub(r"_+", "_", candidate).strip("_")
+            if not candidate:
+                return ""
+
+            words = [w for w in candidate.split("_") if w]
+            return "_".join(words[:3])[:40]
+        except Exception:
+            return ""
+
+    @staticmethod
+    def _extract_llm_text(response) -> str:
+        """Extract plain text from potentially structured LLM response content."""
+        content = getattr(response, "content", "")
+        if isinstance(content, list):
+            text_parts: list[str] = []
+            for block in content:
+                if isinstance(block, dict):
+                    btype = block.get("type")
+                    if btype in ("text", "output_text", "redacted_text"):
+                        part = block.get("text") or block.get("content") or ""
+                        if isinstance(part, str):
+                            text_parts.append(part)
+            return "".join(text_parts)
+        return str(content or "")
 
     @staticmethod
     def _summarize_topic_for_run_id(topic: str) -> str:
