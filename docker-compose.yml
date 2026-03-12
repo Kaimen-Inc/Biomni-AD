@@ -14,6 +14,7 @@ services:
       CHAINLIT_PORT: 8000
       BIOMNI_PATH: /app/data
       BIOMNI_USER_DATA_PATH: /app/user-data
+      BIOMNI_DATA_PATH: /app/user-data
       MPLBACKEND: Agg
     ports:
       - "${HOST_PORT:-8000}:8000"

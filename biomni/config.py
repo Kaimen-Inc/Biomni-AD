@@ -58,11 +58,13 @@ class BiomniConfig:
         # Check for environment variable overrides (optional)
         # Support all known path env names for backwards compatibility.
         # Priority keeps BIOMNI_USER_DATA_PATH as the explicit user data root when set.
-        if os.getenv("BIOMNI_USER_DATA_PATH") or os.getenv("BIOMNI_PATH") or os.getenv("BIOMNI_DATA_PATH"):
+        # BIOMNI_DATA_PATH is preferred over BIOMNI_PATH because BIOMNI_PATH is often
+        # reserved for built-in app data in container deployments.
+        if os.getenv("BIOMNI_USER_DATA_PATH") or os.getenv("BIOMNI_DATA_PATH") or os.getenv("BIOMNI_PATH"):
             self.path = (
                 os.getenv("BIOMNI_USER_DATA_PATH")
-                or os.getenv("BIOMNI_PATH")
                 or os.getenv("BIOMNI_DATA_PATH")
+                or os.getenv("BIOMNI_PATH")
             )
         if os.getenv("BIOMNI_TIMEOUT_SECONDS"):
             self.timeout_seconds = int(os.getenv("BIOMNI_TIMEOUT_SECONDS"))

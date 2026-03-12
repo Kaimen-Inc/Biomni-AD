@@ -155,19 +155,47 @@ def _list_path_entries(path: str, max_items: int = 40) -> list[str]:
 
 def _resolve_user_data_roots() -> list[tuple[str, str]]:
     """Resolve configured user data roots from supported env vars (deduplicated)."""
-    candidates = [
-        ("BIOMNI_USER_DATA_HOST_PATH", os.getenv("BIOMNI_USER_DATA_HOST_PATH", "").strip()),
-        ("BIOMNI_USER_DATA_PATH", os.getenv("BIOMNI_USER_DATA_PATH", "").strip()),
-        ("BIOMNI_DATA_PATH", os.getenv("BIOMNI_DATA_PATH", "").strip()),
-        ("BIOMNI_PATH", os.getenv("BIOMNI_PATH", "").strip()),
-    ]
+    user_data_host_path = os.getenv("BIOMNI_USER_DATA_HOST_PATH", "").strip()
+    user_data_path = os.getenv("BIOMNI_USER_DATA_PATH", "").strip()
+    legacy_user_data_path = os.getenv("BIOMNI_DATA_PATH", "").strip()
+    biomni_path = os.getenv("BIOMNI_PATH", "").strip()
+
+    candidates: list[tuple[str, str]] = []
+
+    # Host-mounted path is usually a compose substitution variable and may not
+    # exist inside the running container. Only include if it is actually visible.
+    if user_data_host_path and os.path.isdir(user_data_host_path):
+        candidates.append(("BIOMNI_USER_DATA_HOST_PATH", user_data_host_path))
+
+    if user_data_path:
+        candidates.append(("BIOMNI_USER_DATA_PATH", user_data_path))
+
+    if legacy_user_data_path:
+        candidates.append(("BIOMNI_DATA_PATH", legacy_user_data_path))
+
+    # BIOMNI_PATH is commonly the built-in app data root (/app/data) in Docker.
+    # Treat it as a user-data fallback only when explicit user paths are absent.
+    if biomni_path and not (user_data_path or legacy_user_data_path):
+        candidates.append(("BIOMNI_PATH", biomni_path))
 
     resolved: list[tuple[str, str]] = []
     seen: set[str] = set()
+    builtin_root = os.path.abspath(_resolve_builtin_data_lake_root())
+
+    def _is_builtin_or_parent(path_value: str) -> bool:
+        root = os.path.abspath(path_value)
+        if root == builtin_root:
+            return True
+        if builtin_root.startswith(root + os.sep):
+            return True
+        return False
+
     for env_name, raw_path in candidates:
         if not raw_path:
             continue
         abs_path = os.path.abspath(raw_path)
+        if env_name == "BIOMNI_PATH" and _is_builtin_or_parent(abs_path):
+            continue
         if abs_path in seen:
             continue
         seen.add(abs_path)
@@ -865,7 +893,7 @@ async def on_message(message: cl.Message):
 
     # Pre-create run directory so OUTPUT_DIR is available during code execution.
     try:
-        _run_id = _build_run_id(prompt, llm=getattr(agent, "llm", None))
+        _run_id = _build_run_id(prompt)
         _runs_root = os.path.abspath(os.path.join(os.getcwd(), "runs"))
         os.makedirs(_runs_root, exist_ok=True)
         _current_run_dir = os.path.join(_runs_root, _run_id)
@@ -1116,7 +1144,7 @@ async def _save_run_artifacts_for_agent(
         current_run_dir = agent._current_run_dir
         run_id = os.path.basename(current_run_dir)
     else:
-        run_id = _build_run_id(topic, llm=getattr(agent, "llm", None))
+        run_id = _build_run_id(topic)
         runs_root = os.path.abspath(os.path.join(os.getcwd(), "runs"))
         os.makedirs(runs_root, exist_ok=True)
         current_run_dir = os.path.join(runs_root, run_id)
@@ -1157,63 +1185,17 @@ def _get_all_files(directory: str) -> set:
     return result
 
 
-def _build_run_id(topic: str | None = None, llm=None) -> str:
+def _build_run_id(topic: str | None = None) -> str:
     """Build run directory ID as run_YYYYMMDD_HHMMSS_topic1_topic2_topic3."""
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     if not topic:
         return f"run_{timestamp}"
 
-    topic_slug = _summarize_topic_with_llm(topic, llm) or _summarize_topic_for_run_id(topic)
+    topic_slug = _summarize_topic_for_run_id(topic)
     if not topic_slug:
         return f"run_{timestamp}"
 
     return f"run_{timestamp}_{topic_slug}"
-
-
-def _summarize_topic_with_llm(topic: str, llm) -> str:
-    """Use LLM to generate a short, descriptive directory slug (1-3 words)."""
-    if llm is None:
-        return ""
-
-    try:
-        messages = [
-            SystemMessage(
-                content=(
-                    "Generate a concise run folder label for a biomedical analysis prompt. "
-                    "Return ONLY a lowercase snake_case label with 1 to 3 words, no punctuation, no brackets, no explanation."
-                )
-            ),
-            HumanMessage(content=f"Prompt: {topic}"),
-        ]
-        response = llm.invoke(messages)
-        text = _extract_llm_text(response)
-        candidate = text.strip().splitlines()[0] if text.strip() else ""
-        candidate = re.sub(r"[^0-9a-zA-Z_\s-]+", "", candidate)
-        candidate = candidate.replace("-", "_").replace(" ", "_").lower()
-        candidate = re.sub(r"_+", "_", candidate).strip("_")
-        if not candidate:
-            return ""
-
-        words = [w for w in candidate.split("_") if w]
-        return "_".join(words[:3])[:40]
-    except Exception:
-        return ""
-
-
-def _extract_llm_text(response) -> str:
-    """Extract plain text from potentially structured LLM response content."""
-    content = getattr(response, "content", "")
-    if isinstance(content, list):
-        text_parts: list[str] = []
-        for block in content:
-            if isinstance(block, dict):
-                btype = block.get("type")
-                if btype in ("text", "output_text", "redacted_text"):
-                    part = block.get("text") or block.get("content") or ""
-                    if isinstance(part, str):
-                        text_parts.append(part)
-        return "".join(text_parts)
-    return str(content or "")
 
 
 def _summarize_topic_for_run_id(topic: str) -> str:
