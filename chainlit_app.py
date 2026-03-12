@@ -140,6 +140,64 @@ SUPPORTED_IMAGE_EXTENSIONS = (".png", ".jpg", ".jpeg", ".gif", ".bmp", ".webp")
 CHAINLIT_MD_PATH = Path(__file__).with_name("chainlit.md")
 _WELCOME_DATASET_BLOCK_START = "<!-- BIOMNI_LOCAL_DATASET_SECTION_START -->"
 _WELCOME_DATASET_BLOCK_END = "<!-- BIOMNI_LOCAL_DATASET_SECTION_END -->"
+_SUGGESTED_PROMPTS_BLOCK_START = "<!-- BIOMNI_SUGGESTED_PROMPTS_START -->"
+_SUGGESTED_PROMPTS_BLOCK_END = "<!-- BIOMNI_SUGGESTED_PROMPTS_END -->"
+
+
+# Prompt templates keyed by dataset id — shown only when those files are locally present.
+# Each entry is (prompt_text, category).
+_AD_DATASET_PROMPTS: list[tuple[str, str, str]] = [
+    # (dataset_id_prefix, prompt_text, category)
+    ("GCST90027158", "Map the top 10 AD GWAS loci from Bellenguez 2022 (GCST90027158) to nearby genes and report their putative functions", "GWAS"),
+    ("NG00052",  "What are the top GWAS hits for CSF clusterin levels in the NG00052 dataset? Which of these overlap known AD risk loci?", "GWAS"),
+    ("NG00075",  "Extract genome-wide significant hits from the Kunkle 2019 IGAP stage-2 summary stats (NG00075) and annotate them with gene names", "GWAS"),
+    ("NG00102",  "Which proteins are measured across CSF, plasma, and brain tissue in the SomaScan 1.3k proteomic panel (NG00102)? Find any shared with known AD biomarkers", "Proteomics"),
+    ("NG00105",  "Identify the top eQTL genes in prefrontal cortex (MFG) from NG00105 that overlap AD GWAS loci — load the cis-QTL file and filter by FDR < 0.05", "QTL"),
+    ("NG00118",  "Find structural variant eQTLs in ROSMAP DLPFC (NG00118) for BIN1 and CLU — do they co-localize with GWAS signals?", "QTL"),
+    ("NG00126",  "What rare coding variants reach exome-wide significance in the ADSP European WES dataset (NG00126)?", "Rare variants"),
+    ("NG00133",  "Analyze the plasma and urine biomarker data from NG00133 — which analytes differ most between AD cases and controls?", "Biomarkers"),
+    ("NG00148",  "Compare T-cell receptor CDR3 sequences between AD brain and blood samples using the NG00148 data", "Immunogenomics"),
+    ("NG00165",  "Run a gene-level burden analysis summary using the CHARGE/ADSP 5k WGS results (NG00165) — list top gene hits from SKAT and CMC tests", "Rare variants"),
+    ("NG00166",  "Which coding and non-coding rare variants are most significant in African American ancestry from ADSP R3 WGS (NG00166)?", "Rare variants"),
+    ("NG00172",  "Summarize the structural variant associations with AD risk from NG00172", "Rare variants"),
+    ("NG00180",  "Identify metabolites whose MWAS weights (NG00180) are most enriched in AD-related pathways — use the EUR metabolite feature table", "Metabolomics"),
+    ("RADR",     "Look up all TREM2 and APOE rare variants in the RADR database (RADR_V3.xlsx) and report their clinical classifications", "Rare variants"),
+    ("SingleBrain", "Find microglia-specific eQTLs from SingleBrain that co-localize with AD GWAS loci — load the MG top-association files", "QTL"),
+    ("isoMiGA_QTL", "Map isoMiGA microglia splicing QTLs (sQTLs) to the BIN1 and PTK2B loci — load union_leafcutter_top_assoc.tsv.gz", "QTL"),
+    ("isoMiGA_counts", "Compare microglia gene expression (TPM) for TREM2, CX3CR1, and P2RY12 across cohorts using isoMiGA count matrices", "Expression"),
+]
+
+
+def _build_ad_suggested_prompts() -> str:
+    """Generate suggested prompts based on which BiomniAD datasets are locally present."""
+    repo_root = Path(__file__).resolve().parent
+    ad_lake = repo_root / "data" / "biomni_data" / "data_lake" / "biomniAD"
+
+    if not ad_lake.is_dir():
+        return ""
+
+    present_ids = {d.name for d in ad_lake.iterdir() if d.is_dir() and any(
+        f for f in d.iterdir() if f.is_file() and not f.name.lower().startswith("readme")
+    )}
+
+    # Collect prompts for available datasets, grouped by category
+    from collections import defaultdict
+    by_category: dict[str, list[str]] = defaultdict(list)
+    for ds_id, prompt_text, category in _AD_DATASET_PROMPTS:
+        if ds_id in present_ids:
+            by_category[category].append(prompt_text)
+
+    if not by_category:
+        return ""
+
+    lines = ["**Suggested prompts based on your local data:**", ""]
+    for category, prompts in by_category.items():
+        lines.append(f"*{category}*")
+        for p in prompts:
+            lines.append(f'- *"{p}"*')
+        lines.append("")
+
+    return "\n".join(lines).rstrip()
 
 
 def _list_path_entries(path: str, max_items: int = 40) -> list[str]:
@@ -531,7 +589,7 @@ def _build_welcome_local_dataset_section() -> str:
 
 
 def _refresh_chainlit_welcome_markdown() -> None:
-    """Append or replace a managed local-dataset section in chainlit.md."""
+    """Append or replace managed sections (suggested prompts + dataset list) in chainlit.md."""
     try:
         if CHAINLIT_MD_PATH.exists():
             original = CHAINLIT_MD_PATH.read_text(encoding="utf-8")
@@ -542,19 +600,36 @@ def _refresh_chainlit_welcome_markdown() -> None:
                 "Tell me a research question to get started.\n"
             )
 
-        managed_pattern = (
-            rf"\n?{re.escape(_WELCOME_DATASET_BLOCK_START)}.*?{re.escape(_WELCOME_DATASET_BLOCK_END)}\n?"
-        )
-        base = re.sub(managed_pattern, "\n", original, flags=re.DOTALL).rstrip()
+        # Strip both managed blocks
+        for start, end in [
+            (_SUGGESTED_PROMPTS_BLOCK_START, _SUGGESTED_PROMPTS_BLOCK_END),
+            (_WELCOME_DATASET_BLOCK_START, _WELCOME_DATASET_BLOCK_END),
+        ]:
+            original = re.sub(
+                rf"\n?{re.escape(start)}.*?{re.escape(end)}\n?",
+                "\n",
+                original,
+                flags=re.DOTALL,
+            )
+        base = original.rstrip()
 
+        # Build suggested prompts block (only shown when local datasets are present)
+        suggested = _build_ad_suggested_prompts()
+        prompts_block = (
+            f"\n\n{_SUGGESTED_PROMPTS_BLOCK_START}\n"
+            f"{suggested}\n"
+            f"{_SUGGESTED_PROMPTS_BLOCK_END}\n"
+        ) if suggested else ""
+
+        # Build dataset inventory block
         dataset_section = _build_welcome_local_dataset_section()
-        managed_block = (
+        dataset_block = (
             f"\n\n{_WELCOME_DATASET_BLOCK_START}\n"
             f"{dataset_section}\n"
             f"{_WELCOME_DATASET_BLOCK_END}\n"
         )
 
-        CHAINLIT_MD_PATH.write_text(base + managed_block, encoding="utf-8")
+        CHAINLIT_MD_PATH.write_text(base + prompts_block + dataset_block, encoding="utf-8")
     except Exception as exc:
         print(f"Warning: Could not refresh chainlit welcome markdown: {exc}")
 

@@ -5,15 +5,45 @@
 
 I can analyze omics data, mine AD knowledge databases, run bioinformatics pipelines, and help generate research hypotheses — all with full execution traces you can inspect and reproduce.
 
-Tell me a research question to get started. Example prompts:
+Tell me a research question to get started. The agent will always prioritize your local data lake and curated AD datasets before searching external sources.
 
-- *"Analyze APOE variants and their effect on Alzheimer's disease risk"*
-- *"Identify druggable targets from the AD high-confidence gene list"*
-- *"Run a GWAS enrichment analysis on the NIAGADS NG00067 dataset"*
-- *"Design a CRISPRi screen targeting microglia genes implicated in AD"*
-- *"Summarize the latest findings on tau aggregation inhibitors from PubMed"*
+<!-- BIOMNI_SUGGESTED_PROMPTS_START -->
+**Suggested prompts based on your local data:**
 
-Your local data files and the built-in AD data lake are automatically available. The agent will prioritize local data and curated AD datasets before searching external sources.
+*GWAS*
+- *"Map the top 10 AD GWAS loci from Bellenguez 2022 (GCST90027158) to nearby genes and report their putative functions"*
+- *"What are the top GWAS hits for CSF clusterin levels in the NG00052 dataset? Which of these overlap known AD risk loci?"*
+- *"Extract genome-wide significant hits from the Kunkle 2019 IGAP stage-2 summary stats (NG00075) and annotate them with gene names"*
+
+*Proteomics*
+- *"Which proteins are measured across CSF, plasma, and brain tissue in the SomaScan 1.3k proteomic panel (NG00102)? Find any shared with known AD biomarkers"*
+
+*QTL*
+- *"Identify the top eQTL genes in prefrontal cortex (MFG) from NG00105 that overlap AD GWAS loci — load the cis-QTL file and filter by FDR < 0.05"*
+- *"Find structural variant eQTLs in ROSMAP DLPFC (NG00118) for BIN1 and CLU — do they co-localize with GWAS signals?"*
+- *"Find microglia-specific eQTLs from SingleBrain that co-localize with AD GWAS loci — load the MG top-association files"*
+- *"Map isoMiGA microglia splicing QTLs (sQTLs) to the BIN1 and PTK2B loci — load union_leafcutter_top_assoc.tsv.gz"*
+
+*Rare variants*
+- *"What rare coding variants reach exome-wide significance in the ADSP European WES dataset (NG00126)?"*
+- *"Run a gene-level burden analysis summary using the CHARGE/ADSP 5k WGS results (NG00165) — list top gene hits from SKAT and CMC tests"*
+- *"Which coding and non-coding rare variants are most significant in African American ancestry from ADSP R3 WGS (NG00166)?"*
+- *"Summarize the structural variant associations with AD risk from NG00172"*
+- *"Look up all TREM2 and APOE rare variants in the RADR database (RADR_V3.xlsx) and report their clinical classifications"*
+
+*Biomarkers*
+- *"Analyze the plasma and urine biomarker data from NG00133 — which analytes differ most between AD cases and controls?"*
+
+*Immunogenomics*
+- *"Compare T-cell receptor CDR3 sequences between AD brain and blood samples using the NG00148 data"*
+
+*Metabolomics*
+- *"Identify metabolites whose MWAS weights (NG00180) are most enriched in AD-related pathways — use the EUR metabolite feature table"*
+
+*Expression*
+- *"Compare microglia gene expression (TPM) for TREM2, CX3CR1, and P2RY12 across cohorts using isoMiGA count matrices"*
+<!-- BIOMNI_SUGGESTED_PROMPTS_END -->
+
 
 <!-- BIOMNI_LOCAL_DATASET_SECTION_START -->
 <details><summary>📊 200 data lake files available — click to expand</summary>

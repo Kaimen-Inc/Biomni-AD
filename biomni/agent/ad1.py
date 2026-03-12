@@ -86,21 +86,33 @@ class AD1(A1):
         if hasattr(self, "_get_data_lake_items"):
             local_items = self._get_data_lake_items()
 
-        # Also gather data root items (datasets under BIOMNI_USER_DATA_PATH / BIOMNI_DATA_PATH)
-        data_root_items = []
         data_root_dir = getattr(self, "data_root_dir", None)
+        data_root_items = []
         if hasattr(self, "_get_data_root_items"):
             data_root_items = self._get_data_root_items(max_depth=2)
 
-        # Scan BiomniAD JSON catalogs
-        catalog_summary = self._scan_ad_catalogs_summary()
+        data_lake_dir = getattr(self, "data_lake_dir", "")
+        ad_data_lake = os.path.join(data_lake_dir, "biomniAD")
 
-        preview_limit = 25
-        preview = "\n".join(f"- {item}" for item in local_items[:preview_limit])
-        if len(local_items) > preview_limit:
-            preview += f"\n- ... and {len(local_items) - preview_limit} more data lake files"
-        if not preview:
-            preview = "- No data lake files detected yet."
+        # Build enriched BiomniAD dataset map from catalog JSONs
+        catalog_datasets = self._load_catalog_datasets()
+        local_ad_datasets = self._build_local_ad_dataset_inventory(ad_data_lake, catalog_datasets)
+
+        # Format local AD datasets section
+        ad_lines = []
+        for entry in local_ad_datasets:
+            ad_lines.append(f"  [{entry['id']}] {entry['title']}")
+            ad_lines.append(f"    Description: {entry['description']}")
+            ad_lines.append(f"    Directory: {entry['dir']}")
+            for f in entry['files']:
+                ad_lines.append(f"    - {f}")
+        ad_section = "\n".join(ad_lines) if ad_lines else "  (none downloaded yet)"
+
+        # Non-AD data lake files (generic Biomni data)
+        non_ad = [i for i in local_items if not i.startswith("biomniAD/")]
+        non_ad_preview = "\n".join(f"  - {i}" for i in non_ad[:20])
+        if len(non_ad) > 20:
+            non_ad_preview += f"\n  - ... and {len(non_ad) - 20} more"
 
         # Data root preview
         root_preview = ""
@@ -110,35 +122,90 @@ class AD1(A1):
             root_lines = []
             for d in root_dirs[:15]:
                 sub_count = sum(1 for i in data_root_items if i.startswith(d + "/"))
-                root_lines.append(f"- 📁 {d}/ ({sub_count} file(s))")
+                root_lines.append(f"  - 📁 {d}/ ({sub_count} file(s))")
             for f in root_files[:5]:
-                root_lines.append(f"- 📄 {f}")
+                root_lines.append(f"  - 📄 {f}")
             if len(root_dirs) > 15:
-                root_lines.append(f"- ... and {len(root_dirs) - 15} more directories")
-            root_preview = f"\n\nData root directory ({data_root_dir}):\n" + "\n".join(root_lines)
+                root_lines.append(f"  - ... and {len(root_dirs) - 15} more directories")
+            root_preview = f"\n\nUSER DATA DIRECTORY ({data_root_dir}):\n" + "\n".join(root_lines)
         elif data_root_dir:
-            root_preview = f"\n\nData root directory ({data_root_dir}): (empty or not mounted)"
+            root_preview = f"\n\nUSER DATA DIRECTORY ({data_root_dir}): (empty or not mounted)"
 
         return f"""
 ### AD1_LOCAL_DATA_POLICY_START
-AD1 GLOBAL PRIORITIES:
-1. Local data first: siempre inspeccionar el data lake incorporado y el directorio de datos del usuario antes de buscar en la web.
-   - Built-in data lake: {getattr(self, 'data_lake_dir', 'not set')}
-   - BiomniAD directory: {os.path.join(getattr(self, 'data_lake_dir', 'not set'), 'biomniAD')}
-   - User data directory (BIOMNI_USER_DATA_PATH / BIOMNI_DATA_PATH): {data_root_dir or 'not set'}
-   - Use os.listdir() on all locations to discover available datasets.
-2. BiomniAD catalogs: scan JSON catalogs in biomni/know_how/resource/ for AD datasets.
-   - [LOCAL] annotation indicates file is already downloaded and ready to use without fetch tools.
-3. External sources third: use web/literature/databases only to supplement missing local evidence.
-4. Code generation last: write custom code only when built-in tools and available data are insufficient.
-5. Never fabricate data. If local data is missing, explicitly state the gap.
+## AD1 DATA PRIORITY RULES — ALWAYS FOLLOW IN ORDER
 
-Data lake files: {len(local_items)}
-{preview}{root_preview}
+1. **LOCAL FILES FIRST** — Use files already on disk. Do NOT fetch data that is already present.
+   - BiomniAD data lake: {ad_data_lake}
+   - General data lake: {data_lake_dir}
+   - User data dir: {data_root_dir or 'not set'}
 
-{catalog_summary}
+2. **BiomniAD CATALOG** — If a dataset is listed below without local files, use its catalog URI to fetch.
+   Catalogs: biomni/know_how/resource/BiomniAD_Discovery.json, NIAGADS_datasets_with_files.json, SinaiADRD.json
+
+3. **Web / literature** — Only after checking local and catalog sources.
+
+4. **Never fabricate data.** If a file is missing, say so explicitly.
+
+---
+## LOCALLY AVAILABLE BiomniAD DATASETS ({len(local_ad_datasets)} datasets, ready to load directly)
+
+{ad_section}
+
+## GENERAL DATA LAKE FILES ({len(non_ad)} files)
+{non_ad_preview or '  (none)'}
+{root_preview}
 ### AD1_LOCAL_DATA_POLICY_END
 """.strip()
+
+    def _load_catalog_datasets(self) -> dict[str, dict]:
+        """Load all BiomniAD catalog JSONs and return a dict keyed by dataset id."""
+        current_dir = os.path.dirname(os.path.abspath(__file__))
+        resource_dir = os.path.join(current_dir, "..", "know_how", "resource")
+        datasets: dict[str, dict] = {}
+        for pat in ["BiomniAD*.json", "NIAGADS*.json", "SinaiADRD.json"]:
+            for catalog_path in glob.glob(os.path.join(resource_dir, pat)):
+                try:
+                    with open(catalog_path) as f:
+                        data = json.load(f)
+                    for ds in data.get("datasets", []):
+                        ds_id = ds.get("id")
+                        if ds_id:
+                            datasets[ds_id] = ds
+                except Exception:
+                    pass
+        return datasets
+
+    def _build_local_ad_dataset_inventory(self, ad_data_lake: str, catalog_datasets: dict) -> list[dict]:
+        """Return a list of biomniAD datasets that have local files, enriched with catalog descriptions."""
+        if not os.path.isdir(ad_data_lake):
+            return []
+        entries = []
+        for ds_id in sorted(os.listdir(ad_data_lake)):
+            ds_dir = os.path.join(ad_data_lake, ds_id)
+            if not os.path.isdir(ds_dir):
+                continue
+            local_files = sorted(
+                f for f in os.listdir(ds_dir)
+                if not f.startswith(".") and os.path.isfile(os.path.join(ds_dir, f))
+                and not any(f.lower().startswith(p) for p in ("readme", "read_me"))
+            )
+            if not local_files:
+                continue
+            cat = catalog_datasets.get(ds_id, {})
+            title = cat.get("title") or ds_id
+            # Truncate long description to 1 sentence
+            desc = (cat.get("study_description") or "").split(".")[0].strip()
+            if len(desc) > 160:
+                desc = desc[:157] + "..."
+            entries.append({
+                "id": ds_id,
+                "title": title,
+                "description": desc or "No description available.",
+                "dir": ds_dir,
+                "files": local_files[:10] + (["..."] if len(local_files) > 10 else []),
+            })
+        return entries
 
     def _enforce_local_data_priority(self) -> None:
         """Ensure local-data-first policy is always present even after prompt updates."""
