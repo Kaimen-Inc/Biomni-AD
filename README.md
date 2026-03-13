@@ -32,6 +32,14 @@ Biomni is a general-purpose biomedical AI agent designed to autonomously execute
 
 **Biomni-AD** is an Alzheimer's disease-specialized extension of [Biomni](https://github.com/snap-stanford/Biomni) (Stanford SNAP Lab), additionally developed by **Kuan-lin Huang, PhD**. It adds the **AD1 agent** — a domain-expert variant of the general A1 agent — along with an AD-focused data lake, curated dataset catalogs (NIAGADS, SinaiADRD, CRISPRbrain), and a plan-then-approve Chainlit UI optimized for neurodegeneration research workflows.
 
+## Branch Guide
+
+| Branch | Purpose |
+|--------|---------|
+| [`biomni-ad`](https://github.com/kuanlinhuang/Biomni/tree/biomni-ad) | **Primary stable branch** — Biomni-AD specialization. Install from here with `pip install git+https://github.com/kuanlinhuang/Biomni.git@biomni-ad`. |
+| [`feat/adworkbench`](https://github.com/kuanlinhuang/Biomni/tree/feat/adworkbench) | **AD Workbench integration** — Extends `biomni-ad` for deployment in the AD Workbench Azure environment, with tighter integration of AD Workbench datasets. Maintained as a separate branch from `biomni-ad`. |
+| `main` | Upstream [Stanford SNAP Biomni](https://github.com/snap-stanford/Biomni). Periodically merged into `biomni-ad` to track upstream. Read-only from this fork. |
+
 ## Documentation Index
 
 | Document | Description |
