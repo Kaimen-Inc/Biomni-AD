@@ -268,11 +268,13 @@ def _display_data_root_label(env_name: str) -> str:
     return env_name
 
 
-def _list_path_entries_recursive(path: str, max_items: int = 80, max_depth: int = 10) -> tuple[list[str], int]:
+def _list_path_entries_recursive(path: str, max_items: int = 80, max_depth: int = 10, exclude_top_subdirs: set[str] | None = None) -> tuple[list[str], int]:
     """Recursively list non-hidden files under a directory.
 
     Returns a (preview_items, total_file_count) tuple. Preview items are
     relative POSIX-style paths suitable for UI display.
+
+    ``exclude_top_subdirs`` names top-level subdirectories to skip entirely.
     """
     if not path or not os.path.isdir(path):
         return [], 0
@@ -291,7 +293,10 @@ def _list_path_entries_recursive(path: str, max_items: int = 80, max_depth: int 
             dirs[:] = []
             continue
 
-        dirs[:] = sorted([d for d in dirs if not d.startswith(".") and d not in excluded_dirs])
+        visible = [d for d in dirs if not d.startswith(".") and d not in excluded_dirs]
+        if depth == 0 and exclude_top_subdirs:
+            visible = [d for d in visible if d not in exclude_top_subdirs]
+        dirs[:] = sorted(visible)
 
         for file_name in sorted(files):
             if file_name.startswith("."):
@@ -305,8 +310,12 @@ def _list_path_entries_recursive(path: str, max_items: int = 80, max_depth: int 
     return preview, total_count
 
 
-def _collect_path_stats(path: str, max_depth: int = 10) -> dict:
-    """Collect compact stats for a directory tree for sidebar summaries."""
+def _collect_path_stats(path: str, max_depth: int = 10, exclude_top_subdirs: set[str] | None = None) -> dict:
+    """Collect compact stats for a directory tree for sidebar summaries.
+
+    ``exclude_top_subdirs`` names top-level subdirectories to skip entirely
+    (useful for counting the datalake root without the biomniAD subfolder).
+    """
     stats = {
         "total_files": 0,
         "total_dirs": 0,
@@ -328,6 +337,8 @@ def _collect_path_stats(path: str, max_depth: int = 10) -> dict:
             continue
 
         visible_dirs = [d for d in dirs if not d.startswith(".") and d not in excluded_dirs]
+        if depth == 0 and exclude_top_subdirs:
+            visible_dirs = [d for d in visible_dirs if d not in exclude_top_subdirs]
         dirs[:] = sorted(visible_dirs)
         stats["total_dirs"] += len(visible_dirs)
 
@@ -468,28 +479,73 @@ def _build_user_data_tree_content(root_path: str, preview_files: int = 300) -> t
 
 
 def _build_sidebar_overview_content() -> str:
-    """Build an at-a-glance overview across all configured roots."""
-    root_entries: list[tuple[str, str]] = list(_resolve_user_data_roots())
-    builtin_root = _resolve_builtin_data_lake_root()
-    if os.path.isdir(builtin_root):
-        root_entries.append(("DEFAULT_DATA_LAKE", builtin_root))
+    """Build an at-a-glance overview across all configured roots.
 
-    if not root_entries:
-        return "No local data roots found."
+    Sections (in order, only shown when they have files):
+    1. AD Workbench Datasets  – when BIOMNI_USER_DATA_HOST_PATH is defined,
+       read file counts from the container-side mount (BIOMNI_USER_DATA_PATH).
+    2. Biomni-AD Datalake     – data_lake/biomniAD/ subfolder.
+    3. Biomni Datalake        – root of data_lake/ excluding biomniAD.
+    """
+    user_data_host_path = os.getenv("BIOMNI_USER_DATA_HOST_PATH", "").strip()
+    user_data_path = os.getenv("BIOMNI_USER_DATA_PATH", "").strip()
 
     lines: list[str] = ["At-a-glance overview", ""]
-
     grand_files = 0
     grand_dirs = 0
-    for label, root in root_entries:
-        stats = _collect_path_stats(root)
-        grand_files += int(stats.get("total_files", 0))
-        grand_dirs += int(stats.get("total_dirs", 0))
-        display_label = _display_data_root_label(label)
-        lines.extend([
-            f"{display_label}: {stats['total_files']} files, {stats['total_dirs']} folders",
-            "",
-        ])
+
+    # --- 1. AD Workbench Datasets -------------------------------------------
+    # When HOST_PATH is defined this is an AD-Workbench deployment. The host
+    # directory is bind-mounted into the container at BIOMNI_USER_DATA_PATH
+    # (/app/user-data), so count files from the container-side path.
+    if user_data_host_path:
+        # Prefer the container mount; fall back to the host path only if the
+        # mount path is absent or empty.
+        ad_path = ""
+        if user_data_path and os.path.isdir(user_data_path):
+            ad_path = user_data_path
+        elif os.path.isdir(user_data_host_path):
+            ad_path = user_data_host_path
+        if ad_path:
+            stats = _collect_path_stats(ad_path)
+            if stats["total_files"] > 0:
+                grand_files += stats["total_files"]
+                grand_dirs += stats["total_dirs"]
+                lines.append(f"AD Workbench Datasets: {stats['total_files']} files, {stats['total_dirs']} folders")
+                lines.append("")
+    else:
+        # Local / non-AD-Workbench deployment: show regular user data roots.
+        for env_name, root in _resolve_user_data_roots():
+            stats = _collect_path_stats(root)
+            if stats["total_files"] > 0:
+                grand_files += stats["total_files"]
+                grand_dirs += stats["total_dirs"]
+                display = _display_data_root_label(env_name)
+                lines.append(f"{display}: {stats['total_files']} files, {stats['total_dirs']} folders")
+                lines.append("")
+
+    # --- 2. Biomni-AD Datalake ----------------------------------------------
+    builtin_root = _resolve_builtin_data_lake_root()
+    biomni_ad_root = os.path.join(builtin_root, "biomniAD")
+    if os.path.isdir(biomni_ad_root):
+        stats = _collect_path_stats(biomni_ad_root)
+        if stats["total_files"] > 0:
+            grand_files += stats["total_files"]
+            grand_dirs += stats["total_dirs"]
+            lines.append(f"Biomni-AD Datalake: {stats['total_files']} files, {stats['total_dirs']} folders")
+            lines.append("")
+
+    # --- 3. Biomni Datalake (root of data_lake, excluding biomniAD) ----------
+    if os.path.isdir(builtin_root):
+        stats = _collect_path_stats(builtin_root, exclude_top_subdirs={"biomniAD"})
+        if stats["total_files"] > 0:
+            grand_files += stats["total_files"]
+            grand_dirs += stats["total_dirs"]
+            lines.append(f"Biomni Datalake: {stats['total_files']} files, {stats['total_dirs']} folders")
+            lines.append("")
+
+    if grand_files == 0 and grand_dirs == 0:
+        return "No local data roots found."
 
     lines.extend([
         "Combined totals",
@@ -708,23 +764,70 @@ def _build_dataset_listing(agent) -> str:
 
 
 def _build_user_data_sidebar_elements() -> list[cl.Text]:
-    """Build tree elements for built-in data lake and configured user data roots."""
+    """Build tree elements for built-in data lake and configured user data roots.
+
+    Tree order mirrors the overview:
+    1. AD Workbench Datasets (when BIOMNI_USER_DATA_HOST_PATH is defined)
+       or regular user-data roots otherwise.
+    2. Biomni-AD Datalake  (data_lake/biomniAD/)
+    3. Biomni Datalake     (data_lake/ root, excluding biomniAD)
+    Only entries with files are included.
+    """
     elements: list[cl.Text] = [
         cl.Text(name="Summary", content=_build_sidebar_overview_content(), display="page")
     ]
 
-    for env_name, root in _resolve_user_data_roots():
-        tree_content, total_files = _build_user_data_tree_content(root)
-        label = f"Tree [{_display_data_root_label(env_name)}] ({total_files})"
-        content = f"Path: {root}\n\n{tree_content}"
-        elements.append(cl.Text(name=label, content=content, display="page"))
+    user_data_host_path = os.getenv("BIOMNI_USER_DATA_HOST_PATH", "").strip()
+    user_data_path = os.getenv("BIOMNI_USER_DATA_PATH", "").strip()
 
+    # --- User data / AD Workbench tree ---------------------------------------
+    if user_data_host_path:
+        # Use container-side mount for file counts; host path is the display label.
+        ad_path = ""
+        if user_data_path and os.path.isdir(user_data_path):
+            ad_path = user_data_path
+        elif os.path.isdir(user_data_host_path):
+            ad_path = user_data_host_path
+        if ad_path:
+            tree_content, total_files = _build_user_data_tree_content(ad_path)
+            if total_files > 0:
+                content = f"Path: {ad_path}\n\n{tree_content}"
+                elements.append(cl.Text(name=f"Tree [AD Workbench Datasets] ({total_files})", content=content, display="page"))
+    else:
+        for env_name, root in _resolve_user_data_roots():
+            tree_content, total_files = _build_user_data_tree_content(root)
+            if total_files > 0:
+                label = f"Tree [{_display_data_root_label(env_name)}] ({total_files})"
+                content = f"Path: {root}\n\n{tree_content}"
+                elements.append(cl.Text(name=label, content=content, display="page"))
+
+    # --- Built-in datalake trees ---------------------------------------------
     builtin_root = _resolve_builtin_data_lake_root()
+
+    # Biomni-AD Datalake
+    biomni_ad_root = os.path.join(builtin_root, "biomniAD")
+    if os.path.isdir(biomni_ad_root):
+        tree_content, total_files = _build_user_data_tree_content(biomni_ad_root)
+        if total_files > 0:
+            content = f"Path: {biomni_ad_root}\n\n{tree_content}"
+            elements.append(cl.Text(name=f"Tree [Biomni-AD Datalake] ({total_files})", content=content, display="page"))
+
+    # Biomni Datalake (root, excluding biomniAD)
     if os.path.isdir(builtin_root):
-        tree_content, total_files = _build_user_data_tree_content(builtin_root)
-        label = f"Tree [DEFAULT_DATA_LAKE] ({total_files})"
-        content = f"Path: {builtin_root}\n\n{tree_content}"
-        elements.append(cl.Text(name=label, content=content, display="page"))
+        preview, total_files = _list_path_entries_recursive(builtin_root, max_items=300, exclude_top_subdirs={"biomniAD"})
+        if total_files > 0:
+            tree_lines = _build_tree_preview_lines(preview, max_lines=70, max_depth=3)
+            lake_lines: list[str] = [
+                f"Directory structure preview (showing first {len(preview)} files)",
+                "",
+                *tree_lines,
+            ]
+            if total_files > len(preview):
+                lake_lines.append(f"... and {total_files - len(preview)} more files")
+            tree_content = "\n".join(lake_lines)
+            content = f"Path: {builtin_root}\n\n{tree_content}"
+            elements.append(cl.Text(name=f"Tree [Biomni Datalake] ({total_files})", content=content, display="page"))
+
     return elements
 
 

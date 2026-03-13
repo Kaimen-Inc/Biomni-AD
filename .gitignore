@@ -97,4 +97,4 @@ docs/source/_autosummary/
 *.tmp
 *.bak
 *tar.gz
-*tar
+*tarscripts/vm_setup.sh
