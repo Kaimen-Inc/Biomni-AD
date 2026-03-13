@@ -19,8 +19,8 @@ services:
     ports:
       - "${HOST_PORT:-8000}:8000"
     volumes:
-      - biomni_app_data:/app/data
-      - biomni_runs:/app/runs
+      - ${BIOMNI_APP_DATA_HOST_PATH:-./data}:/app/data
+      - ${BIOMNI_RUNS_HOST_PATH:-./runs}:/app/runs
       - ${BIOMNI_USER_DATA_HOST_PATH:-/tmp/biomni_user_data}:/app/user-data:ro
     restart: unless-stopped
 
