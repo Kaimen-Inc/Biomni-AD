@@ -765,6 +765,51 @@ def _build_dataset_listing(agent) -> str:
     return "Open a Tree item below"
 
 
+def _build_full_user_data_inventory() -> str:
+    """Build a comprehensive file listing of all user-data roots for agent injection.
+
+    This produces the SAME content the sidebar tree shows but as a single text
+    block that can be set on the agent so its system prompt has full visibility
+    into mounted VM datasets.
+    """
+    sections: list[str] = []
+
+    user_data_host_path = os.getenv("BIOMNI_USER_DATA_HOST_PATH", "").strip()
+    user_data_path = os.getenv("BIOMNI_USER_DATA_PATH", "").strip()
+
+    # --- User / AD Workbench data ---
+    if user_data_host_path:
+        ad_path = ""
+        if user_data_path and os.path.isdir(user_data_path):
+            ad_path = user_data_path
+        elif os.path.isdir(user_data_host_path):
+            ad_path = user_data_host_path
+        if ad_path:
+            preview, total = _list_path_entries_recursive(ad_path, max_items=500, max_depth=10)
+            if total > 0:
+                tree_lines = _build_tree_preview_lines(preview, max_lines=300, max_depth=6)
+                sections.append(
+                    f"AD Workbench / User Data ({ad_path}) — {total} files:\n"
+                    + "\n".join(tree_lines)
+                )
+                if total > len(preview):
+                    sections[-1] += f"\n  ... and {total - len(preview)} more files"
+    else:
+        for env_name, root in _resolve_user_data_roots():
+            preview, total = _list_path_entries_recursive(root, max_items=500, max_depth=10)
+            if total > 0:
+                label = _display_data_root_label(env_name)
+                tree_lines = _build_tree_preview_lines(preview, max_lines=300, max_depth=6)
+                sections.append(
+                    f"{label} ({root}) — {total} files:\n"
+                    + "\n".join(tree_lines)
+                )
+                if total > len(preview):
+                    sections[-1] += f"\n  ... and {total - len(preview)} more files"
+
+    return "\n\n".join(sections) if sections else ""
+
+
 def _build_user_data_sidebar_elements() -> list[cl.Text]:
     """Build tree elements for built-in data lake and configured user data roots.
 
@@ -985,6 +1030,12 @@ async def on_chat_start():
         cl.user_session.set("thread_id", str(uuid.uuid4()))
         cl.user_session.set("dataset_listing", _build_dataset_listing(agent))
         cl.user_session.set("dataset_panel_shown", False)
+
+        # Build full user-data inventory and inject it into the agent so its
+        # system prompt has the same visibility as the sidebar tree.
+        inventory_text = await run_in_executor(_build_full_user_data_inventory)
+        if inventory_text:
+            agent.user_data_inventory = inventory_text
     except Exception as exc:
         await cl.Message(content=f"Failed to initialize {label}: {exc}").send()
         return
@@ -1124,6 +1175,18 @@ async def _interactive_planning(agent, prompt: str, agent_type: str = "a1") -> s
     Returns the (possibly modified) prompt on approval, or None if cancelled.
     """
     base_prompt = AD1_PLANNING_SYSTEM_PROMPT if agent_type == "ad1" else PLANNING_SYSTEM_PROMPT
+
+    # Dynamically append the user-data directory listing so the planner
+    # knows exactly which datasets are available locally.
+    inventory = getattr(agent, "user_data_inventory", None)
+    if inventory:
+        data_root = getattr(agent, "data_root_dir", None) or ""
+        base_prompt += (
+            f"\n\nThe following datasets are available in the local user data directory "
+            f"({data_root}). Reference specific datasets from this listing when relevant "
+            f"to the user's question:\n{inventory}"
+        )
+
     modification_context = ""
 
     while True:

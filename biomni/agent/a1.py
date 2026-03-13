@@ -428,6 +428,51 @@ For all analyses in this run:
 
         return sorted(set(items))
 
+    def _get_user_data_resources(self, max_depth: int = 6, max_items: int = 500) -> list[dict[str, str]]:
+        """Build user-data resources from data_root_dir for retrieval indexing.
+
+        Unlike ``_get_data_lake_resources`` which only walks the built-in
+        ``data_lake/`` directory, this method indexes files under the
+        user-mounted data root (e.g. /app/user-data or /mnt) so the tool
+        retriever can surface VM-mounted datasets when relevant.
+        """
+        root_dir = getattr(self, "data_root_dir", None)
+        if not root_dir or not os.path.isdir(root_dir):
+            return []
+
+        # Avoid double-counting files already under data_lake_dir
+        data_lake_abs = os.path.abspath(self.data_lake_dir) if hasattr(self, "data_lake_dir") else ""
+
+        excluded = {
+            ".git", "__pycache__", ".venv", "venv", "env",
+            ".chainlit", "node_modules", "site-packages",
+        }
+        resources: list[dict[str, str]] = []
+
+        for root, dirs, files in os.walk(root_dir):
+            # Skip anything already covered by the built-in data lake
+            if data_lake_abs and os.path.abspath(root).startswith(data_lake_abs):
+                dirs[:] = []
+                continue
+            depth = root.replace(root_dir, "").count(os.sep)
+            if depth >= max_depth:
+                dirs[:] = []
+                continue
+            dirs[:] = [d for d in dirs if not d.startswith(".") and d not in excluded]
+            for file_name in files:
+                if file_name.startswith("."):
+                    continue
+                full_path = os.path.join(root, file_name)
+                rel = os.path.relpath(full_path, root_dir).replace(os.sep, "/")
+                resources.append({
+                    "name": f"user-data:{rel}",
+                    "description": f"User dataset file at {root_dir}/{rel}",
+                })
+                if len(resources) >= max_items:
+                    return resources
+
+        return resources
+
     def _resolve_data_path(self, data_path: str) -> str:
         """Resolve a data path to an absolute path with data-lake-first semantics.
 
@@ -1663,24 +1708,30 @@ Each library is listed with its description to help you understand its functiona
         data_lake_content_formatted = "\n".join(data_lake_formatted)
 
         # Format the prompt with the appropriate values
-        # Build data root listing for the system prompt
+        # Build data root listing for the system prompt.
+        # Prefer the pre-computed full inventory (set by Chainlit at chat start)
+        # over the shallow os.walk scan so the agent sees the same tree as the sidebar.
         data_root_dir = getattr(self, "data_root_dir", self.path)
-        data_root_items = self._get_data_root_items(max_depth=2) if hasattr(self, "_get_data_root_items") else []
-        if data_root_items:
-            # Show top-level dirs + sample files (keep compact)
-            root_dirs = sorted({item.split("/")[0] for item in data_root_items if "/" in item})
-            root_files = [item for item in data_root_items if "/" not in item]
-            listing_lines = []
-            for d in root_dirs[:30]:
-                sub_count = sum(1 for i in data_root_items if i.startswith(d + "/"))
-                listing_lines.append(f"  📁 {d}/ ({sub_count} file(s))")
-            for f in root_files[:10]:
-                listing_lines.append(f"  📄 {f}")
-            if len(root_dirs) > 30:
-                listing_lines.append(f"  ... and {len(root_dirs) - 30} more directories")
-            data_root_listing = "\n".join(listing_lines)
+        _precomputed = getattr(self, "user_data_inventory", None)
+        if _precomputed:
+            data_root_listing = _precomputed
         else:
-            data_root_listing = "  (no files found at this path)"
+            data_root_items = self._get_data_root_items(max_depth=5) if hasattr(self, "_get_data_root_items") else []
+            if data_root_items:
+                # Show top-level dirs + sample files
+                root_dirs = sorted({item.split("/")[0] for item in data_root_items if "/" in item})
+                root_files = [item for item in data_root_items if "/" not in item]
+                listing_lines = []
+                for d in root_dirs[:100]:
+                    sub_count = sum(1 for i in data_root_items if i.startswith(d + "/"))
+                    listing_lines.append(f"  📁 {d}/ ({sub_count} file(s))")
+                for f in root_files[:50]:
+                    listing_lines.append(f"  📄 {f}")
+                if len(root_dirs) > 100:
+                    listing_lines.append(f"  ... and {len(root_dirs) - 100} more directories")
+                data_root_listing = "\n".join(listing_lines)
+            else:
+                data_root_listing = "  (no files found at this path)"
 
         format_dict = {
             "function_intro": function_intro,
@@ -2085,6 +2136,14 @@ Each library is listed with its description to help you understand its functiona
 
         # 2. Data lake items with descriptions
         data_lake_descriptions = self._get_data_lake_resources()
+
+        # 2b. User-data items (VM-mounted datasets outside data_lake/)
+        user_data_resources = self._get_user_data_resources()
+        if user_data_resources:
+            existing_names = {r["name"] for r in data_lake_descriptions}
+            for res in user_data_resources:
+                if res["name"] not in existing_names:
+                    data_lake_descriptions.append(res)
 
         # 3. Libraries with descriptions - use library_content_dict directly
         library_descriptions = []

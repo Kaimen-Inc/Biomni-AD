@@ -89,7 +89,7 @@ class AD1(A1):
         data_root_dir = getattr(self, "data_root_dir", None)
         data_root_items = []
         if hasattr(self, "_get_data_root_items"):
-            data_root_items = self._get_data_root_items(max_depth=2)
+            data_root_items = self._get_data_root_items(max_depth=5)
 
         data_lake_dir = getattr(self, "data_lake_dir", "")
         ad_data_lake = os.path.join(data_lake_dir, "biomniAD")
@@ -114,19 +114,22 @@ class AD1(A1):
         if len(non_ad) > 20:
             non_ad_preview += f"\n  - ... and {len(non_ad) - 20} more"
 
-        # Data root preview
+        # Data root preview — prefer pre-computed inventory from Chainlit sidebar
         root_preview = ""
-        if data_root_dir and data_root_items:
+        _precomputed = getattr(self, "user_data_inventory", None)
+        if _precomputed:
+            root_preview = f"\n\nUSER DATA DIRECTORY ({data_root_dir}):\n{_precomputed}"
+        elif data_root_dir and data_root_items:
             root_dirs = sorted({item.split("/")[0] for item in data_root_items if "/" in item})
             root_files = [item for item in data_root_items if "/" not in item]
             root_lines = []
-            for d in root_dirs[:15]:
+            for d in root_dirs[:80]:
                 sub_count = sum(1 for i in data_root_items if i.startswith(d + "/"))
                 root_lines.append(f"  - 📁 {d}/ ({sub_count} file(s))")
-            for f in root_files[:5]:
+            for f in root_files[:30]:
                 root_lines.append(f"  - 📄 {f}")
-            if len(root_dirs) > 15:
-                root_lines.append(f"  - ... and {len(root_dirs) - 15} more directories")
+            if len(root_dirs) > 80:
+                root_lines.append(f"  - ... and {len(root_dirs) - 80} more directories")
             root_preview = f"\n\nUSER DATA DIRECTORY ({data_root_dir}):\n" + "\n".join(root_lines)
         elif data_root_dir:
             root_preview = f"\n\nUSER DATA DIRECTORY ({data_root_dir}): (empty or not mounted)"
