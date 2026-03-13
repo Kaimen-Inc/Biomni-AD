@@ -106,12 +106,14 @@ AD1_PLANNING_SYSTEM_PROMPT = (
     "You are an expert Alzheimer's disease research assistant planning a task. "
     "Given the user's research question, write a concise numbered plan "
     "of several steps describing exactly how you will solve it. "
-    "IMPORTANT: Always follow this strict tool priority order in your plan: "
-    "(1) User-specified, local and AD/dementia data lake FIRST before any other source; "
-    #"(2) web/literature search second (advanced_web_search, search_pubmed, search_biorxiv) "
-    #"to supplement with published findings; "
-    "(2) built-in domain tools second; "
-    "(3) custom code generation to execute these analyses using your tools. "
+    "IMPORTANT — LOCAL-FIRST RULE: "
+    "(1) ALWAYS start by scanning and listing files available in the local user data path "
+    "(BIOMNI_USER_DATA_PATH / /app/user-data) and the AD data lake "
+    "(data/biomni_data/data_lake/biomniAD/) BEFORE any other action. "
+    "Use only locally identified files for as much of the analysis as possible. "
+    "Do NOT download, fetch, or call external APIs when the needed data is already present locally. "
+    "(2) Built-in domain tools second (query databases, tool functions); "
+    "(3) Custom code generation to execute these analyses using your tools. "
     "Do NOT simulate or fabricate data. "
     "Mention specific datasets, tools, or analyses you will use. "
     "Be specific and tailor the plan to user's question. Do not execute any code yet."
@@ -899,44 +901,51 @@ async def set_chat_profiles():
 
 AD1_STARTERS = [
     cl.Starter(
-        label="Scan local AD data & catalogs",
+        label="Multi-omics AD risk gene portrait",
         message=(
-            "Scan my local BIOMNI_USER_DATA_PATH (or BIOMNI_DATA_PATH) directory and the BiomniAD catalogs "
-            "(BiomniAD*.json, NIAGADS*.json, SinaiADRD.json) in your know-how resources. "
-            "List every locally available dataset with its modality, then suggest the 3 most "
-            "impactful quick analyses I could run right now using only local files."
+            "Build a multi-omics portrait of the top 5 AD risk genes (APOE, TREM2, BIN1, CLU, SORL1). "
+            "For each gene: (1) pull GWAS significance from any local summary stats "
+            "(GCST90027158, NG00075, or NG00052), (2) check brain eQTL evidence in NG00105 or "
+            "SingleBrain, (3) look up proteomic levels in NG00102 if available, and "
+            "(4) find CRISPR dependency scores from the DepMap data lake. "
+            "Compile everything into a single comparison table and a radar chart per gene."
         ),
         icon="/public/avatars/ad1.png",
     ),
     cl.Starter(
-        label="AD risk loci cross-study comparison",
+        label="Microglia enhancer–GWAS overlap",
         message=(
-            "Using the local BiomniAD catalog files, compare the top 20 AD risk loci between "
-            "the Bellenguez et al. (2022) GWAS meta-analysis and the FinnGen R12 AD GWAS. "
-            "Download only the summary statistics headers (first 1000 lines) from each, "
-            "identify overlapping and population-specific loci, and visualise the comparison "
-            "as a Venn diagram and a Manhattan-style dot plot."
+            "Using the AD Workbench ATAC-seq / enhancer-promoter interactome datasets and the "
+            "Bellenguez 2022 GWAS (GCST90027158), identify AD risk SNPs that fall within "
+            "microglia-specific enhancer regions. For each hit, report the target gene linked by "
+            "the enhancer-promoter map and whether it also appears as a microglia eQTL in "
+            "SingleBrain or isoMiGA. Produce a Venn diagram of the overlaps and a genome-browser "
+            "style track plot for the top 3 loci."
         ),
         icon="/public/avatars/ad1.png",
     ),
     cl.Starter(
-        label="CRISPRbrain AD screens explorer",
+        label="AD plasma biomarker × genetic risk",
         message=(
-            "Use the CRISPRbrain Python API (pip install crisprbrain) to list all available "
-            "CRISPR screens. Filter for brain and iPSC-neuron screens, retrieve the top screen's "
-            "data, identify the top 20 gene hits, and cross-reference them with known AD GWAS "
-            "risk genes from the local catalogs. Produce a ranked table and a volcano-style plot."
+            "Cross-reference AD Workbench plasma/CSF biomarker datasets (e.g. Bio-Hermes, "
+            "BCG-PANDA, NG00133) with genetic risk data: (1) load the biomarker tables and "
+            "identify analytes that differ most between AD cases and controls, (2) check whether "
+            "the genes encoding those top analytes carry genome-wide significant variants in any "
+            "local GWAS files (NG00075, GCST90027158), and (3) look up their rare-variant burden "
+            "in RADR. Produce a dot plot of effect size vs. GWAS p-value and a summary table."
         ),
         icon="/public/avatars/ad1.png",
     ),
     cl.Starter(
-        label="AD variant lookup via RADR",
+        label="AD drug target prioritization",
         message=(
-            "From the local SinaiADRD catalog, download the RADR variant table (RADR_V3.xlsx). "
-            "Summarise how many rare variants are classified as pathogenic vs. likely-pathogenic "
-            "per AD gene (APP, PSEN1, PSEN2, TREM2, SORL1, ABCA7). "
-            "Produce a stacked bar chart of variant pathogenicity by gene and list the top 10 "
-            "most penetrant variants with their ClinVar annotations."
+            "Prioritize druggable AD targets by integrating local data: (1) extract genes reaching "
+            "genome-wide significance from available GWAS summary stats, (2) filter those with "
+            "brain eQTL support (NG00105 / SingleBrain), (3) check which have known drug "
+            "interactions in the BindingDB and Broad Repurposing Hub files from the general data "
+            "lake, and (4) cross-reference CRISPR dependency in DepMap. "
+            "Rank the final targets by a composite score and produce a waterfall plot with a table "
+            "listing each gene, its top drug candidates, and supporting evidence."
         ),
         icon="/public/avatars/ad1.png",
     ),
