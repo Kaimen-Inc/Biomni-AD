@@ -6,9 +6,9 @@ services:
       args:
         BIOMNI_ENV_FILE: biomni_env/environment.yml
     image: biomni:latest
-    container_name: biomni
     env_file:
       - .env
+    user: "0:0"
     environment:
       CHAINLIT_HOST: 0.0.0.0
       CHAINLIT_PORT: 8000
@@ -23,7 +23,3 @@ services:
       - ${BIOMNI_RUNS_HOST_PATH:-./runs}:/app/runs
       - ${BIOMNI_USER_DATA_HOST_PATH:-/tmp/biomni_user_data}:/app/user-data:ro
     restart: unless-stopped
-
-volumes:
-  biomni_app_data:
-  biomni_runs:

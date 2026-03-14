@@ -952,7 +952,7 @@ AD1_STARTERS = [
             "For each gene: (1) pull GWAS significance from any local summary stats "
             "(GCST90027158, NG00075, or NG00052), (2) check brain eQTL evidence in NG00105 or "
             "SingleBrain, (3) look up proteomic levels in NG00102 if available, and "
-            "(4) find CRISPR dependency scores from the DepMap data lake. "
+            "(4) find CRISPR dependency scores from CRISPRbrain relevant screen from the biomni-AD datalake."
             "Compile everything into a single comparison table and a radar chart per gene."
         ),
         icon="/public/avatars/ad1.png",

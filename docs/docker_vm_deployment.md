@@ -140,7 +140,7 @@ By default, Docker builds with `biomni_env/environment.yml` (more reliable on cl
 To use the larger `fixed_env.yml` variant instead:
 
 ```bash
-docker compose build --build-arg BIOMNI_ENV_FILE=biomni_env/fixed_env.yml
+docker compose build --build-arg BIOMNI_ENV_FILE=biomni_env/adworkbench_env.yml
 docker compose up -d
 ```
 
