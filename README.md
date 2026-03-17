@@ -228,77 +228,26 @@ The agent still references catalog URIs in its system prompt and can fetch data 
 
 ### Basic Usage & Agent Selection
 
-Biomni provides two primary agents:
+Biomni-AD provides two agents:
 
-1. **A1 (General Agent)**: The standard biomedical agent for general-purpose tasks.
-2. **AD1 (Alzheimer's Disease Agent)**: A specialized version of A1 optimized for Alzheimer's and Dementia research. It features:
-    - specialized data sourcing protocols
-    - context-aware instructions for neurodegeneration
-    - optimized tool selection for AD research
+- **AD1 (Alzheimer's Disease Agent)**: The primary agent for this fork — specialized for Alzheimer's and dementia research with AD-focused data sourcing, context-aware neurodegeneration instructions, and optimized tool selection.
+- **A1 (General Agent)**: The upstream general-purpose biomedical agent. For general biomedical use without AD specialization, see the [upstream Biomni project](https://github.com/snap-stanford/Biomni).
 
-#### 1. Running in Notebooks or CLI
+#### 1. Chainlit Interactive UI — Default for Biomni-AD
 
-**A1 (General):**
-```python
-from biomni.agent import A1
+The recommended way to run Biomni-AD is the **Chainlit UI** with its **plan-then-approve** workflow:
 
-# Initialize general agent
-agent = A1(llm='claude-sonnet-4-5')
-agent.go("Plan a CRISPR screen to identify genes that regulate T cell exhaustion.")
-```
-
-**AD1 (Alzheimer's Specialized):**
-```python
-from biomni.agent.ad1 import AD1
-
-# Initialize AD specialized agent
-agent = AD1(llm='claude-sonnet-4-5')
-agent.go("Analyze Tau aggregation pathways and suggest potential inhibitors.")
-```
-
-#### 2. Launching the Web UI
-
-You can launch a no-code interactive web interface for either agent.
-
-**A1 UI:**
-```python
-from biomni.agent import A1
-A1().launch_gradio_demo()
-```
-
-**AD1 UI:**
-```python
-from biomni.agent.ad1 import AD1
-AD1().launch_ui()
-```
-
-**UI Requirements:**
-To use the web interface, install Gradio 5.x:
-```bash
-pip install "gradio>=5.0,<6.0"
-```
-
-**UI Options:**
-- `share=True` - Create a public shareable link
-- `server_name="127.0.0.1"` - Localhost only (default: "0.0.0.0")
-- `require_verification=True` - Require access code (default: "Biomni2025")
-
-#### 3. Chainlit Interactive UI (Recommended)
-
-Biomni also ships a **Chainlit**-based UI with an interactive **plan-then-approve** workflow:
-
-1. Before executing, the agent generates a numbered research plan.
-2. You review the plan and choose **Approve & Execute**, **Revise Plan**, or **Cancel**.
-3. After approval, the full ReAct loop runs with each step shown as a collapsible trace (Thinking → Code → Observation → Answer).
+1. The AD1 agent generates a numbered research plan before executing.
+2. You choose **Approve & Execute**, **Revise Plan**, or **Cancel**.
+3. The full ReAct loop runs with each step shown as a collapsible trace (Thinking → Code → Observation → Answer).
 
 **Setup (one-time):**
 ```bash
-# Inside the biomni_e1 environment
 conda activate biomni_e1
 pip install "chainlit>=1.0"
 ```
 
-**Launch:**
+**Single instance:**
 ```bash
 bash run_chainlit.sh                   # opens http://localhost:8000
 bash run_chainlit.sh --port 8080       # custom port
@@ -307,12 +256,51 @@ bash run_chainlit.sh --headless        # no browser auto-open (servers/CI)
 
 > **Note:** Always use `bash run_chainlit.sh` — not `chainlit run chainlit_app.py` directly. The script ensures the correct `biomni_e1` Python is used even when another virtual environment (`.venv`) is active in the same shell.
 
+**Fleet deployment (multiple instances):**
+```bash
+bash launch_biomni_ad_fleet.sh         # launches and manages a fleet of Biomni-AD instances
+```
+
 **Environment variables (optional):**
 
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `BIOMNI_LLM` | `claude-sonnet-4-5` | LLM model used by both agents |
 | `BIOMNI_PATH` | `./data` | Data directory for the agent |
+
+#### 2. Running in Notebooks or CLI
+
+**AD1 (Alzheimer's Specialized):**
+```python
+from biomni.agent.ad1 import AD1
+
+agent = AD1(llm='claude-sonnet-4-5')
+agent.go("Analyze Tau aggregation pathways and suggest potential inhibitors.")
+```
+
+**A1 (General — upstream Biomni):**
+```python
+from biomni.agent import A1
+
+agent = A1(llm='claude-sonnet-4-5')
+agent.go("Plan a CRISPR screen to identify genes that regulate T cell exhaustion.")
+```
+
+#### 3. Gradio UI
+
+```python
+# AD1
+from biomni.agent.ad1 import AD1
+AD1().launch_ui()
+
+# A1 (general)
+from biomni.agent import A1
+A1().launch_gradio_demo()
+```
+
+Install Gradio 5.x first: `pip install "gradio>=5.0,<6.0"`
+
+UI options: `share=True` (public link) · `server_name="127.0.0.1"` (localhost only) · `require_verification=True` (access code, default `"Biomni2025"`)
 
 #### 4. Docker Deployment (Local or VM)
 
@@ -427,6 +415,7 @@ agent.go("Find FDA active ingredient information for ibuprofen")
 **Built-in MCP Servers:**
 For usage and implementation details, see the [MCP Integration Documentation](docs/mcp_integration.md) and examples in [`tutorials/examples/add_mcp_server/`](tutorials/examples/add_mcp_server/) and [`tutorials/examples/expose_biomni_server/`](tutorials/examples/expose_biomni_server/).
 
+> **Note — Powered by Biomni:** Biomni-AD is a specialized fork of [Biomni](https://github.com/snap-stanford/Biomni) by Stanford's SNAP Lab. All upstream Biomni capabilities are fully available here — including 30+ biomedical tool domains, the Biomni-R0 reasoning model, Biomni-Eval1 benchmark, Know-How Library, and MCP integration. For general-purpose biomedical AI agent use not focused on Alzheimer's disease, we recommend the upstream [Biomni project](https://github.com/snap-stanford/Biomni) directly.
 
 ## Biomni-R0
 
