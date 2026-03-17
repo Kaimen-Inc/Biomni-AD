@@ -258,7 +258,7 @@ bash run_chainlit.sh --headless        # no browser auto-open (servers/CI)
 
 **Fleet deployment (multiple instances):**
 ```bash
-bash launch_biomni_ad_fleet.sh         # launches and manages a fleet of Biomni-AD instances
+bash scripts/launch_biomniAD_fleet.sh  # launches and manages a fleet of Biomni-AD instances
 ```
 
 **Environment variables (optional):**
