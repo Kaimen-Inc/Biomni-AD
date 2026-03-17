@@ -1,5 +1,8 @@
 <p align="center">
-  <img src="./figs/Biomni-AD_Logo_v2.png" alt="Biomni-AD Logo" width="600px" />
+  <img src="./figs/Biomni-AD_Logo_v2.png" alt="Biomni-AD Logo" width="560px" />
+</p>
+<p align="center">
+  <sub>Specialized fork of&nbsp;<a href="https://github.com/snap-stanford/Biomni"><img src="./figs/biomni_logo.png" alt="Biomni" height="18" /></a>&nbsp;·&nbsp;Stanford SNAP Lab</sub>
 </p>
 
 <p align="center">
