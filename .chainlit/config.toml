@@ -92,7 +92,7 @@ reaction_on_message_received = false
 
 [UI]
 # Name of the assistant.
-name = "Assistant"
+name = "Biomni-AD"
 
 # default_theme = "dark"
 
@@ -150,7 +150,7 @@ alert_style = "classic"
 # custom_meta_image_url = "https://chainlit-cloud.s3.eu-west-3.amazonaws.com/logo/chainlit_banner.png"
 
 # Load assistant logo directly from URL.
-logo_file_url = ""
+logo_file_url = "/public/avatars/ad1_256.png"
 
 # Load assistant avatar image directly from URL.
 default_avatar_file_url = "/public/avatars/ad1.png"

@@ -1,4 +1,4 @@
-# Contributing to Biomni
+# Contributing to Biomni-AD
 
 Thank you for your interest in contributing to Biomni! We're building the infrastructure layer for biomedical AI agents, and we welcome contributions from the community. Contributors with significant contributions will be invited to co-author publications in top-tier journals and conferences.
 

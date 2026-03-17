@@ -1,8 +1,30 @@
-# Biomni Environment Setup
+# Biomni-AD Environment Setup
 
 This directory contains scripts and configuration files to set up a comprehensive bioinformatics environment with various tools and packages.
 
 **Biomni-AD** (this repository) is developed by **Kuan-lin Huang, PhD**, building on the foundational [Biomni](https://github.com/snap-stanford/Biomni) platform by Stanford's SNAP Lab.
+
+## Branch Guide
+
+| Branch | Purpose |
+|--------|---------|
+| [`feat/adworkbench`](https://github.com/kuanlinhuang/Biomni/tree/feat/adworkbench) | **Recommended install branch** — AD Workbench integration with tighter dataset integration and containerization that works broadly. |
+| [`biomni-ad`](https://github.com/kuanlinhuang/Biomni/tree/biomni-ad) | **Primary stable branch** — Biomni-AD specialization without AD Workbench-specific deployment features. |
+| `main` | Upstream [Stanford SNAP Biomni](https://github.com/snap-stanford/Biomni). Periodically merged into `biomni-ad`. Read-only from this fork. |
+
+Install from the `feat/adworkbench` branch (recommended):
+
+```bash
+pip install git+https://github.com/kuanlinhuang/Biomni.git@feat/adworkbench
+```
+
+## AD Data Lake
+
+Biomni-AD includes three JSON catalogs (NIAGADS, SinaiADRD, BiomniAD Discovery) covering hundreds of AD/ADRD datasets. Files ≤ 100 MB are downloaded automatically on first `AD1` initialization; larger files are accessed via catalog URIs or external portals.
+
+See the **[AD Data Lake section in README.md](../README.md#ad-data-lake)** for full download options and catalog details.
+
+## Environment Installation
 
 1. Clone the repository:
 

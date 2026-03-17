@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="./figs/biomni_logo.png" alt="Biomni Logo" width="600px" />
+  <img src="./figs/Biomni-AD_Logo_v2.png" alt="Biomni-AD Logo" width="600px" />
 </p>
 
 <p align="center">
@@ -22,22 +22,20 @@
 
 
 
-# Biomni: A General-Purpose Biomedical AI Agent
+# Biomni-AD: AI Co-Scientist for Biomedical Research, integrated with Alzheimer's Disease Datalake
 
 ## Overview
 
-Biomni is a general-purpose biomedical AI agent designed to autonomously execute a wide range of research tasks across diverse biomedical subfields. By integrating cutting-edge large language model (LLM) reasoning with retrieval-augmented planning and code-based execution, Biomni helps scientists dramatically enhance research productivity and generate testable hypotheses.
+**Biomni-AD** is an Alzheimer's disease-specialized extension of [Biomni](https://github.com/snap-stanford/Biomni) (Stanford SNAP Lab), developed by **Kuan-lin Huang, PhD**. It adds the **AD1 agent** — a domain-expert variant of the general A1 agent — along with an AD-focused data lake, curated dataset catalogs (NIAGADS, SinaiADRD, CRISPRbrain), and a plan-then-approve Chainlit UI optimized for neurodegeneration research workflows.
 
-## Biomni-AD
-
-**Biomni-AD** is an Alzheimer's disease-specialized extension of [Biomni](https://github.com/snap-stanford/Biomni) (Stanford SNAP Lab), additionally developed by **Kuan-lin Huang, PhD**. It adds the **AD1 agent** — a domain-expert variant of the general A1 agent — along with an AD-focused data lake, curated dataset catalogs (NIAGADS, SinaiADRD, CRISPRbrain), and a plan-then-approve Chainlit UI optimized for neurodegeneration research workflows.
+The underlying **Biomni** platform is a general-purpose biomedical AI agent that integrates LLM reasoning with retrieval-augmented planning and code-based execution to help scientists enhance research productivity and generate testable hypotheses.
 
 ## Branch Guide
 
 | Branch | Purpose |
 |--------|---------|
-| [`biomni-ad`](https://github.com/kuanlinhuang/Biomni/tree/biomni-ad) | **Primary stable branch** — Biomni-AD specialization. Install from here with `pip install git+https://github.com/kuanlinhuang/Biomni.git@biomni-ad`. |
-| [`feat/adworkbench`](https://github.com/kuanlinhuang/Biomni/tree/feat/adworkbench) | **AD Workbench integration** — Extends `biomni-ad` for deployment in the AD Workbench Azure environment, with tighter integration of AD Workbench datasets. Maintained as a separate branch from `biomni-ad`. |
+| [`feat/adworkbench`](https://github.com/kuanlinhuang/Biomni/tree/feat/adworkbench) | **Recommended install branch** — Extends `biomni-ad` with AD Workbench dataset integration and containerization. Install with `pip install git+https://github.com/kuanlinhuang/Biomni.git@feat/adworkbench`. |
+| [`biomni-ad`](https://github.com/kuanlinhuang/Biomni/tree/biomni-ad) | **Primary stable branch** — Biomni-AD specialization without AD Workbench-specific deployment features. |
 | `main` | Upstream [Stanford SNAP Biomni](https://github.com/snap-stanford/Biomni). Periodically merged into `biomni-ad` to track upstream. Read-only from this fork. |
 
 ## Documentation Index
@@ -73,10 +71,10 @@ conda activate biomni_e1
 
 **Step 3 — Install the Biomni-AD package**
 
-Install from this repository (recommended for Biomni-AD features):
+Install from this repository (recommended):
 
 ```bash
-pip install git+https://github.com/kuanlinhuang/Biomni.git@biomni-ad
+pip install git+https://github.com/kuanlinhuang/Biomni.git@feat/adworkbench
 ```
 
 Or install the latest stable release from PyPI:
@@ -187,6 +185,43 @@ export AWS_REGION="us-east-1"
 #### ⚠️ Known Package Conflicts
 
 Some Python packages are not installed by default in the Biomni environment due to dependency conflicts. If you need these features, you must install the packages manually and may need to uncomment relevant code in the codebase. See the up-to-date list and details in [docs/known_conflicts.md](./docs/known_conflicts.md).
+
+### AD Data Lake
+
+Biomni-AD ships three JSON catalogs — **NIAGADS**, **SinaiADRD**, and **BiomniAD Discovery** — that describe hundreds of AD/ADRD datasets. Files ≤ 100 MB are downloaded automatically to disk; larger or controlled-access files are referenced by catalog URI for on-demand access.
+
+| Catalog | Contents | Access |
+|---------|----------|--------|
+| NIAGADS (`NG*`) | Genetics, omics, biomarkers — ADSP WGS/WES, pQTL, eQTL, CSF sumstats | Controlled + open |
+| SinaiADRD | Rare variants (RADR), single-nucleus eQTL (SingleBrain), microglia expression (isoMiGA) | Open |
+| BiomniAD Discovery | SEA-AD, ssREAD, OASIS-4, HCP, ABC Atlas | Open |
+| CRISPRbrain | CRISPR screens in neurons and microglia | Open API |
+
+Downloaded files are cached in `<data_lake>/biomniAD/<dataset_id>/` and skipped on re-runs. Set `BIOMNI_DATA_PATH` to control the storage root (defaults to `~/.biomni/data`).
+
+**Option A — Automatic on AD1 init (default)**
+
+```python
+from biomni.agent.ad1 import AD1
+
+agent = AD1(download_ad_data=True)   # downloads files ≤ 100 MB on first run
+```
+
+**Option B — Bulk download without starting an agent**
+
+```python
+from biomni.agent.ad_data_downloader import download_ad_catalog_data
+
+download_ad_catalog_data("/path/to/your/data_lake")
+```
+
+**Option C — Skip local download, use catalog URIs and internet**
+
+```python
+agent = AD1(download_ad_data=False)
+```
+
+The agent still references catalog URIs in its system prompt and can fetch data on demand or direct you to the relevant portal (e.g., NIAGADS DAC for controlled-access datasets).
 
 ### Basic Usage & Agent Selection
 

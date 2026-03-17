@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "biomni"
 dynamic = ["version"]
-description = "Biomni"
+description = "Biomni-AD: Alzheimer's Disease Biomedical AI Agent"
 readme = "README.md"
 license = "Apache-2.0"
 license-files = ["LICENSE"]
@@ -16,8 +16,9 @@ requires-python = ">=3.11"
 dependencies = ["pydantic", "langchain", "python-dotenv"]
 
 [project.urls]
-Homepage = "https://github.com/snap-stanford/biomni"
-Repository = "https://github.com/snap-stanford/biomni"
+Homepage = "https://github.com/kuanlinhuang/Biomni"
+Repository = "https://github.com/kuanlinhuang/Biomni"
+Upstream = "https://github.com/snap-stanford/biomni"
 
 [project.optional-dependencies]
 gradio = ["gradio>=5.0,<6.0"]
