@@ -416,156 +416,49 @@ pip install pandoc
 
 ## MCP (Model Context Protocol) Support
 
-Biomni supports MCP servers for external tool integration:
+Biomni-AD supports MCP servers for external tool integration:
 
 ```python
-from biomni.agent import A1
+from biomni.agent.ad1 import AD1
 
-agent = A1()
+agent = AD1()
 agent.add_mcp(config_path="./mcp_config.yaml")
-agent.go("Find FDA active ingredient information for ibuprofen")
+agent.go("Find FDA active ingredient information for donepezil")
 ```
 
-**Built-in MCP Servers:**
 For usage and implementation details, see the [MCP Integration Documentation](docs/mcp_integration.md) and examples in [`tutorials/examples/add_mcp_server/`](tutorials/examples/add_mcp_server/) and [`tutorials/examples/expose_biomni_server/`](tutorials/examples/expose_biomni_server/).
 
-> **Note — Powered by Biomni:** Biomni-AD is a specialized fork of [Biomni](https://github.com/snap-stanford/Biomni) by Stanford's SNAP Lab. All upstream Biomni capabilities are fully available here — including 30+ biomedical tool domains, the Biomni-R0 reasoning model, Biomni-Eval1 benchmark, Know-How Library, and MCP integration. For general-purpose biomedical AI agent use not focused on Alzheimer's disease, we recommend the upstream [Biomni project](https://github.com/snap-stanford/Biomni) directly.
+## Upstream Biomni Capabilities
 
-## Biomni-R0
+Biomni-AD is a specialized fork of [Biomni](https://github.com/snap-stanford/Biomni) by Stanford's SNAP Lab. All upstream Biomni capabilities remain available — including 30+ biomedical tool domains, the Biomni-R0 reasoning model, the Biomni-Eval1 benchmark, the Know-How Library, and MCP integration. For features, models, and benchmarks not specific to Alzheimer's disease, refer to the upstream project directly:
 
-**Biomni-R0** is our first reasoning model for biology, built on Qwen-32B with reinforcement learning from agent interaction data. It's designed to excel at tool use, multi-step reasoning, and complex biological problem-solving through iterative self-correction.
+- **Biomni-R0** reasoning model: [biomni/Biomni-R0-32B-Preview](https://huggingface.co/biomni/Biomni-R0-32B-Preview)
+- **Biomni-Eval1** benchmark: [biomni/Eval1](https://huggingface.co/datasets/biomni/Eval1)
+- **Know-How Library**: curated lab protocols and best practices auto-retrieved by the agent (see `biomni/know_how/`)
 
-- 🤗 Model: [biomni/Biomni-R0-32B-Preview](https://huggingface.co/biomni/Biomni-R0-32B-Preview)
-- 📝 Technical Report: [biomni.stanford.edu/blog/biomni-r0-technical-report](https://biomni.stanford.edu/blog/biomni-r0-technical-report)
+For general-purpose biomedical AI agent use not focused on Alzheimer's disease, use the upstream [Biomni project](https://github.com/snap-stanford/Biomni) directly.
 
-To use Biomni-R0 for agent reasoning while keeping database queries on your usual provider (recommended), run a local SGLang server and pass the model to `A1()` directly.
+## Tutorials
 
-1) Launch SGLang with Biomni-R0:
+**[Biomni 101](./tutorials/biomni_101.ipynb)** — basic concepts and first steps (upstream Biomni).
 
-```bash
-python -m sglang.launch_server --model-path RyanLi0802/Biomni-R0-Preview --port 30000 --host 0.0.0.0 --mem-fraction-static 0.8 --tp 2 --trust-remote-code --json-model-override-args '{"rope_scaling":{"rope_type":"yarn","factor":1.0,"original_max_position_embeddings":32768}, "max_position_embeddings": 131072}'
-```
+AD-specific tutorials and example notebooks live alongside the AD1 agent in this repository.
 
-2) Point the agent to your SGLang endpoint for reasoning:
+## Scope and Contributions
 
-```python
-from biomni.config import default_config
-from biomni.agent import A1
+Biomni-AD is maintained by **Kuan-lin Huang's lab** as a focused, AD-specific extension of upstream Biomni. It is **not** a general open-science platform and is not soliciting community contributions, co-author tool submissions, or paper-credit programs. For those, please engage with the upstream [Biomni](https://github.com/snap-stanford/Biomni) project.
 
-# Database queries (indexes, retrieval, etc.) use default_config
-default_config.llm = "claude-3-5-sonnet-20241022"
-default_config.source = "Anthropic"
+Bug reports and targeted pull requests against the AD-specific code paths (AD1 agent, AD data lake catalogs, Chainlit UI) are welcome via GitHub issues.
 
-# Agent reasoning uses Biomni-R0 served via SGLang (OpenAI-compatible API)
-agent = A1(
-    llm="biomni/Biomni-R0-32B-Preview",
-    source="Custom",
-    base_url="http://localhost:30000/v1",
-    api_key="EMPTY",
-)
+## Important Notes
 
-agent.go("Plan a CRISPR screen to identify genes regulating T cell exhaustion")
-```
+- **Security warning**: Biomni-AD executes LLM-generated code with full system privileges. For production or shared use, run inside an isolated/sandboxed environment. The agent can access files, the network, and system commands — be careful with sensitive data or credentials.
+- **Controlled-access data**: NIAGADS and other catalog entries marked as controlled-access require independent authorization (e.g., NIAGADS DAC). Biomni-AD does not bypass access controls; the agent will reference catalog URIs and direct you to the appropriate portal.
+- **Licensing**: Biomni-AD inherits upstream Biomni's Apache 2.0 license, but certain integrated tools, databases, or software may carry more restrictive licenses. Review each component before any commercial use.
 
-## Biomni-Eval1
+## Citation
 
-**Biomni-Eval1** is a comprehensive evaluation benchmark for assessing biological reasoning capabilities across diverse tasks. It contains **433 instances** spanning **10 biological reasoning tasks**, from gene identification to disease diagnosis.
-
-**Tasks Included:**
-- GWAS causal gene identification (3 variants)
-- Lab bench Q&A (2 variants)
-- Patient gene detection
-- Screen gene retrieval
-- GWAS variant prioritization
-- Rare disease diagnosis
-- CRISPR delivery method selection
-
-**Resources:**
-- 🤗 Dataset: [biomni/Eval1](https://huggingface.co/datasets/biomni/Eval1)
-- 💻 Quick Start:
-```python
-from biomni.eval import BiomniEval1
-
-evaluator = BiomniEval1()
-score = evaluator.evaluate('gwas_causal_gene_opentargets', 0, 'BRCA1')
-```
-
-
-## 📚 Know-How Library
-
-Biomni includes a **Know-How Library** — a curated collection of best practices, protocols, and troubleshooting guides for biomedical techniques. These documents are automatically retrieved by the A1 agent when relevant to provide domain expertise and practical knowledge.
-
-**Features:**
-- Automatic retrieval based on query relevance
-- Metadata tracking (authors, affiliations, licensing, commercial use)
-- Compatible with commercial mode (filters non-commercial content)
-
-### 📝 Contributing Know-How Documents
-
-We're actively seeking community contributions to expand our Know-How Library! Share your expertise by contributing:
-
-- **Lab protocols** (cell culture, flow cytometry, western blotting, etc.)
-- **Analysis best practices** (NGS workflows, microscopy techniques, etc.)
-- **Troubleshooting guides** (common issues and solutions)
-- **Experimental design guidelines** (sample size, controls, validation)
-- **Domain-specific knowledge** (drug formulation, animal models, clinical trials, etc.)
-
-Know-how documents should be practical, succinct, and include proper attribution. Use [this know-how](biomni/know_how/single_cell_annotation.md) as an example.
-
-**To contribute:** Create a markdown file following our template and submit a pull request.
-
-## 🤝 Contributing to Biomni
-
-Biomni is an open-science initiative that thrives on community contributions. We welcome:
-
-- **🔧 New Tools**: Specialized analysis functions and algorithms
-- **📊 Datasets**: Curated biomedical data and knowledge bases
-- **💻 Software**: Integration of existing biomedical software packages
-- **📋 Benchmarks**: Evaluation datasets and performance metrics
-- **📚 Know-How**: Best practices, protocols, and domain expertise
-- **📚 Misc**: Tutorials, examples, and use cases
-- **🔧 Update existing tools**: many current tools are not optimized - fix and replacements are welcome!
-
-Check out this **[Contributing Guide](CONTRIBUTION.md)** on how to contribute to the Biomni ecosystem.
-
-If you have particular tool/database/software in mind that you want to add, you can also submit to [this form](https://forms.gle/nu2n1unzAYodTLVj6) and the biomni team will implement them.
-
-## 🔬 Call for Contributors: Help Build Biomni-E2
-
-Biomni-E1 only scratches the surface of what’s possible in the biomedical action space.
-
-Now, we’re building **Biomni-E2** — a next-generation environment developed **with and for the community**.
-
-We believe that by collaboratively defining and curating a shared library of standard biomedical actions, we can accelerate science for everyone.
-
-**Join us in shaping the future of biomedical AI agent.**
-
-- **Contributors with significant impact** (e.g., 10+ significant & integrated tool contributions or equivalent) will be **invited as co-authors** on our upcoming paper in a top-tier journal or conference.
-- **All contributors** will be acknowledged in our publications.
-- More contributor perks...
-
-Let’s build it together.
-
-
-## Tutorials and Examples
-
-**[Biomni 101](./tutorials/biomni_101.ipynb)** - Basic concepts and first steps
-
-More to come!
-
-## 🌐 Web Interface
-
-Experience Biomni through our no-code web interface at **[biomni.stanford.edu](https://biomni.stanford.edu)**.
-
-[![Watch the video](https://img.youtube.com/vi/E0BRvl23hLs/maxresdefault.jpg)](https://youtu.be/E0BRvl23hLs)
-
-
-## Important Note
-- Security warning: Currently, Biomni executes LLM-generated code with full system privileges. If you want to use it in production, please use in isolated/sandboxed environments. The agent can access files, network, and system commands. Be careful with sensitive data or credentials.
-- This release was frozen as of April 15 2025, so it differs from the current web platform.
-- Biomni itself is Apache 2.0-licensed, but certain integrated tools, databases, or software may carry more restrictive commercial licenses. Review each component carefully before any commercial use.
-
-## Cite Us
+Biomni-AD builds on upstream Biomni. Please cite the original Biomni paper:
 
 ```
 @article{huang2025biomni,
@@ -577,3 +470,5 @@ Experience Biomni through our no-code web interface at **[biomni.stanford.edu](h
   publisher={Cold Spring Harbor Laboratory}
 }
 ```
+
+If you use Biomni-AD specifically (AD1 agent, AD data lake, or Chainlit workflow), please also credit this repository: *Biomni-AD, Kuan-lin Huang Lab, Icahn School of Medicine at Mount Sinai.*
