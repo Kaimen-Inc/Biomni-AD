@@ -305,3 +305,17 @@ docker ps --format 'table {{.ID}}\t{{.Names}}\t{{.Ports}}'
 - Restrict inbound IP ranges where possible.
 - Keep `.env` private and rotate API keys regularly.
 - Add VM-level monitoring and Docker log rotation.
+- **Run the container as non-root.** The compose file defaults to `user: "0:0"`
+  for first-run convenience, but you can flip to the micromamba base image's
+  non-root `mambauser` (UID 57439) by adding to `.env`:
+
+  ```env
+  BIOMNI_CONTAINER_USER=57439:57439
+  ```
+
+  Before flipping, pre-chown the bind-mounted host paths so the non-root UID
+  can write to them:
+
+  ```bash
+  sudo chown -R 57439:57439 ./data ./runs
+  ```

@@ -83,13 +83,13 @@ graph TB
 
 | Component | Location | Description |
 |-----------|----------|-------------|
-| **A1 Agent** | `biomni/agent/a1.py` | Main agent class (~3000 lines) with full tooling and MCP support |
-| **AD1 Agent** | `biomni/agent/ad1.py` | AD-specialized variant with context injection and UI |
-| **ReAct Engine** | `biomni/agent/react.py` | Core reasoning loop using LangGraph state machine |
+| **A1 Agent** | `biomni/agent/a1.py` | Main agent class with full tooling, MCP support, and the LangGraph ReAct state machine |
+| **AD1 Agent** | `biomni/agent/ad1.py` | AD-specialized variant with context injection and Gradio UI |
 | **Tool Registry** | `biomni/tool/tool_registry.py` | Dynamic tool registration and discovery |
 | **Tool Retriever** | `biomni/model/retriever.py` | LLM-powered resource selection |
-| **Config** | `biomni/config.py` | Centralized configuration management |
-| **LLM Interface** | `biomni/llm.py` | Multi-provider LLM factory |
+| **Config** | `biomni/config.py` | Centralized configuration: `BiomniConfig` dataclass and `resolve_default_llm()` env-precedence helper |
+| **LLM Interface** | `biomni/llm.py` | Multi-provider LLM factory (OpenAI, Azure OpenAI, Anthropic, Azure Anthropic, Gemini, Groq, Ollama, Bedrock, Custom) |
+| **Artifact Helpers** | `biomni/artifact.py` | Shared run-id generation and filesystem snapshotting used by both A1 and the Chainlit UI to keep their exclude lists in sync |
 
 ---
 
@@ -121,17 +121,24 @@ stateDiagram-v2
 ### Agent Initialization
 
 ```python
-from biomni.agent import A1
+# Either the short top-level path (recommended) ...
+from biomni import A1
+# ... or the explicit submodule path (still supported)
+# from biomni.agent.a1 import A1
 
 agent = A1(
     path='./data',                    # Data directory
-    llm='claude-sonnet-4-20250514',           # LLM model
+    llm='claude-sonnet-4-20250514',   # LLM model
     source='Anthropic',               # Provider
     use_tool_retriever=True,          # Enable smart retrieval
     timeout_seconds=600,              # Execution timeout
     commercial_mode=False             # License filtering
 )
 ```
+
+`A1`, `AD1`, and `BiomniConfig` are lazy-loaded on first attribute access, so
+`import biomni` itself stays cheap and does not pull in pandas / langchain
+until you actually instantiate an agent.
 
 ---
 
@@ -414,17 +421,28 @@ When queries match AD keywords (Alzheimer, dementia, MCI, amyloid, tau, neurodeg
 
 ### Environment Setup
 
+Two install paths, depending on what you need:
+
+**Lightweight** — agent core only, no R / heavy bio CLI tools:
+
 ```bash
-# Setup complete environment
-cd biomni_env
-./setup.sh
-
-# Activate environment
-conda activate biomni_e1
-
-# Install Biomni
-pip install biomni --upgrade
+pip install -e .                  # core deps (LangChain + OpenAI)
+pip install -e ".[anthropic]"     # add Claude provider
+pip install -e ".[all]"           # all provider + UI extras (anthropic, bedrock, ollama, gradio, chainlit)
 ```
+
+**Full conda env** — everything including R, bioinformatics CLI tools, and the
+22 domain-specific tool modules:
+
+```bash
+cd biomni_env
+./setup.sh                  # ~10h install, ~30GB disk
+conda activate biomni_e1
+pip install -e ..           # link the package into the conda env
+```
+
+See [`biomni_env/README.md`](./biomni_env/README.md) for the role of each
+YAML file in `biomni_env/`.
 
 ---
 

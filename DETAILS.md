@@ -33,10 +33,11 @@ Biomni-AD is a **biomedical AI agent platform** specialized for Alzheimer's dise
 ```
 Biomni/
 ├── biomni/                        # Main library package
+│   ├── __init__.py                # Lazy exports of A1, AD1, BiomniConfig
+│   ├── artifact.py                # Shared run-id + filesystem snapshot helpers (used by both A1 and the Chainlit UI)
 │   ├── agent/
-│   │   ├── a1.py                  # A1: general-purpose biomedical agent (~3000 lines)
+│   │   ├── a1.py                  # A1: general-purpose biomedical agent — owns the LangGraph ReAct state machine
 │   │   ├── ad1.py                 # AD1: Alzheimer's specialist agent (extends A1)
-│   │   ├── react.py               # ReAct engine (LangGraph state machine)
 │   │   ├── env_collection.py      # Environment and data retrieval utilities
 │   │   ├── function_generator.py  # Dynamic function generation
 │   │   └── qa_llm.py              # Question-answering LLM wrappers
@@ -150,13 +151,26 @@ Extends A1 with AD-specific capabilities (developed by Kuan-lin Huang, PhD):
 - Downloads AD-specific data subsets to `data/biomniad/`
 - Provides `launch_ui()` for the Chainlit plan-then-approve interface
 
-### `biomni/agent/react.py` — ReAct Engine
+### ReAct Engine — `biomni/agent/a1.py`
 
-Core reasoning loop built on LangGraph:
+The active ReAct reasoning loop lives **inside the `A1` class** in `a1.py`, built on LangGraph:
+
 - State machine: `Agent node → Tool node → Agent node → ...`
 - Handles tool call dispatch and result injection
 - Applies timeout management to individual tool executions
 - Supports custom callback handlers for logging
+
+> ⚠️ A `biomni/agent/react.py` file exists in the tree as an incomplete alternative implementation. It is **not imported anywhere** and is excluded from the linter; do not depend on it.
+
+### `biomni/artifact.py` — Run artifact helpers
+
+Shared pure functions used by both `A1._save_run_artifacts` and the Chainlit UI:
+
+- `build_run_id(topic, llm_summarizer=None)` — produces `run_YYYYMMDD_HHMMSS_<slug>` directory names; optional LLM-driven slug with a deterministic fallback
+- `get_all_files(directory)` — recursive non-hidden file listing with a single canonical exclude set (`runs/`, `__pycache__/`, `node_modules/`, etc.)
+- `summarize_topic_for_run_id(topic)` — deterministic stopword-stripped slug
+
+Centralising these here prevents the agent and the UI from drifting on the exclude list, which previously caused mismatched initial/final file sets when the agent was driven from Chainlit.
 
 ### `biomni/model/retriever.py` — Tool Retriever
 
@@ -239,10 +253,12 @@ docker compose up -d
 
 | Pattern | Usage |
 |---------|-------|
-| **ReAct loop** | LangGraph state machine in `react.py` |
-| **Factory** | LLM provider selection in `llm.py` |
+| **ReAct loop** | LangGraph state machine inside `A1` in `a1.py` |
+| **Factory** | LLM provider selection in `llm.py` via `get_llm()` and `resolve_default_llm()` |
 | **Registry** | Tool discovery via `tool_registry.py` |
 | **Declarative schemas** | Tool metadata in `tool_description/` separates spec from implementation |
+| **Shared helpers** | Run-id / file-snapshot pure functions in `biomni/artifact.py` (single source of truth for A1 and the Chainlit UI) |
+| **Lazy public API** | `biomni.__init__` exposes `A1`, `AD1`, `BiomniConfig` via PEP 562 `__getattr__` so `import biomni` stays cheap |
 | **Abstract base** | `base_task.py` enforces consistent benchmark interface |
 | **Dataclass config** | `BiomniConfig` in `config.py` for centralized defaults |
 

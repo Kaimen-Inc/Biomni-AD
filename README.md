@@ -74,13 +74,27 @@ conda activate biomni_e1
 
 **Step 3 — Install the Biomni-AD package**
 
-Install from this repository (recommended):
+Two install paths — pick the one that fits your needs.
+
+**Full conda env** (recommended if you want all 22 bioinformatics tool modules and R support — what `Step 2` set up):
 
 ```bash
 pip install git+https://github.com/kuanlinhuang/Biomni.git@feat/adworkbench
 ```
 
-Or install the latest stable release from PyPI:
+**Lightweight pip-only** (agent core + LangChain stack, no conda required — good for notebooks, CI, or container images):
+
+```bash
+git clone https://github.com/kuanlinhuang/Biomni.git
+cd Biomni
+pip install -e .                  # core: LangChain + OpenAI provider
+pip install -e ".[anthropic]"     # add Claude (Anthropic) provider
+pip install -e ".[all]"           # all provider + UI extras
+```
+
+Available extras: `anthropic`, `bedrock`, `ollama`, `gradio`, `chainlit`, `all`.
+
+Or install the latest stable upstream release from PyPI (Biomni without the AD specialisation):
 
 ```bash
 pip install biomni --upgrade
@@ -205,7 +219,7 @@ Downloaded files are cached in `<data_lake>/biomniAD/<dataset_id>/` and skipped 
 **Option A — Automatic on AD1 init (default)**
 
 ```python
-from biomni.agent.ad1 import AD1
+from biomni import AD1   # short top-level import; equivalent to `from biomni.agent.ad1 import AD1`
 
 agent = AD1(download_ad_data=True)   # downloads files ≤ 100 MB on first run
 ```
