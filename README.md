@@ -39,8 +39,8 @@ The underlying **Biomni** platform is a general-purpose biomedical AI agent that
 
 | Branch | Purpose |
 |--------|---------|
-| [`feat/adworkbench`](https://github.com/kuanlinhuang/Biomni/tree/feat/adworkbench) | **Recommended install branch** — Extends `biomni-ad` with AD Workbench dataset integration and containerization. Install with `pip install git+https://github.com/kuanlinhuang/Biomni.git@feat/adworkbench`. |
-| [`biomni-ad`](https://github.com/kuanlinhuang/Biomni/tree/biomni-ad) | **Primary stable branch** — Biomni-AD specialization without AD Workbench-specific deployment features. |
+| [`feat/adworkbench`](https://github.com/Kaimen-Inc/Biomni-AD/tree/feat/adworkbench) | **Recommended install branch** — Extends `biomni-ad` with AD Workbench dataset integration and containerization. Install with `pip install git+https://github.com/Kaimen-Inc/Biomni-AD.git@feat/adworkbench`. |
+| [`biomni-ad`](https://github.com/Kaimen-Inc/Biomni-AD/tree/biomni-ad) | **Primary stable branch** — Biomni-AD specialization without AD Workbench-specific deployment features. |
 | `main` | Upstream [Stanford SNAP Biomni](https://github.com/snap-stanford/Biomni). Periodically merged into `biomni-ad` to track upstream. Read-only from this fork. |
 
 ## Documentation Index
@@ -81,14 +81,14 @@ Two install paths — pick the one that fits your needs.
 **Full conda env** (recommended if you want all 22 bioinformatics tool modules and R support — what `Step 2` set up):
 
 ```bash
-pip install git+https://github.com/kuanlinhuang/Biomni.git@feat/adworkbench
+pip install git+https://github.com/Kaimen-Inc/Biomni-AD.git@feat/adworkbench
 ```
 
 **Lightweight pip-only** (agent core + LangChain stack, no conda required — good for notebooks, CI, or container images):
 
 ```bash
-git clone https://github.com/kuanlinhuang/Biomni.git
-cd Biomni
+git clone https://github.com/Kaimen-Inc/Biomni-AD.git
+cd Biomni-AD
 pip install -e .                  # core: LangChain + OpenAI provider
 pip install -e ".[anthropic]"     # add Claude (Anthropic) provider
 pip install -e ".[all]"           # all provider + UI extras

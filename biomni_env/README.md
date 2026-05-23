@@ -15,20 +15,20 @@ This directory contains scripts and configuration files to set up a comprehensiv
 
 `environment.yml` is the **single source of truth for the minimal env**. The Dockerfile defaults to it; the lightweight `pip install -e .` path in the project root provides the same core Python deps without conda. Reach for the other YAMLs only when you need the extras they layer on.
 
-**Biomni-AD** (this repository) is developed by **Kuan-lin Huang, PhD**, building on the foundational [Biomni](https://github.com/snap-stanford/Biomni) platform by Stanford's SNAP Lab.
+**Biomni-AD** (this repository) is developed and maintained by **Kuan-lin Huang, PhD** at **[Kaimen Inc.](https://github.com/Kaimen-Inc/Biomni-AD)**, building on the foundational [Biomni](https://github.com/snap-stanford/Biomni) platform by Stanford's SNAP Lab.
 
 ## Branch Guide
 
 | Branch | Purpose |
 |--------|---------|
-| [`feat/adworkbench`](https://github.com/kuanlinhuang/Biomni/tree/feat/adworkbench) | **Recommended install branch** — AD Workbench integration with tighter dataset integration and containerization that works broadly. |
-| [`biomni-ad`](https://github.com/kuanlinhuang/Biomni/tree/biomni-ad) | **Primary stable branch** — Biomni-AD specialization without AD Workbench-specific deployment features. |
+| [`feat/adworkbench`](https://github.com/Kaimen-Inc/Biomni-AD/tree/feat/adworkbench) | **Recommended install branch** — AD Workbench integration with tighter dataset integration and containerization that works broadly. |
+| [`biomni-ad`](https://github.com/Kaimen-Inc/Biomni-AD/tree/biomni-ad) | **Primary stable branch** — Biomni-AD specialization without AD Workbench-specific deployment features. |
 | `main` | Upstream [Stanford SNAP Biomni](https://github.com/snap-stanford/Biomni). Periodically merged into `biomni-ad`. Read-only from this fork. |
 
 Install from the `feat/adworkbench` branch (recommended):
 
 ```bash
-pip install git+https://github.com/kuanlinhuang/Biomni.git@feat/adworkbench
+pip install git+https://github.com/Kaimen-Inc/Biomni-AD.git@feat/adworkbench
 ```
 
 ## AD Data Lake
@@ -43,8 +43,8 @@ See the **[AD Data Lake section in README.md](../README.md#ad-data-lake)** for f
 
    **Biomni-AD (this fork — recommended for AD research):**
    ```bash
-   git clone https://github.com/kuanlinhuang/Biomni.git
-   cd Biomni/biomni_env
+   git clone https://github.com/Kaimen-Inc/Biomni-AD.git
+   cd Biomni-AD/biomni_env
    ```
 
    **Upstream Biomni (Stanford SNAP Lab):**

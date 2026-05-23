@@ -2,9 +2,11 @@
 
 ## Overview
 
-**Biomni-AD** is the Alzheimer's disease-specialized fork of [Biomni](https://github.com/snap-stanford/Biomni) (Stanford SNAP Lab), developed by Kuan-lin Huang, PhD. It introduces the AD1 agent, AD-specific data catalogs, and an interactive Chainlit UI with a plan-then-approve workflow.
+**Biomni-AD** is the Alzheimer's disease-specialized fork of [Biomni](https://github.com/snap-stanford/Biomni) (Stanford SNAP Lab), maintained by Kuan-lin Huang, PhD at **[Kaimen Inc.](https://github.com/Kaimen-Inc/Biomni-AD)**. It introduces the AD1 agent, AD-specific data catalogs, and an interactive Chainlit UI with a plan-then-approve workflow.
 
 The underlying **Biomni** platform is a general-purpose biomedical AI agent that enables autonomous execution of complex research tasks by integrating LLM reasoning with retrieval-augmented planning and code-based execution.
+
+Biomni-AD is committed to remaining fully open source and is being prepared for deployment on the **Alzheimer's Disease Data Initiative (ADDI)** workbench to serve AD researchers at scale. See [Cloud Deployment Architecture](#cloud-deployment-architecture) below for the target deployment topology.
 
 **Related docs:** [README.md](README.md) | [CONTRIBUTION.md](CONTRIBUTION.md) | [DETAILS.md](DETAILS.md) | [docs/configuration.md](docs/configuration.md)
 
@@ -20,6 +22,7 @@ The underlying **Biomni** platform is a general-purpose biomedical AI agent that
 6. [Alzheimer's Disease (AD) Specialization](#alzheimers-disease-ad-specialization)
 7. [Software & Environment](#software--environment)
 8. [Evaluation & Benchmarks](#evaluation--benchmarks)
+9. [Cloud Deployment Architecture](#cloud-deployment-architecture)
 
 ---
 
@@ -84,7 +87,9 @@ graph TB
 | Component | Location | Description |
 |-----------|----------|-------------|
 | **A1 Agent** | `biomni/agent/a1.py` | Main agent class with full tooling, MCP support, and the LangGraph ReAct state machine |
-| **AD1 Agent** | `biomni/agent/ad1.py` | AD-specialized variant with context injection and Gradio UI |
+| **AD1 Agent** | `biomni/agent/ad1.py` | AD-specialized variant with AD-context injection and dataset catalog awareness |
+| **AD Data Downloader** | `biomni/agent/ad_data_downloader.py` | Catalog-driven download of NIAGADS / SinaiADRD / BiomniAD Discovery files (≤100 MB) |
+| **Chainlit App** | `chainlit_app.py`, `chainlit_ui/` | Plan-then-approve web UI used as the default interactive front-end |
 | **Tool Registry** | `biomni/tool/tool_registry.py` | Dynamic tool registration and discovery |
 | **Tool Retriever** | `biomni/model/retriever.py` | LLM-powered resource selection |
 | **Config** | `biomni/config.py` | Centralized configuration: `BiomniConfig` dataclass and `resolve_default_llm()` env-precedence helper |
@@ -312,15 +317,15 @@ The `AD1` agent extends `A1` with AD-specific capabilities:
 ```python
 from biomni.agent.ad1 import AD1
 
-agent = AD1(llm='claude-sonnet-4-20250514')
+agent = AD1(llm='claude-sonnet-4-5')
 agent.go("Analyze APOE variants in Alzheimer's disease")
 ```
 
 **Key Features:**
-- Automatic AD context injection when queries match keywords
-- Pre-loaded AD dataset catalogs
-- Specialized UI with run history tracking
-- Notebook and artifact generation
+- Automatic AD context injection when queries match AD/ADRD keywords
+- Pre-loaded NIAGADS / SinaiADRD / BiomniAD Discovery / CRISPRbrain catalogs
+- Chainlit plan-then-approve UI with run history tracking
+- Per-run artifact snapshots and PDF / notebook export
 
 ### AD Data Catalogs
 
@@ -499,9 +504,157 @@ class BaseTask:
 
 ---
 
+## Cloud Deployment Architecture
+
+This section describes how Biomni-AD is intended to be deployed as a managed, multi-user cloud application. It is written from the perspective of a senior platform engineer / solutions architect: the goal is a deployment that is **reproducible, isolated per user, observable, and portable** across cloud providers, with **Azure** (and the **ADDI workbench**, which sits on Azure infrastructure) as the primary reference target. The same topology maps cleanly to AWS (ECS/Fargate + EFS + Bedrock) and GCP (Cloud Run / GKE + Filestore + Vertex AI).
+
+### 1. Deployment Goals & Constraints
+
+| Goal | Rationale |
+|------|-----------|
+| **Per-user isolation** | The agent executes LLM-generated Python with full process privileges (see `Important Notes` in README). Each user session must run in a sandbox whose blast radius is bounded to that user's files and credentials. |
+| **Stateless web tier, stateful run storage** | The Chainlit front-end and the LangGraph state machine should be horizontally scalable. Per-run artifacts (`./runs/<run_id>/…`), notebooks, and PDF exports must persist across container restarts. |
+| **Bring-your-own-key first, managed-key fallback** | Researchers using ADDI / institutional accounts often bring their own Anthropic/OpenAI keys; a managed deployment also needs a fallback shared key behind quota/budget controls. |
+| **Controlled-access data compliance** | NIAGADS and similar catalogs must remain DAC-gated. The deployment never copies controlled-access bytes into the application tier — it brokers access via signed URLs / mounted workbench volumes only. |
+| **No PHI ingress by default** | Deployment defaults disable user file upload for clinical PHI; if enabled, files transit only the encrypted-at-rest user volume and are excluded from telemetry. |
+| **Reproducible image, mutable config** | Container image is content-addressed and immutable; runtime behavior is driven by environment variables and mounted catalogs so the same image services dev/stage/prod. |
+
+### 2. Reference Topology (Azure)
+
+```mermaid
+graph LR
+    User[Researcher Browser] -->|HTTPS| FrontDoor[Azure Front Door<br/>WAF + TLS termination]
+    FrontDoor --> AppGw[App Gateway<br/>sticky sessions]
+    AppGw --> ACA[Azure Container Apps<br/>Chainlit + AD1<br/>per-user replica]
+
+    subgraph Identity
+        EntraID[Microsoft Entra ID<br/>OIDC]
+    end
+    User -.->|OIDC login| EntraID
+    ACA -.->|workload identity| EntraID
+
+    subgraph State
+        Files[Azure Files Premium<br/>per-user volume<br/>/app/user-data]
+        Blob[Blob Storage<br/>run artifacts + PDFs<br/>lifecycle to cool tier]
+        KV[Key Vault<br/>LLM API keys, DB secrets]
+        PG[(Azure Database for<br/>PostgreSQL Flexible<br/>chat history, runs index)]
+    end
+    ACA --> Files
+    ACA --> Blob
+    ACA --> KV
+    ACA --> PG
+
+    subgraph LLM
+        AOAI[Azure OpenAI<br/>GPT-4o / o-series]
+        AAnth[Azure AI Foundry<br/>Claude deployment]
+    end
+    ACA --> AOAI
+    ACA --> AAnth
+
+    subgraph Data
+        DataLake[Azure Files<br/>shared /app/data<br/>Biomni data lake ~11GB<br/>read-only]
+        ADDI[ADDI Workbench Mount<br/>controlled-access datasets<br/>read-only]
+    end
+    ACA --> DataLake
+    ACA -.->|signed URI / mount| ADDI
+
+    subgraph Observability
+        AppInsights[Application Insights]
+        LogAnalytics[Log Analytics]
+    end
+    ACA --> AppInsights
+    ACA --> LogAnalytics
+```
+
+### 3. Component Mapping
+
+| Concern | Azure Service | Maps to in Biomni-AD |
+|---------|---------------|----------------------|
+| **Edge / TLS / WAF** | Azure Front Door + WAF policy | Public ingress, OWASP rule set, DDoS Standard |
+| **Identity** | Microsoft Entra ID (OIDC) | Chainlit `oauth_callback` hook; user `sub` claim used as session/run-id prefix |
+| **App runtime** | **Azure Container Apps** (preferred) or AKS | Runs the existing `Dockerfile` (micromamba + `chainlit run`) unmodified; per-revision rollouts |
+| **Image registry** | Azure Container Registry | Built from this repo's `Dockerfile`; tag = git SHA |
+| **Secrets** | Azure Key Vault + Container Apps secret refs | `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `AZURE_*` keys, DB password — never baked into the image |
+| **Shared data lake** | Azure Files (Premium, SMB), mounted **read-only** at `/app/data` | The 77-file ~11GB Biomni data lake; downloaded once into the file share, then mounted by every replica |
+| **Per-user scratch** | Azure Files (per-user share) at `/app/user-data` | User uploads + downloaded AD catalog files (`biomniAD/<dataset_id>/`) |
+| **Run artifacts** | Azure Blob Storage + lifecycle rules | `./runs/<run_id>/` is rsynced to blob on session end; cool-tier after 30 days, archive after 180 |
+| **Chat history** | PostgreSQL Flexible Server | Chainlit's data layer (`chainlit-datalayer`) — sessions, messages, threads, feedback |
+| **LLM** | Azure OpenAI **and/or** Azure AI Foundry Claude | Set `LLM_SOURCE=AzureOpenAI` / `AzureAnthropic` + endpoint/deployment env vars; no code change |
+| **Observability** | Application Insights + Log Analytics | OpenTelemetry exporter wraps LangGraph node spans; Chainlit logs ship via stdout |
+| **CI/CD** | GitHub Actions → ACR build → Container Apps revision | Tag-driven; blue/green via Container Apps traffic splits |
+
+### 4. Per-User Isolation Model
+
+Biomni-AD's agent executes LLM-generated Python in-process. In a multi-tenant deployment this is the highest-risk surface, so isolation is layered:
+
+1. **One replica per active user, not one per request.** Container Apps' session affinity routes a researcher's Chainlit websocket to a dedicated replica (`scaleRule` keyed on session header). The replica's filesystem and env are user-scoped.
+2. **Read-only base image and data lake.** `/app` and `/app/data` are mounted RO. Only `/app/user-data` and `/app/runs` are writable, and they are per-user volumes.
+3. **Network egress allowlist.** A Container Apps environment NSG restricts outbound traffic to: LLM endpoints (Azure OpenAI / Anthropic), public biomedical APIs the database tools call (UniProt, Ensembl, NCBI, etc. — explicit allowlist), the package registries pinned at build time, and ADDI internal endpoints. All other egress denied.
+4. **No host privileges.** Container runs as the non-root `mambauser` (UID 57439) — already supported via `BIOMNI_CONTAINER_USER` in `docker-compose.yml`. Production deployment sets it unconditionally; development can keep the `0:0` fallback.
+5. **Process timeouts.** `BIOMNI_TIMEOUT_SECONDS` (default 600) caps every tool call. Replicas auto-recycle on OOM / runaway loops via Container Apps health probes.
+6. **Secrets never reach the agent.** API keys are injected as env vars at process start; the agent's tool sandbox `exec()` scope is scrubbed of `os.environ` keys matching `*_API_KEY` / `*_TOKEN` before user code runs.
+
+For workloads requiring **stronger isolation** (e.g., when users may upload sensitive data), the same image can be deployed on **Azure Container Instances with confidential containers** (AMD SEV-SNP) or on **AKS with gVisor / Kata runtime**. The Dockerfile and entrypoint require no changes.
+
+### 5. State & Persistence
+
+| State | Where it lives | Lifetime | Backup |
+|-------|----------------|----------|--------|
+| Container image | ACR | Immutable per tag | Geo-replicated ACR |
+| Biomni data lake (`/app/data`) | Azure Files (shared, RO) | Long-lived | Snapshots; rebuildable from script |
+| AD catalogs (`biomni/know_how/resource/*.json`) | Baked into image | Per release | Source of truth in git |
+| Per-user downloaded datasets (`/app/user-data/biomniAD/...`) | Azure Files (per-user) | Until user deletes | Daily snapshot |
+| Run artifacts (`./runs/<run_id>/`) | Blob Storage | 30d hot → 180d cool → archive | Blob versioning |
+| Chat history | PostgreSQL | Indefinite | PITR backup |
+| Secrets | Key Vault | Rotated quarterly | Soft-delete + purge protection |
+| Telemetry | Log Analytics workspace | 90d hot, 2y archive | Diagnostic settings to storage |
+
+### 6. ADDI Workbench Deployment Notes
+
+The Alzheimer's Disease Data Initiative workbench provides a hosted Azure-based analysis environment with pre-mounted, DAC-cleared datasets. Biomni-AD is being adapted to run there as a workbench app:
+
+- **Image source.** Pull from public ACR (or GitHub Container Registry mirror) — no rebuild inside ADDI.
+- **Data lake.** Use the ADDI-provided read-only mount for the shared Biomni data lake instead of provisioning Azure Files separately.
+- **Controlled-access AD datasets.** Reference catalog URIs only; the agent reads bytes from the ADDI mount path (e.g., `/workbench/niagads/<dataset_id>/…`) when present, otherwise falls back to the public download path. The `BIOMNI_DATA_PATH` env var pins this.
+- **Identity.** ADDI's existing OIDC flow gates Chainlit; no separate Entra ID tenant.
+- **LLM.** Workbench-provided Azure OpenAI / Foundry Claude deployment by default; user-provided keys via the Chainlit settings panel for those who prefer their own quota.
+- **Egress.** Constrained to ADDI's allowed endpoints (LLM, NIAGADS, AD Workbench dataset APIs). The agent's database query tools that hit external public APIs (UniProt, Ensembl, etc.) are routed via the ADDI egress proxy.
+
+### 7. Scaling & Cost Model
+
+- **Replicas.** Container Apps scales 0 → N on incoming websocket connections; idle replicas scale to zero after the Chainlit `LANGCHAIN_SESSION_TIMEOUT`. Min replicas = 1 in prod to avoid cold-start on the first request.
+- **Cost drivers** (in descending order): LLM tokens (≫ everything else), Azure Files Premium for the data lake (~$0.16/GiB/mo), Postgres flex server, then compute. Compute is typically <10% of the bill for a research-grade deployment.
+- **Per-tenant cost attribution.** OIDC `sub` is propagated to Application Insights custom dimensions and to the Anthropic/OpenAI request `metadata` field, allowing cost roll-up by user / institution.
+- **Quota enforcement.** A lightweight middleware in `chainlit_app.py` checks a per-user monthly token budget (stored in Postgres) before each LangGraph turn; the AD1 plan-then-approve gate is the natural place to surface estimated cost.
+
+### 8. CI/CD & Release
+
+```
+git push (main / biomni-ad / feat/adworkbench)
+        │
+        ▼
+GitHub Actions
+  ├─ ruff / pytest (lightweight subset)
+  ├─ docker build  →  ACR push  (tag = git SHA + branch)
+  └─ deploy
+       ├─ dev    : auto on every main commit
+       ├─ stage  : auto on feat/adworkbench tag
+       └─ prod   : manual approval, blue/green via traffic split 0% → 10% → 100%
+```
+
+Rollback is a one-click traffic re-split on Container Apps; image rollback is implicit because revisions are immutable.
+
+### 9. Local & Self-Hosted Path (unchanged)
+
+The same `Dockerfile` and `docker-compose.yml` shipped in this repo run unmodified on a developer laptop or an on-prem VM. The cloud topology above is a superset: every cloud service maps to a local equivalent (filesystem instead of Azure Files, sqlite instead of Postgres, local `./runs` instead of Blob, `.env` instead of Key Vault). This means the **same image** services local dev, single-VM deployments, ADDI, and a full multi-tenant Azure deployment — no per-environment forks.
+
+See [docs/docker_vm_deployment.md](docs/docker_vm_deployment.md) for the single-VM path.
+
+---
+
 ## License & Citation
 
-Biomni is **Apache 2.0 licensed**, but individual tools and datasets may carry more restrictive licenses.
+Biomni-AD inherits the upstream Biomni **Apache 2.0** license; individual tools and datasets may carry more restrictive licenses (review each before commercial use). Biomni-AD is maintained at **[Kaimen-Inc/Biomni-AD](https://github.com/Kaimen-Inc/Biomni-AD)**.
 
 ```bibtex
 @article{huang2025biomni,
@@ -512,6 +665,8 @@ Biomni is **Apache 2.0 licensed**, but individual tools and datasets may carry m
 }
 ```
 
+If you use Biomni-AD specifically (AD1 agent, AD data lake, or Chainlit workflow), please also credit: *Biomni-AD, Kuan-lin Huang, Kaimen Inc. — https://github.com/Kaimen-Inc/Biomni-AD*
+
 ---
 
-*Last updated: March 2026*
+*Last updated: May 2026*
