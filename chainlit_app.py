@@ -97,9 +97,11 @@ def _extract_final_answer(state: dict) -> str:
 # Constants
 # ---------------------------------------------------------------------------
 
-# Planning prompts and the plan-then-approve interaction live in chainlit_ui/planning.py.
-# Re-export here for backwards compatibility with any callers that imported them
-# from chainlit_app.
+# Sidebar / planning helpers live in chainlit_ui/. `interactive_planning` is
+# aliased to the original private name so the existing call site at the bottom
+# of this file keeps working unchanged. The module-scope prompt constants are
+# intentionally not re-exported — anything that needs them should
+# `from chainlit_ui.planning import PLANNING_SYSTEM_PROMPT, AD1_PLANNING_SYSTEM_PROMPT`.
 from chainlit_ui.datasets import build_suggested_prompts_markdown
 from chainlit_ui.planning import (
     interactive_planning as _interactive_planning,

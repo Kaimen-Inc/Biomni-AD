@@ -1,9 +1,13 @@
 """Plan-then-approve workflow for the Chainlit UI.
 
 The agent first proposes a numbered research plan; the user approves,
-revises, or cancels before any code executes. Lives in its own module
-so the prompts and the interaction loop can be unit-tested independently
-of the rest of `chainlit_app.py`.
+revises, or cancels before any code executes.
+
+`build_planning_system_prompt` is a pure function and is unit-tested
+independently. `interactive_planning` itself uses Chainlit's async UI
+primitives (`async with cl.Step(...)`, `cl.AskActionMessage`) and is
+exercised only through a running Chainlit session — its branching is
+not currently covered by automated tests.
 """
 
 from __future__ import annotations
@@ -92,7 +96,13 @@ async def interactive_planning(agent: A1, prompt: str, agent_type: str = "a1") -
 
         async with cl.Step(name="📋 Generating Research Plan", type="llm", show_input=False) as step:
             try:
-                response = await asyncio.to_thread(agent.llm.invoke, planning_messages)
+                # NB: asyncio.to_thread would also work but copies the caller's
+                # contextvars into the worker — the rest of chainlit_app.py
+                # uses bare run_in_executor and we match that semantics so
+                # LangChain callback/tracing contextvars don't silently change
+                # which trace the LLM call attaches to.
+                loop = asyncio.get_event_loop()
+                response = await loop.run_in_executor(None, agent.llm.invoke, planning_messages)
                 plan_text = response.content if hasattr(response, "content") else str(response)
                 step.output = plan_text
             except Exception as exc:

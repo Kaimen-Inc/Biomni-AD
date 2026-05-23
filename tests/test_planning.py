@@ -17,14 +17,26 @@ import pytest
 
 
 @pytest.fixture(autouse=True)
-def _stub_chainlit() -> None:
-    """Inject a minimal `chainlit` shim so planning.py imports succeed."""
+def _stub_chainlit() -> object:
+    """Inject a minimal `chainlit` shim so planning.py imports succeed.
+
+    Yields and removes the stub on teardown so the entry doesn't leak
+    across the rest of the pytest session — another test that wants the
+    real chainlit (or no chainlit at all) shouldn't pick up our lambdas.
+    """
     if "chainlit" in sys.modules:
+        # Caller already provides chainlit (real or stubbed elsewhere); leave alone.
+        yield None
         return
+
     cl = types.ModuleType("chainlit")
     for name in ("Step", "AskActionMessage", "AskUserMessage", "Action"):
         setattr(cl, name, lambda *a, **k: None)
     sys.modules["chainlit"] = cl
+    try:
+        yield cl
+    finally:
+        sys.modules.pop("chainlit", None)
 
 
 def _import_planning():
