@@ -67,6 +67,8 @@ except ModuleNotFoundError:
 import chainlit as cl
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 
+from biomni.config import resolve_default_llm
+
 # ---------------------------------------------------------------------------
 # Conversation history helpers
 # ---------------------------------------------------------------------------
@@ -119,20 +121,7 @@ AD1_PLANNING_SYSTEM_PROMPT = (
     "Be specific and tailor the plan to user's question. Do not execute any code yet."
 )
 
-# Auto-detect Azure OpenAI setup: require deployment + endpoint + Azure OpenAI key.
-# This avoids misrouting users who configure Azure Anthropic with the same
-# ENDPOINT_URL/DEPLOYMENT_NAME fields.
-_azure_deployment = os.getenv("DEPLOYMENT_NAME")
-_azure_endpoint = os.getenv("ENDPOINT_URL")
-_azure_openai_key = os.getenv("AZURE_OPENAI_API_KEY")
-_azure_default = f"azure-{_azure_deployment}" if (_azure_deployment and _azure_endpoint and _azure_openai_key) else None
-_azure_anthropic_key = os.getenv("AZURE_ANTHROPIC_API_KEY")
-_azure_anthropic_default = (
-    _azure_deployment
-    if (_azure_deployment and _azure_endpoint and "anthropic" in _azure_endpoint and _azure_anthropic_key)
-    else None
-)
-DEFAULT_LLM = os.getenv("BIOMNI_LLM") or _azure_default or _azure_anthropic_default or "claude-sonnet-4-5"
+DEFAULT_LLM = resolve_default_llm()
 DEFAULT_PATH = os.getenv("BIOMNI_PATH", "./data")
 # Set BIOMNI_AGENT=a1 to force the A1 agent on startup (skips the profile selector)
 FORCE_AGENT = os.getenv("BIOMNI_AGENT", "").lower()  # "a1" | "ad1" | ""
