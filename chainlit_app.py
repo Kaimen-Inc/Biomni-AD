@@ -70,7 +70,7 @@ except ModuleNotFoundError:
 import chainlit as cl
 from biomni.artifact import build_run_id, get_all_files
 from biomni.config import resolve_default_llm
-from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
+from langchain_core.messages import AIMessage, HumanMessage
 
 # ---------------------------------------------------------------------------
 # Conversation history helpers
@@ -97,33 +97,14 @@ def _extract_final_answer(state: dict) -> str:
 # Constants
 # ---------------------------------------------------------------------------
 
-PLANNING_SYSTEM_PROMPT = (
-    "You are a biomedical research assistant planning a task. "
-    "Given the user's research question, write a concise numbered plan "
-    "of 3 to 7 steps describing exactly how you will solve it. "
-    "IMPORTANT: Always prefer this tool order in your plan: "
-    "(1) web/literature search tools first (advanced_web_search, search_pubmed, search_biorxiv), "
-    "(2) local data and database query tools second, "
-    "(3) custom code generation only as a last resort. "
-    "Mention specific tools, databases, or analyses you will use. "
-    "Be specific but brief. Do not execute any code yet."
-)
-
-AD1_PLANNING_SYSTEM_PROMPT = (
-    "You are an expert Alzheimer's disease research assistant planning a task. "
-    "Given the user's research question, write a concise numbered plan "
-    "of several steps describing exactly how you will solve it. "
-    "IMPORTANT — LOCAL-FIRST RULE: "
-    "(1) ALWAYS start by scanning and listing files available in the local user data path "
-    "(BIOMNI_USER_DATA_PATH / /app/user-data) and the AD data lake "
-    "(data/biomni_data/data_lake/biomniAD/) BEFORE any other action. "
-    "Use only locally identified files for as much of the analysis as possible. "
-    "Do NOT download, fetch, or call external APIs when the needed data is already present locally. "
-    "(2) Built-in domain tools second (query databases, tool functions); "
-    "(3) Custom code generation to execute these analyses using your tools. "
-    "Do NOT simulate or fabricate data. "
-    "Mention specific datasets, tools, or analyses you will use. "
-    "Be specific and tailor the plan to user's question. Do not execute any code yet."
+# Sidebar / planning helpers live in chainlit_ui/. `interactive_planning` is
+# aliased to the original private name so the existing call site at the bottom
+# of this file keeps working unchanged. The module-scope prompt constants are
+# intentionally not re-exported — anything that needs them should
+# `from chainlit_ui.planning import PLANNING_SYSTEM_PROMPT, AD1_PLANNING_SYSTEM_PROMPT`.
+from chainlit_ui.datasets import build_suggested_prompts_markdown
+from chainlit_ui.planning import (
+    interactive_planning as _interactive_planning,
 )
 
 DEFAULT_LLM = resolve_default_llm()
@@ -140,127 +121,10 @@ _SUGGESTED_PROMPTS_BLOCK_START = "<!-- BIOMNI_SUGGESTED_PROMPTS_START -->"
 _SUGGESTED_PROMPTS_BLOCK_END = "<!-- BIOMNI_SUGGESTED_PROMPTS_END -->"
 
 
-# Prompt templates keyed by dataset id — shown only when those files are locally present.
-# Each entry is (prompt_text, category).
-_AD_DATASET_PROMPTS: list[tuple[str, str, str]] = [
-    # (dataset_id_prefix, prompt_text, category)
-    (
-        "GCST90027158",
-        "Map the top 10 AD GWAS loci from Bellenguez 2022 (GCST90027158) to nearby genes and report their putative functions",
-        "GWAS",
-    ),
-    (
-        "NG00052",
-        "What are the top GWAS hits for CSF clusterin levels in the NG00052 dataset? Which of these overlap known AD risk loci?",
-        "GWAS",
-    ),
-    (
-        "NG00075",
-        "Extract genome-wide significant hits from the Kunkle 2019 IGAP stage-2 summary stats (NG00075) and annotate them with gene names",
-        "GWAS",
-    ),
-    (
-        "NG00102",
-        "Which proteins are measured across CSF, plasma, and brain tissue in the SomaScan 1.3k proteomic panel (NG00102)? Find any shared with known AD biomarkers",
-        "Proteomics",
-    ),
-    (
-        "NG00105",
-        "Identify the top eQTL genes in prefrontal cortex (MFG) from NG00105 that overlap AD GWAS loci — load the cis-QTL file and filter by FDR < 0.05",
-        "QTL",
-    ),
-    (
-        "NG00118",
-        "Find structural variant eQTLs in ROSMAP DLPFC (NG00118) for BIN1 and CLU — do they co-localize with GWAS signals?",
-        "QTL",
-    ),
-    (
-        "NG00126",
-        "What rare coding variants reach exome-wide significance in the ADSP European WES dataset (NG00126)?",
-        "Rare variants",
-    ),
-    (
-        "NG00133",
-        "Analyze the plasma and urine biomarker data from NG00133 — which analytes differ most between AD cases and controls?",
-        "Biomarkers",
-    ),
-    (
-        "NG00148",
-        "Compare T-cell receptor CDR3 sequences between AD brain and blood samples using the NG00148 data",
-        "Immunogenomics",
-    ),
-    (
-        "NG00165",
-        "Run a gene-level burden analysis summary using the CHARGE/ADSP 5k WGS results (NG00165) — list top gene hits from SKAT and CMC tests",
-        "Rare variants",
-    ),
-    (
-        "NG00166",
-        "Which coding and non-coding rare variants are most significant in African American ancestry from ADSP R3 WGS (NG00166)?",
-        "Rare variants",
-    ),
-    ("NG00172", "Summarize the structural variant associations with AD risk from NG00172", "Rare variants"),
-    (
-        "NG00180",
-        "Identify metabolites whose MWAS weights (NG00180) are most enriched in AD-related pathways — use the EUR metabolite feature table",
-        "Metabolomics",
-    ),
-    (
-        "RADR",
-        "Look up all TREM2 and APOE rare variants in the RADR database (RADR_V3.xlsx) and report their clinical classifications",
-        "Rare variants",
-    ),
-    (
-        "SingleBrain",
-        "Find microglia-specific eQTLs from SingleBrain that co-localize with AD GWAS loci — load the MG top-association files",
-        "QTL",
-    ),
-    (
-        "isoMiGA_QTL",
-        "Map isoMiGA microglia splicing QTLs (sQTLs) to the BIN1 and PTK2B loci — load union_leafcutter_top_assoc.tsv.gz",
-        "QTL",
-    ),
-    (
-        "isoMiGA_counts",
-        "Compare microglia gene expression (TPM) for TREM2, CX3CR1, and P2RY12 across cohorts using isoMiGA count matrices",
-        "Expression",
-    ),
-]
-
-
 def _build_ad_suggested_prompts() -> str:
-    """Generate suggested prompts based on which BiomniAD datasets are locally present."""
-    repo_root = Path(__file__).resolve().parent
-    ad_lake = repo_root / "data" / "biomni_data" / "data_lake" / "biomniAD"
-
-    if not ad_lake.is_dir():
-        return ""
-
-    present_ids = {
-        d.name
-        for d in ad_lake.iterdir()
-        if d.is_dir() and any(f for f in d.iterdir() if f.is_file() and not f.name.lower().startswith("readme"))
-    }
-
-    # Collect prompts for available datasets, grouped by category
-    from collections import defaultdict
-
-    by_category: dict[str, list[str]] = defaultdict(list)
-    for ds_id, prompt_text, category in _AD_DATASET_PROMPTS:
-        if ds_id in present_ids:
-            by_category[category].append(prompt_text)
-
-    if not by_category:
-        return ""
-
-    lines = ["**Suggested prompts based on your local data:**", ""]
-    for category, prompts in by_category.items():
-        lines.append(f"*{category}*")
-        for p in prompts:
-            lines.append(f'- *"{p}"*')
-        lines.append("")
-
-    return "\n".join(lines).rstrip()
+    """Thin shim over chainlit_ui.datasets — resolves the repo-local AD lake path."""
+    ad_lake = Path(__file__).resolve().parent / "data" / "biomni_data" / "data_lake" / "biomniAD"
+    return build_suggested_prompts_markdown(ad_lake)
 
 
 def _list_path_entries(path: str, max_items: int = 40) -> list[str]:
@@ -1287,82 +1151,6 @@ async def on_message(message: cl.Message):
 
 
 # ---------------------------------------------------------------------------
-# Interactive planning helpers
-# ---------------------------------------------------------------------------
-
-
-async def _interactive_planning(agent, prompt: str, agent_type: str = "a1") -> str | None:
-    """
-    Generate a research plan, show it for user approval, and handle revisions.
-    Returns the (possibly modified) prompt on approval, or None if cancelled.
-    """
-    base_prompt = AD1_PLANNING_SYSTEM_PROMPT if agent_type == "ad1" else PLANNING_SYSTEM_PROMPT
-
-    # Dynamically append the user-data directory listing so the planner
-    # knows exactly which datasets are available locally.
-    inventory = getattr(agent, "user_data_inventory", None)
-    if inventory:
-        data_root = getattr(agent, "data_root_dir", None) or ""
-        base_prompt += (
-            f"\n\nThe following datasets are available in the local user data directory "
-            f"({data_root}). Reference specific datasets from this listing when relevant "
-            f"to the user's question:\n{inventory}"
-        )
-
-    modification_context = ""
-
-    while True:
-        # Build planning messages
-        full_system = base_prompt
-        if modification_context:
-            full_system += f"\n\nUser requested these revisions to the previous plan:\n{modification_context}"
-
-        planning_messages = [
-            SystemMessage(content=full_system),
-            HumanMessage(content=prompt),
-        ]
-
-        async with cl.Step(name="📋 Generating Research Plan", type="llm", show_input=False) as step:
-            try:
-                response = await run_in_executor(agent.llm.invoke, planning_messages)
-                plan_text = response.content if hasattr(response, "content") else str(response)
-                step.output = plan_text
-            except Exception as exc:
-                logger.warning("Plan generation failed; proceeding without approval gate", exc_info=True)
-                step.output = f"⚠️ Could not generate plan ({exc}). Proceeding without a plan."
-                # Fall through to execution without approval gate
-                return prompt
-
-        # Ask the user to approve or revise
-        res = await cl.AskActionMessage(
-            content="Here is the research plan. Would you like to proceed?",
-            actions=[
-                cl.Action(name="approve", label="✅ Approve & Execute", payload={"value": "approve"}),
-                cl.Action(name="revise", label="✏️ Revise Plan", payload={"value": "revise"}),
-                cl.Action(name="cancel", label="🚫 Cancel", payload={"value": "cancel"}),
-            ],
-            timeout=300,
-        ).send()
-
-        action_value = (res.get("payload") or {}).get("value") if res else None
-
-        if res is None or action_value == "cancel":
-            return None
-
-        if action_value == "approve":
-            return prompt
-
-        # User wants to revise — collect modification request
-        mod_res = await cl.AskUserMessage(
-            content="Describe the changes you'd like in the plan:",
-            timeout=300,
-        ).send()
-
-        if mod_res:
-            modification_context = mod_res.get("output", "")
-        # Loop back to re-generate the plan
-
-
 # ---------------------------------------------------------------------------
 # Streaming execution
 # ---------------------------------------------------------------------------

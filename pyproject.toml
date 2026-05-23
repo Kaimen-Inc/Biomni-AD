@@ -59,7 +59,11 @@ include-package-data = true
 version = {attr = "biomni.version.__version__"}
 
 [tool.setuptools.packages.find]
-exclude = ["test*", "tutorials*"]
+# chainlit_ui/ is consumed only by the top-level chainlit_app.py entry point
+# (which is not part of the wheel). It imports `chainlit` at module top, so
+# shipping it would make chainlit a hidden hard dep for anyone who happens to
+# `from chainlit_ui...` against the installed wheel — keep it source-only.
+exclude = ["test*", "tutorials*", "chainlit_ui*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

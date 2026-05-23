@@ -1,6 +1,6 @@
 import logging
 import os
-from typing import TYPE_CHECKING, Literal, Optional, cast
+from typing import TYPE_CHECKING, Literal, Optional, cast, get_args
 
 from dotenv import load_dotenv
 from langchain_core.language_models.chat_models import BaseChatModel
@@ -13,7 +13,7 @@ if TYPE_CHECKING:
     from biomni.config import BiomniConfig
 
 SourceType = Literal["OpenAI", "AzureOpenAI", "Anthropic", "Ollama", "Gemini", "Bedrock", "Groq", "Custom"]
-ALLOWED_SOURCES: set[str] = set(SourceType.__args__)
+ALLOWED_SOURCES: set[str] = set(get_args(SourceType))
 
 
 def get_llm(
