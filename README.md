@@ -29,9 +29,11 @@
 
 ## Overview
 
-**Biomni-AD** is an Alzheimer's disease-specialized extension of [Biomni](https://github.com/snap-stanford/Biomni) (Stanford SNAP Lab), developed by **Kuan-lin Huang, PhD**. It adds the **AD1 agent** — a domain-expert variant of the general A1 agent — along with an AD-focused data lake, curated dataset catalogs (NIAGADS, SinaiADRD, CRISPRbrain), and a plan-then-approve Chainlit UI optimized for neurodegeneration research workflows.
+**Biomni-AD** is an Alzheimer's disease-specialized extension of [Biomni](https://github.com/snap-stanford/Biomni) (Stanford SNAP Lab), developed and maintained by **Kuan-lin Huang, PhD** at **[Kaimen Inc.](https://github.com/Kaimen-Inc/Biomni-AD)** It adds the **AD1 agent** — a domain-expert variant of the general A1 agent — along with an AD-focused data lake, curated dataset catalogs (NIAGADS, SinaiADRD, CRISPRbrain), and a plan-then-approve Chainlit UI optimized for neurodegeneration research workflows.
 
 The underlying **Biomni** platform is a general-purpose biomedical AI agent that integrates LLM reasoning with retrieval-augmented planning and code-based execution to help scientists enhance research productivity and generate testable hypotheses.
+
+**Our commitment.** Biomni-AD will remain fully open source, and we are working to deploy it on the **Alzheimer's Disease Data Initiative (ADDI)** platform so it can serve as many AD researchers as possible and accelerate progress against Alzheimer's disease and related dementias.
 
 ## Branch Guide
 
@@ -444,9 +446,15 @@ For general-purpose biomedical AI agent use not focused on Alzheimer's disease, 
 
 AD-specific tutorials and example notebooks live alongside the AD1 agent in this repository.
 
-## Scope and Contributions
+## Maintainership, Scope, and Contributions
 
-Biomni-AD is maintained by **Kuan-lin Huang's lab** as a focused, AD-specific extension of upstream Biomni. It is **not** a general open-science platform and is not soliciting community contributions, co-author tool submissions, or paper-credit programs. For those, please engage with the upstream [Biomni](https://github.com/snap-stanford/Biomni) project.
+Biomni-AD is maintained by **Kuan-lin Huang, PhD** at **[Kaimen Inc.](https://github.com/Kaimen-Inc/Biomni-AD)** (`https://github.com/Kaimen-Inc/Biomni-AD.git`) as a focused, AD-specific extension of upstream Biomni.
+
+**Open source and access commitments:**
+- The Biomni-AD codebase, AD1 agent, data lake catalogs, and Chainlit UI will remain fully open source.
+- We are working to deploy Biomni-AD on the **Alzheimer's Disease Data Initiative (ADDI)** platform so AD researchers worldwide can use it to advance research without needing to self-host.
+
+This repository is **not** a general open-science platform and is not soliciting community contributions, co-author tool submissions, or paper-credit programs. For those, please engage with the upstream [Biomni](https://github.com/snap-stanford/Biomni) project.
 
 Bug reports and targeted pull requests against the AD-specific code paths (AD1 agent, AD data lake catalogs, Chainlit UI) are welcome via GitHub issues.
 
@@ -471,4 +479,4 @@ Biomni-AD builds on upstream Biomni. Please cite the original Biomni paper:
 }
 ```
 
-If you use Biomni-AD specifically (AD1 agent, AD data lake, or Chainlit workflow), please also credit this repository: *Biomni-AD, Kuan-lin Huang Lab, Icahn School of Medicine at Mount Sinai.*
+If you use Biomni-AD specifically (AD1 agent, AD data lake, or Chainlit workflow), please also credit this repository: *Biomni-AD, Kuan-lin Huang, Kaimen Inc. — https://github.com/Kaimen-Inc/Biomni-AD*
