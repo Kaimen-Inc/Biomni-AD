@@ -31,8 +31,8 @@ dependencies = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/kuanlinhuang/Biomni"
-Repository = "https://github.com/kuanlinhuang/Biomni"
+Homepage = "https://github.com/Kaimen-Inc/Biomni-AD"
+Repository = "https://github.com/Kaimen-Inc/Biomni-AD"
 Upstream = "https://github.com/snap-stanford/biomni"
 
 [project.optional-dependencies]
