@@ -8,10 +8,13 @@ initial/final file sets when the agent was driven from the UI.
 """
 from __future__ import annotations
 
+import logging
 import os
 import re
 from collections.abc import Callable, Iterable
 from datetime import datetime
+
+logger = logging.getLogger(__name__)
 
 # Directories that should never appear in a run's file snapshot. Hidden
 # dotted directories are excluded separately via the `startswith(".")` check.
@@ -107,6 +110,7 @@ def build_run_id(
         try:
             topic_slug = llm_summarizer(topic) or ""
         except Exception:
+            logger.debug("LLM run-id summarizer failed; falling back to heuristic", exc_info=True)
             topic_slug = ""
     if not topic_slug:
         topic_slug = summarize_topic_for_run_id(topic)

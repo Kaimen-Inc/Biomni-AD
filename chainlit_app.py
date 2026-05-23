@@ -20,7 +20,6 @@ import re
 import sys
 import uuid
 from concurrent.futures import ThreadPoolExecutor
-from datetime import datetime
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
