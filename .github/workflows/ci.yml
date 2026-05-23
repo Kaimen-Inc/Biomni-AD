@@ -60,3 +60,28 @@ jobs:
       - name: py_compile
         run: |
           python -m compileall -q biomni chainlit_app.py tests
+
+  typecheck:
+    name: Type-check (mypy, advisory)
+    runs-on: ubuntu-latest
+    # Advisory only: report findings without blocking PRs. Once the scoped
+    # set is clean across the wider tree we'll drop continue-on-error.
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install mypy
+        run: pip install "mypy>=1.10,<2"
+      - name: Run mypy on scoped files
+        # Scope intentionally narrow — these are the files we own outright
+        # post-refactor. Follow-imports silent so we don't drown in errors
+        # from the legacy god-files until they're decomposed.
+        run: |
+          mypy \
+            --ignore-missing-imports \
+            --follow-imports=silent \
+            biomni/artifact.py \
+            biomni/config.py \
+            biomni/llm.py
