@@ -70,6 +70,7 @@ except ModuleNotFoundError:
 import chainlit as cl
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 
+from biomni.artifact import build_run_id, get_all_files
 from biomni.config import resolve_default_llm
 
 # ---------------------------------------------------------------------------
@@ -1125,7 +1126,7 @@ async def on_message(message: cl.Message):
 
     # Pre-create run directory so OUTPUT_DIR is available during code execution.
     try:
-        _run_id = _build_run_id(prompt)
+        _run_id = build_run_id(prompt)
         _runs_root = os.path.abspath(os.path.join(os.getcwd(), "runs"))
         os.makedirs(_runs_root, exist_ok=True)
         _current_run_dir = os.path.join(_runs_root, _run_id)
@@ -1137,10 +1138,10 @@ async def on_message(message: cl.Message):
         _current_run_dir = None
 
     # Snapshot files before execution (cwd + data root) to detect new outputs.
-    initial_files = _get_all_files(os.getcwd())
+    initial_files = get_all_files(os.getcwd())
     _data_root = getattr(agent, "data_root_dir", None)
     if _data_root and os.path.isdir(_data_root):
-        initial_files |= _get_all_files(_data_root)
+        initial_files |= get_all_files(_data_root)
 
     final_state = await _stream_execution(agent, prompt, history, thread_id)
 
@@ -1389,7 +1390,7 @@ async def _save_run_artifacts_for_agent(
         current_run_dir = agent._current_run_dir
         run_id = os.path.basename(current_run_dir)
     else:
-        run_id = _build_run_id(topic)
+        run_id = build_run_id(topic)
         runs_root = os.path.abspath(os.path.join(os.getcwd(), "runs"))
         os.makedirs(runs_root, exist_ok=True)
         current_run_dir = os.path.join(runs_root, run_id)
@@ -1419,59 +1420,5 @@ async def _save_run_artifacts_for_agent(
 # Utility
 # ---------------------------------------------------------------------------
 
-def _get_all_files(directory: str) -> set:
-    """Recursively collect all non-hidden file paths in a directory."""
-    result = set()
-    for root, _, files in os.walk(directory):
-        if "/." in root or root.startswith("."):
-            continue
-        for fname in files:
-            if not fname.startswith("."):
-                result.add(os.path.join(root, fname))
-    return result
-
-
-def _build_run_id(topic: str | None = None) -> str:
-    """Build run directory ID as run_YYYYMMDD_HHMMSS_topic1_topic2_topic3."""
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    if not topic:
-        return f"run_{timestamp}"
-
-    topic_slug = _summarize_topic_for_run_id(topic)
-    if not topic_slug:
-        return f"run_{timestamp}"
-
-    return f"run_{timestamp}_{topic_slug}"
-
-
-def _summarize_topic_for_run_id(topic: str) -> str:
-    """Extract a compact 1-3 word filesystem-safe summary from a prompt."""
-    stopwords = {
-        "a", "an", "and", "are", "as", "at", "be", "by", "for", "from", "in",
-        "into", "is", "it", "of", "on", "or", "that", "the", "this", "to", "with",
-        "using", "use", "please", "can", "could", "would", "should", "do", "does",
-        "analyze", "analysis", "show", "find", "run", "task", "generate", "get",
-    }
-
-    raw_tokens = re.findall(r"[A-Za-z0-9]+", topic)
-    if not raw_tokens:
-        return ""
-
-    selected: list[str] = []
-    for token in raw_tokens:
-        lower = token.lower()
-        if lower in stopwords:
-            continue
-        if len(lower) <= 2 and not lower.isdigit():
-            continue
-        selected.append(lower)
-        if len(selected) == 3:
-            break
-
-    if not selected:
-        selected = [t.lower() for t in raw_tokens[:3]]
-
-    summary = "_".join(selected)
-    summary = re.sub(r"[^0-9a-z_]+", "", summary)
-    summary = re.sub(r"_+", "_", summary).strip("_")
-    return summary[:40]
+# Run-id / file-snapshot helpers now live in biomni.artifact so that the agent
+# and the UI use the same exclude list — see the imports at the top of the file.
