@@ -13,7 +13,22 @@ authors = [
     {name = "Biomni Team", email = "kexinh@cs.stanford.edu"}
 ]
 requires-python = ">=3.11"
-dependencies = ["pydantic", "langchain", "python-dotenv"]
+dependencies = [
+    "pydantic>=2.7,<3",
+    "langchain>=0.3,<0.4",
+    "langchain-core>=0.3,<0.4",
+    "langchain-openai>=0.2,<0.4",
+    "langchain-text-splitters>=0.3,<0.4",
+    "langgraph==0.3.18",
+    "python-dotenv>=1.0",
+    "pandas>=2.0",
+    "requests>=2.31",
+    "pyyaml>=6.0",
+    "tqdm>=4.66",
+    "beautifulsoup4>=4.12",
+    "lxml>=5.0",
+    "pyarrow>=15.0",
+]
 
 [project.urls]
 Homepage = "https://github.com/kuanlinhuang/Biomni"
@@ -21,8 +36,21 @@ Repository = "https://github.com/kuanlinhuang/Biomni"
 Upstream = "https://github.com/snap-stanford/biomni"
 
 [project.optional-dependencies]
+# LLM provider extras — install the ones you need.
+anthropic = ["langchain-anthropic>=0.2,<0.4"]
+bedrock = ["langchain-aws>=0.2,<0.4"]
+ollama = ["langchain-ollama>=0.2,<0.4"]
+# UI extras
 gradio = ["gradio>=5.0,<6.0"]
-chainlit = ["chainlit>=1.0"]
+chainlit = ["chainlit>=1.0,<3"]
+# Convenience meta-extra
+all = [
+    "langchain-anthropic>=0.2,<0.4",
+    "langchain-aws>=0.2,<0.4",
+    "langchain-ollama>=0.2,<0.4",
+    "gradio>=5.0,<6.0",
+    "chainlit>=1.0,<3",
+]
 
 [tool.setuptools]
 include-package-data = true
