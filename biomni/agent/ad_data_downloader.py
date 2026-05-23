@@ -4,13 +4,11 @@ import os
 import re
 import time
 from ftplib import FTP
-from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
 
 import requests
 import tqdm
-
 
 _HTTP_HEADERS = {
     "User-Agent": "Mozilla/5.0 (compatible; BiomniAD/1.0; +https://github.com/bioai/biomni)",
@@ -20,6 +18,7 @@ _HTTP_HEADERS = {
 
 class DownloadTooLargeError(Exception):
     pass
+
 
 def _get_resource_dir() -> str:
     return os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "know_how", "resource"))
@@ -65,6 +64,7 @@ def _resolve_zenodo_record_files(uri: str, timeout: int = 20) -> list[dict[str, 
             }
         )
     return resolved
+
 
 def _probe_size(uri: str, timeout: int = 15) -> tuple[int | None, str]:
     parsed = urlparse(uri)
@@ -126,6 +126,7 @@ def _probe_size(uri: str, timeout: int = 15) -> tuple[int | None, str]:
             import boto3
             from botocore import UNSIGNED
             from botocore.config import Config
+
             s3 = boto3.client("s3", config=Config(signature_version=UNSIGNED))
             bucket = parsed.netloc
             key = parsed.path.lstrip("/")
@@ -144,7 +145,18 @@ def _looks_like_landing_page(response: requests.Response, expected_name: str) ->
     expected_lower = expected_name.lower()
 
     likely_data_ext = (
-        ".gz", ".zip", ".tar", ".csv", ".tsv", ".txt", ".xlsx", ".xls", ".parquet", ".json", ".gds", ".pdf"
+        ".gz",
+        ".zip",
+        ".tar",
+        ".csv",
+        ".tsv",
+        ".txt",
+        ".xlsx",
+        ".xls",
+        ".parquet",
+        ".json",
+        ".gds",
+        ".pdf",
     )
     expects_data = expected_lower.endswith(likely_data_ext)
     if expects_data and ("text/html" in content_type or "application/xhtml+xml" in content_type):
@@ -153,8 +165,9 @@ def _looks_like_landing_page(response: requests.Response, expected_name: str) ->
     return False
 
 
-def _download_http(uri: str, dest_path: str, desc: str, max_size_bytes: int, expected_name: str,
-                   retries: int = 3) -> int:
+def _download_http(
+    uri: str, dest_path: str, desc: str, max_size_bytes: int, expected_name: str, retries: int = 3
+) -> int:
     os.makedirs(os.path.dirname(dest_path), exist_ok=True)
     last_exc: Exception = RuntimeError("no attempts made")
     for attempt in range(retries):
@@ -171,7 +184,9 @@ def _download_http(uri: str, dest_path: str, desc: str, max_size_bytes: int, exp
 
             downloaded = 0
             with open(dest_path, "wb") as f:
-                with tqdm.tqdm(total=total_size or None, unit="B", unit_scale=True, desc=desc, ncols=80, leave=False) as pbar:
+                with tqdm.tqdm(
+                    total=total_size or None, unit="B", unit_scale=True, desc=desc, ncols=80, leave=False
+                ) as pbar:
                     for chunk in response.iter_content(chunk_size=65536):
                         if chunk:
                             downloaded += len(chunk)
@@ -192,7 +207,7 @@ def _download_http(uri: str, dest_path: str, desc: str, max_size_bytes: int, exp
             last_exc = e
 
         if attempt < retries - 1:
-            time.sleep(2 ** attempt)
+            time.sleep(2**attempt)
 
     raise last_exc
 
@@ -211,6 +226,7 @@ def _download_ftp(uri: str, dest_path: str, desc: str, max_size_bytes: int) -> i
     downloaded = 0
     with open(dest_path, "wb") as f:
         with tqdm.tqdm(total=total_size or None, unit="B", unit_scale=True, desc=desc, ncols=80, leave=False) as pbar:
+
             def callback(data):
                 nonlocal downloaded
                 downloaded += len(data)
@@ -229,6 +245,7 @@ def _download_s3(uri: str, dest_path: str, desc: str, max_size_bytes: int) -> in
     import boto3
     from botocore import UNSIGNED
     from botocore.config import Config
+
     parsed = urlparse(uri)
     bucket = parsed.netloc
     key = parsed.path.lstrip("/")
@@ -298,6 +315,7 @@ def _expand_dataset_files(dataset: dict[str, Any]) -> list[dict[str, Any]]:
         )
     return expanded
 
+
 def download_ad_catalog_data(
     data_lake_dir: str,
     max_size_mb: int = 100,
@@ -327,7 +345,7 @@ def download_ad_catalog_data(
     for catalog_path in catalog_paths:
         updated = False
         try:
-            with open(catalog_path, "r") as f:
+            with open(catalog_path) as f:
                 data = json.load(f)
 
             datasets = data.get("datasets", [])
@@ -365,7 +383,7 @@ def download_ad_catalog_data(
 
                     # Skip too-large files using cached size (no network probe needed)
                     if cached_size is not None and cached_size > max_size_bytes:
-                        results["skipped_too_large"].append(f"{ds_id}: {name} ({cached_size/(1024*1024):.1f}MB)")
+                        results["skipped_too_large"].append(f"{ds_id}: {name} ({cached_size / (1024 * 1024):.1f}MB)")
                         continue
 
                     # Only probe the network when we don't have enough info
@@ -387,7 +405,7 @@ def download_ad_catalog_data(
                             updated = True
 
                     if size is not None and size > max_size_bytes:
-                        results["skipped_too_large"].append(f"{ds_id}: {name} ({size/(1024*1024):.1f}MB)")
+                        results["skipped_too_large"].append(f"{ds_id}: {name} ({size / (1024 * 1024):.1f}MB)")
                         continue
 
                     # Slower existence check for files without cached size

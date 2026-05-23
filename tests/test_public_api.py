@@ -1,4 +1,5 @@
 """Tests for the biomni top-level public API surface."""
+
 from __future__ import annotations
 
 import sys
@@ -35,7 +36,6 @@ def test_all_lists_lazy_exports() -> None:
 
 def test_lazy_access_resolves_biomni_config() -> None:
     import biomni
-
     from biomni.config import BiomniConfig as Direct
 
     assert biomni.BiomniConfig is Direct

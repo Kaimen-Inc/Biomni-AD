@@ -25,6 +25,7 @@ from pathlib import Path
 logger = logging.getLogger(__name__)
 
 from dotenv import load_dotenv
+
 load_dotenv(override=True)
 
 if sys.version_info >= (3, 14):
@@ -67,14 +68,14 @@ except ModuleNotFoundError:
     sys.exit(1)
 
 import chainlit as cl
-from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
-
 from biomni.artifact import build_run_id, get_all_files
 from biomni.config import resolve_default_llm
+from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 
 # ---------------------------------------------------------------------------
 # Conversation history helpers
 # ---------------------------------------------------------------------------
+
 
 def _extract_final_answer(state: dict) -> str:
     """Extract the final answer text from the last agent state, for history storage."""
@@ -90,6 +91,7 @@ def _extract_final_answer(state: dict) -> str:
     cleaned = re.sub(r"<execute>.*?</execute>", "", last_content, flags=re.DOTALL)
     cleaned = re.sub(r"<observation>.*?</observation>", "", cleaned, flags=re.DOTALL)
     return cleaned.strip()
+
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -142,23 +144,87 @@ _SUGGESTED_PROMPTS_BLOCK_END = "<!-- BIOMNI_SUGGESTED_PROMPTS_END -->"
 # Each entry is (prompt_text, category).
 _AD_DATASET_PROMPTS: list[tuple[str, str, str]] = [
     # (dataset_id_prefix, prompt_text, category)
-    ("GCST90027158", "Map the top 10 AD GWAS loci from Bellenguez 2022 (GCST90027158) to nearby genes and report their putative functions", "GWAS"),
-    ("NG00052",  "What are the top GWAS hits for CSF clusterin levels in the NG00052 dataset? Which of these overlap known AD risk loci?", "GWAS"),
-    ("NG00075",  "Extract genome-wide significant hits from the Kunkle 2019 IGAP stage-2 summary stats (NG00075) and annotate them with gene names", "GWAS"),
-    ("NG00102",  "Which proteins are measured across CSF, plasma, and brain tissue in the SomaScan 1.3k proteomic panel (NG00102)? Find any shared with known AD biomarkers", "Proteomics"),
-    ("NG00105",  "Identify the top eQTL genes in prefrontal cortex (MFG) from NG00105 that overlap AD GWAS loci — load the cis-QTL file and filter by FDR < 0.05", "QTL"),
-    ("NG00118",  "Find structural variant eQTLs in ROSMAP DLPFC (NG00118) for BIN1 and CLU — do they co-localize with GWAS signals?", "QTL"),
-    ("NG00126",  "What rare coding variants reach exome-wide significance in the ADSP European WES dataset (NG00126)?", "Rare variants"),
-    ("NG00133",  "Analyze the plasma and urine biomarker data from NG00133 — which analytes differ most between AD cases and controls?", "Biomarkers"),
-    ("NG00148",  "Compare T-cell receptor CDR3 sequences between AD brain and blood samples using the NG00148 data", "Immunogenomics"),
-    ("NG00165",  "Run a gene-level burden analysis summary using the CHARGE/ADSP 5k WGS results (NG00165) — list top gene hits from SKAT and CMC tests", "Rare variants"),
-    ("NG00166",  "Which coding and non-coding rare variants are most significant in African American ancestry from ADSP R3 WGS (NG00166)?", "Rare variants"),
-    ("NG00172",  "Summarize the structural variant associations with AD risk from NG00172", "Rare variants"),
-    ("NG00180",  "Identify metabolites whose MWAS weights (NG00180) are most enriched in AD-related pathways — use the EUR metabolite feature table", "Metabolomics"),
-    ("RADR",     "Look up all TREM2 and APOE rare variants in the RADR database (RADR_V3.xlsx) and report their clinical classifications", "Rare variants"),
-    ("SingleBrain", "Find microglia-specific eQTLs from SingleBrain that co-localize with AD GWAS loci — load the MG top-association files", "QTL"),
-    ("isoMiGA_QTL", "Map isoMiGA microglia splicing QTLs (sQTLs) to the BIN1 and PTK2B loci — load union_leafcutter_top_assoc.tsv.gz", "QTL"),
-    ("isoMiGA_counts", "Compare microglia gene expression (TPM) for TREM2, CX3CR1, and P2RY12 across cohorts using isoMiGA count matrices", "Expression"),
+    (
+        "GCST90027158",
+        "Map the top 10 AD GWAS loci from Bellenguez 2022 (GCST90027158) to nearby genes and report their putative functions",
+        "GWAS",
+    ),
+    (
+        "NG00052",
+        "What are the top GWAS hits for CSF clusterin levels in the NG00052 dataset? Which of these overlap known AD risk loci?",
+        "GWAS",
+    ),
+    (
+        "NG00075",
+        "Extract genome-wide significant hits from the Kunkle 2019 IGAP stage-2 summary stats (NG00075) and annotate them with gene names",
+        "GWAS",
+    ),
+    (
+        "NG00102",
+        "Which proteins are measured across CSF, plasma, and brain tissue in the SomaScan 1.3k proteomic panel (NG00102)? Find any shared with known AD biomarkers",
+        "Proteomics",
+    ),
+    (
+        "NG00105",
+        "Identify the top eQTL genes in prefrontal cortex (MFG) from NG00105 that overlap AD GWAS loci — load the cis-QTL file and filter by FDR < 0.05",
+        "QTL",
+    ),
+    (
+        "NG00118",
+        "Find structural variant eQTLs in ROSMAP DLPFC (NG00118) for BIN1 and CLU — do they co-localize with GWAS signals?",
+        "QTL",
+    ),
+    (
+        "NG00126",
+        "What rare coding variants reach exome-wide significance in the ADSP European WES dataset (NG00126)?",
+        "Rare variants",
+    ),
+    (
+        "NG00133",
+        "Analyze the plasma and urine biomarker data from NG00133 — which analytes differ most between AD cases and controls?",
+        "Biomarkers",
+    ),
+    (
+        "NG00148",
+        "Compare T-cell receptor CDR3 sequences between AD brain and blood samples using the NG00148 data",
+        "Immunogenomics",
+    ),
+    (
+        "NG00165",
+        "Run a gene-level burden analysis summary using the CHARGE/ADSP 5k WGS results (NG00165) — list top gene hits from SKAT and CMC tests",
+        "Rare variants",
+    ),
+    (
+        "NG00166",
+        "Which coding and non-coding rare variants are most significant in African American ancestry from ADSP R3 WGS (NG00166)?",
+        "Rare variants",
+    ),
+    ("NG00172", "Summarize the structural variant associations with AD risk from NG00172", "Rare variants"),
+    (
+        "NG00180",
+        "Identify metabolites whose MWAS weights (NG00180) are most enriched in AD-related pathways — use the EUR metabolite feature table",
+        "Metabolomics",
+    ),
+    (
+        "RADR",
+        "Look up all TREM2 and APOE rare variants in the RADR database (RADR_V3.xlsx) and report their clinical classifications",
+        "Rare variants",
+    ),
+    (
+        "SingleBrain",
+        "Find microglia-specific eQTLs from SingleBrain that co-localize with AD GWAS loci — load the MG top-association files",
+        "QTL",
+    ),
+    (
+        "isoMiGA_QTL",
+        "Map isoMiGA microglia splicing QTLs (sQTLs) to the BIN1 and PTK2B loci — load union_leafcutter_top_assoc.tsv.gz",
+        "QTL",
+    ),
+    (
+        "isoMiGA_counts",
+        "Compare microglia gene expression (TPM) for TREM2, CX3CR1, and P2RY12 across cohorts using isoMiGA count matrices",
+        "Expression",
+    ),
 ]
 
 
@@ -170,12 +236,15 @@ def _build_ad_suggested_prompts() -> str:
     if not ad_lake.is_dir():
         return ""
 
-    present_ids = {d.name for d in ad_lake.iterdir() if d.is_dir() and any(
-        f for f in d.iterdir() if f.is_file() and not f.name.lower().startswith("readme")
-    )}
+    present_ids = {
+        d.name
+        for d in ad_lake.iterdir()
+        if d.is_dir() and any(f for f in d.iterdir() if f.is_file() and not f.name.lower().startswith("readme"))
+    }
 
     # Collect prompts for available datasets, grouped by category
     from collections import defaultdict
+
     by_category: dict[str, list[str]] = defaultdict(list)
     for ds_id, prompt_text, category in _AD_DATASET_PROMPTS:
         if ds_id in present_ids:
@@ -262,7 +331,9 @@ def _display_data_root_label(env_name: str) -> str:
     return env_name
 
 
-def _list_path_entries_recursive(path: str, max_items: int = 80, max_depth: int = 10, exclude_top_subdirs: set[str] | None = None) -> tuple[list[str], int]:
+def _list_path_entries_recursive(
+    path: str, max_items: int = 80, max_depth: int = 10, exclude_top_subdirs: set[str] | None = None
+) -> tuple[list[str], int]:
     """Recursively list non-hidden files under a directory.
 
     Returns a (preview_items, total_file_count) tuple. Preview items are
@@ -273,9 +344,7 @@ def _list_path_entries_recursive(path: str, max_items: int = 80, max_depth: int 
     if not path or not os.path.isdir(path):
         return [], 0
 
-    excluded_dirs = {
-        ".git", "__pycache__", ".venv", "venv", "env", "node_modules", "site-packages"
-    }
+    excluded_dirs = {".git", "__pycache__", ".venv", "venv", "env", "node_modules", "site-packages"}
 
     preview: list[str] = []
     total_count = 0
@@ -319,9 +388,7 @@ def _collect_path_stats(path: str, max_depth: int = 10, exclude_top_subdirs: set
     if not path or not os.path.isdir(path):
         return stats
 
-    excluded_dirs = {
-        ".git", "__pycache__", ".venv", "venv", "env", "node_modules", "site-packages"
-    }
+    excluded_dirs = {".git", "__pycache__", ".venv", "venv", "env", "node_modules", "site-packages"}
 
     for root, dirs, files in os.walk(path):
         rel_root = os.path.relpath(root, path)
@@ -541,11 +608,13 @@ def _build_sidebar_overview_content() -> str:
     if grand_files == 0 and grand_dirs == 0:
         return "No local data roots found."
 
-    lines.extend([
-        "Combined totals",
-        f"Files: {grand_files}",
-        f"Folders: {grand_dirs}",
-    ])
+    lines.extend(
+        [
+            "Combined totals",
+            f"Files: {grand_files}",
+            f"Folders: {grand_dirs}",
+        ]
+    )
     return "\n".join(lines)
 
 
@@ -614,7 +683,9 @@ def _build_welcome_local_dataset_section() -> str:
 
     if user_roots:
         lines.append("")
-        lines.append("**User Data** — from `BIOMNI_USER_DATA_HOST_PATH` / `BIOMNI_USER_DATA_PATH` / `BIOMNI_DATA_PATH` / `BIOMNI_PATH`")
+        lines.append(
+            "**User Data** — from `BIOMNI_USER_DATA_HOST_PATH` / `BIOMNI_USER_DATA_PATH` / `BIOMNI_DATA_PATH` / `BIOMNI_PATH`"
+        )
         lines.append("")
         primary_label = _display_data_root_label(user_roots[0][0])
         lines.append(f"Primary path ({primary_label}): `{user_roots[0][1]}`")
@@ -666,18 +737,14 @@ def _refresh_chainlit_welcome_markdown() -> None:
         # Build suggested prompts block (only shown when local datasets are present)
         suggested = _build_ad_suggested_prompts()
         prompts_block = (
-            f"\n\n{_SUGGESTED_PROMPTS_BLOCK_START}\n"
-            f"{suggested}\n"
-            f"{_SUGGESTED_PROMPTS_BLOCK_END}\n"
-        ) if suggested else ""
+            (f"\n\n{_SUGGESTED_PROMPTS_BLOCK_START}\n{suggested}\n{_SUGGESTED_PROMPTS_BLOCK_END}\n")
+            if suggested
+            else ""
+        )
 
         # Build dataset inventory block
         dataset_section = _build_welcome_local_dataset_section()
-        dataset_block = (
-            f"\n\n{_WELCOME_DATASET_BLOCK_START}\n"
-            f"{dataset_section}\n"
-            f"{_WELCOME_DATASET_BLOCK_END}\n"
-        )
+        dataset_block = f"\n\n{_WELCOME_DATASET_BLOCK_START}\n{dataset_section}\n{_WELCOME_DATASET_BLOCK_END}\n"
 
         CHAINLIT_MD_PATH.write_text(base + prompts_block + dataset_block, encoding="utf-8")
     except Exception:
@@ -691,59 +758,124 @@ _refresh_chainlit_welcome_markdown()
 # ---------------------------------------------------------------------------
 
 _DATALAKE_CATEGORIES: list[tuple[str, list[str]]] = [
-    ("Protein Interactions", [
-        "affinity_capture-ms", "affinity_capture-rna", "co-fractionation",
-        "proximity_label-ms", "reconstituted_complex", "two-hybrid",
-        "Virus-Host_PPI_P-HIPSTER_2020",
-    ]),
-    ("Drug & Compound Data", [
-        "BindingDB_All_202409", "broad_repurposing_hub_molecule_with_smiles",
-        "broad_repurposing_hub_phase_moa_target_info", "enamine_cloud_library_smiles",
-        "ddinter_alimentary_tract_metabolism", "ddinter_antineoplastic",
-        "ddinter_antiparasitic", "ddinter_blood_organs", "ddinter_dermatological",
-        "ddinter_hormonal", "ddinter_respiratory", "ddinter_various",
-    ]),
-    ("Gene Expression & Cancer", [
-        "DepMap_CRISPRGeneDependency", "DepMap_CRISPRGeneEffect", "DepMap_Model",
-        "DepMap_OmicsExpressionProteinCodingGenesTPMLogp1",
-        "gtex_tissue_gene_tpm", "proteinatlas",
-    ]),
-    ("Genomics & Genetic Variants", [
-        "genebass_missense_LC_filtered", "genebass_pLoF_filtered",
-        "genebass_synonymous_filtered", "gwas_catalog", "variant_table",
-        "sgRNA_KO_SP_human", "sgRNA_KO_SP_mouse",
-    ]),
-    ("Gene Sets & Functional Annotations", [
-        "msigdb_human_c1_positional_geneset", "msigdb_human_c2_curated_geneset",
-        "msigdb_human_c3_regulatory_target_geneset",
-        "msigdb_human_c3_subset_transcription_factor_targets_from_GTRD",
-        "msigdb_human_c4_computational_geneset", "msigdb_human_c5_ontology_geneset",
-        "msigdb_human_c6_oncogenic_signature_geneset",
-        "msigdb_human_c7_immunologic_signature_geneset",
-        "msigdb_human_c8_celltype_signature_geneset", "msigdb_human_h_hallmark_geneset",
-        "mousemine_m1_positional_geneset", "mousemine_m2_curated_geneset",
-        "mousemine_m3_regulatory_target_geneset", "mousemine_m5_ontology_geneset",
-        "mousemine_m8_celltype_signature_geneset", "mousemine_mh_hallmark_geneset",
-        "go-plus", "gene_info",
-    ]),
-    ("Disease & Phenotype", [
-        "DisGeNET", "omim", "hp", "kg",
-    ]),
-    ("Cell Biology", [
-        "czi_census_datasets_v4", "marker_celltype",
-    ]),
-    ("RNA Biology", [
-        "miRDB_v6.0_results", "miRTarBase_microRNA_target_interaction",
-        "miRTarBase_microRNA_target_interaction_pubmed_abtract",
-        "miRTarBase_MicroRNA_Target_Sites",
-    ]),
-    ("Genetic Interactions", [
-        "dosage_growth_defect", "genetic_interaction",
-        "synthetic_growth_defect", "synthetic_lethality", "synthetic_rescue",
-    ]),
-    ("Immunology & Other", [
-        "McPAS-TCR", "txgnn_name_mapping", "txgnn_prediction",
-    ]),
+    (
+        "Protein Interactions",
+        [
+            "affinity_capture-ms",
+            "affinity_capture-rna",
+            "co-fractionation",
+            "proximity_label-ms",
+            "reconstituted_complex",
+            "two-hybrid",
+            "Virus-Host_PPI_P-HIPSTER_2020",
+        ],
+    ),
+    (
+        "Drug & Compound Data",
+        [
+            "BindingDB_All_202409",
+            "broad_repurposing_hub_molecule_with_smiles",
+            "broad_repurposing_hub_phase_moa_target_info",
+            "enamine_cloud_library_smiles",
+            "ddinter_alimentary_tract_metabolism",
+            "ddinter_antineoplastic",
+            "ddinter_antiparasitic",
+            "ddinter_blood_organs",
+            "ddinter_dermatological",
+            "ddinter_hormonal",
+            "ddinter_respiratory",
+            "ddinter_various",
+        ],
+    ),
+    (
+        "Gene Expression & Cancer",
+        [
+            "DepMap_CRISPRGeneDependency",
+            "DepMap_CRISPRGeneEffect",
+            "DepMap_Model",
+            "DepMap_OmicsExpressionProteinCodingGenesTPMLogp1",
+            "gtex_tissue_gene_tpm",
+            "proteinatlas",
+        ],
+    ),
+    (
+        "Genomics & Genetic Variants",
+        [
+            "genebass_missense_LC_filtered",
+            "genebass_pLoF_filtered",
+            "genebass_synonymous_filtered",
+            "gwas_catalog",
+            "variant_table",
+            "sgRNA_KO_SP_human",
+            "sgRNA_KO_SP_mouse",
+        ],
+    ),
+    (
+        "Gene Sets & Functional Annotations",
+        [
+            "msigdb_human_c1_positional_geneset",
+            "msigdb_human_c2_curated_geneset",
+            "msigdb_human_c3_regulatory_target_geneset",
+            "msigdb_human_c3_subset_transcription_factor_targets_from_GTRD",
+            "msigdb_human_c4_computational_geneset",
+            "msigdb_human_c5_ontology_geneset",
+            "msigdb_human_c6_oncogenic_signature_geneset",
+            "msigdb_human_c7_immunologic_signature_geneset",
+            "msigdb_human_c8_celltype_signature_geneset",
+            "msigdb_human_h_hallmark_geneset",
+            "mousemine_m1_positional_geneset",
+            "mousemine_m2_curated_geneset",
+            "mousemine_m3_regulatory_target_geneset",
+            "mousemine_m5_ontology_geneset",
+            "mousemine_m8_celltype_signature_geneset",
+            "mousemine_mh_hallmark_geneset",
+            "go-plus",
+            "gene_info",
+        ],
+    ),
+    (
+        "Disease & Phenotype",
+        [
+            "DisGeNET",
+            "omim",
+            "hp",
+            "kg",
+        ],
+    ),
+    (
+        "Cell Biology",
+        [
+            "czi_census_datasets_v4",
+            "marker_celltype",
+        ],
+    ),
+    (
+        "RNA Biology",
+        [
+            "miRDB_v6.0_results",
+            "miRTarBase_microRNA_target_interaction",
+            "miRTarBase_microRNA_target_interaction_pubmed_abtract",
+            "miRTarBase_MicroRNA_Target_Sites",
+        ],
+    ),
+    (
+        "Genetic Interactions",
+        [
+            "dosage_growth_defect",
+            "genetic_interaction",
+            "synthetic_growth_defect",
+            "synthetic_lethality",
+            "synthetic_rescue",
+        ],
+    ),
+    (
+        "Immunology & Other",
+        [
+            "McPAS-TCR",
+            "txgnn_name_mapping",
+            "txgnn_prediction",
+        ],
+    ),
 ]
 
 
@@ -780,10 +912,7 @@ def _build_full_user_data_inventory() -> str:
             preview, total = _list_path_entries_recursive(ad_path, max_items=500, max_depth=10)
             if total > 0:
                 tree_lines = _build_tree_preview_lines(preview, max_lines=300, max_depth=6)
-                sections.append(
-                    f"AD Workbench / User Data ({ad_path}) — {total} files:\n"
-                    + "\n".join(tree_lines)
-                )
+                sections.append(f"AD Workbench / User Data ({ad_path}) — {total} files:\n" + "\n".join(tree_lines))
                 if total > len(preview):
                     sections[-1] += f"\n  ... and {total - len(preview)} more files"
     else:
@@ -792,10 +921,7 @@ def _build_full_user_data_inventory() -> str:
             if total > 0:
                 label = _display_data_root_label(env_name)
                 tree_lines = _build_tree_preview_lines(preview, max_lines=300, max_depth=6)
-                sections.append(
-                    f"{label} ({root}) — {total} files:\n"
-                    + "\n".join(tree_lines)
-                )
+                sections.append(f"{label} ({root}) — {total} files:\n" + "\n".join(tree_lines))
                 if total > len(preview):
                     sections[-1] += f"\n  ... and {total - len(preview)} more files"
 
@@ -812,9 +938,7 @@ def _build_user_data_sidebar_elements() -> list[cl.Text]:
     3. Biomni Datalake     (data_lake/ root, excluding biomniAD)
     Only entries with files are included.
     """
-    elements: list[cl.Text] = [
-        cl.Text(name="Summary", content=_build_sidebar_overview_content(), display="page")
-    ]
+    elements: list[cl.Text] = [cl.Text(name="Summary", content=_build_sidebar_overview_content(), display="page")]
 
     user_data_host_path = os.getenv("BIOMNI_USER_DATA_HOST_PATH", "").strip()
     user_data_path = os.getenv("BIOMNI_USER_DATA_PATH", "").strip()
@@ -831,7 +955,9 @@ def _build_user_data_sidebar_elements() -> list[cl.Text]:
             tree_content, total_files = _build_user_data_tree_content(ad_path)
             if total_files > 0:
                 content = f"Path: {ad_path}\n\n{tree_content}"
-                elements.append(cl.Text(name=f"Tree [AD Workbench Datasets] ({total_files})", content=content, display="page"))
+                elements.append(
+                    cl.Text(name=f"Tree [AD Workbench Datasets] ({total_files})", content=content, display="page")
+                )
     else:
         for env_name, root in _resolve_user_data_roots():
             tree_content, total_files = _build_user_data_tree_content(root)
@@ -853,7 +979,9 @@ def _build_user_data_sidebar_elements() -> list[cl.Text]:
 
     # Biomni Datalake (root, excluding biomniAD)
     if os.path.isdir(builtin_root):
-        preview, total_files = _list_path_entries_recursive(builtin_root, max_items=300, exclude_top_subdirs={"biomniAD"})
+        preview, total_files = _list_path_entries_recursive(
+            builtin_root, max_items=300, exclude_top_subdirs={"biomniAD"}
+        )
         if total_files > 0:
             tree_lines = _build_tree_preview_lines(preview, max_lines=70, max_depth=3)
             lake_lines: list[str] = [
@@ -873,6 +1001,7 @@ def _build_user_data_sidebar_elements() -> list[cl.Text]:
 # ---------------------------------------------------------------------------
 # Async helpers
 # ---------------------------------------------------------------------------
+
 
 async def run_in_executor(fn, *args):
     """Run a synchronous function in a thread-pool executor."""
@@ -905,6 +1034,7 @@ async def stream_langgraph(agent_app, inputs, config):
 # ---------------------------------------------------------------------------
 # Chat profiles (A1 vs AD1)
 # ---------------------------------------------------------------------------
+
 
 @cl.set_chat_profiles
 async def set_chat_profiles():
@@ -998,6 +1128,7 @@ async def set_starters():
 # Chat lifecycle
 # ---------------------------------------------------------------------------
 
+
 @cl.on_chat_start
 async def on_chat_start():
     """Initialize the selected agent and greet the user."""
@@ -1012,9 +1143,11 @@ async def on_chat_start():
     try:
         if agent_type == "ad1":
             from biomni.agent.ad1 import AD1
+
             agent = await run_in_executor(lambda: AD1(llm=DEFAULT_LLM))
         else:
             from biomni.agent.a1 import A1
+
             agent = await run_in_executor(lambda: A1(llm=DEFAULT_LLM))
         cl.user_session.set("agent", agent)
         cl.user_session.set("agent_type", agent_type)
@@ -1048,15 +1181,14 @@ async def on_chat_start():
 # Message handler
 # ---------------------------------------------------------------------------
 
+
 @cl.on_message
 async def on_message(message: cl.Message):
     agent = cl.user_session.get("agent")
     agent_type = cl.user_session.get("agent_type", "a1")
 
     if agent is None:
-        await cl.Message(
-            content="Agent not initialized. Please refresh the page."
-        ).send()
+        await cl.Message(content="Agent not initialized. Please refresh the page.").send()
         return
 
     prompt = message.content
@@ -1073,9 +1205,7 @@ async def on_message(message: cl.Message):
         if any(kw.lower() in prompt.lower() for kw in ad_keywords):
             async with cl.Step(name="🧠 AD Context Detected", type="tool", show_input=False) as step:
                 await run_in_executor(agent._inject_ad_context)
-                step.output = (
-                    "Specialized AD/dementia data sourcing protocols injected into context."
-                )
+                step.output = "Specialized AD/dementia data sourcing protocols injected into context."
 
     # ------------------------------------------------------------------
     # Phase 2: Tool retrieval
@@ -1083,17 +1213,13 @@ async def on_message(message: cl.Message):
     if getattr(agent, "use_tool_retriever", False):
         async with cl.Step(name="🔍 Selecting Resources", type="retrieval", show_input=False) as step:
             try:
-                resources = await run_in_executor(
-                    agent._prepare_resources_for_retrieval, prompt
-                )
+                resources = await run_in_executor(agent._prepare_resources_for_retrieval, prompt)
                 if resources:
-                    await run_in_executor(
-                        agent.update_system_prompt_with_selected_resources, resources
-                    )
-                    tools_n = len(resources.get('tools', []))
-                    data_n = len(resources.get('data_lake', []))
-                    libs_n = len(resources.get('libraries', []))
-                    knowhow_n = len(resources.get('know_how', []))
+                    await run_in_executor(agent.update_system_prompt_with_selected_resources, resources)
+                    tools_n = len(resources.get("tools", []))
+                    data_n = len(resources.get("data_lake", []))
+                    libs_n = len(resources.get("libraries", []))
+                    knowhow_n = len(resources.get("know_how", []))
                     total = tools_n + data_n + libs_n + knowhow_n
                     step.output = (
                         f"Selected {total} resources: "
@@ -1159,9 +1285,11 @@ async def on_message(message: cl.Message):
     if final_state and hasattr(agent, "_save_run_artifacts"):
         await _save_run_artifacts_for_agent(agent, final_state, initial_files, topic=prompt)
 
+
 # ---------------------------------------------------------------------------
 # Interactive planning helpers
 # ---------------------------------------------------------------------------
+
 
 async def _interactive_planning(agent, prompt: str, agent_type: str = "a1") -> str | None:
     """
@@ -1239,13 +1367,14 @@ async def _interactive_planning(agent, prompt: str, agent_type: str = "a1") -> s
 # Streaming execution
 # ---------------------------------------------------------------------------
 
+
 async def _stream_execution(
     agent, prompt: str, history: list[dict] | None = None, thread_id: str = "42"
 ) -> dict | None:
     """Stream the LangGraph ReAct loop and display steps in Chainlit."""
     # Build full message list from conversation history so the agent has context
     messages = []
-    for msg in (history or []):
+    for msg in history or []:
         if msg["role"] == "user":
             messages.append(HumanMessage(content=msg["content"]))
         elif msg["role"] == "assistant" and msg.get("content"):
@@ -1350,6 +1479,7 @@ async def _stream_execution(
 # Image display helper
 # ---------------------------------------------------------------------------
 
+
 async def _display_images(observation: str):
     """Scan observation text for image file paths and display them."""
     pattern = r"(\S+?(?:" + "|".join(re.escape(e) for e in SUPPORTED_IMAGE_EXTENSIONS) + r"))"
@@ -1370,6 +1500,7 @@ async def _display_images(observation: str):
 # ---------------------------------------------------------------------------
 # AD1 artifact saving
 # ---------------------------------------------------------------------------
+
 
 async def _save_ad1_artifacts(agent, final_state: dict, initial_files: set):
     """Sync AD1 run artifacts to ./runs/ and notify the user."""
@@ -1402,17 +1533,13 @@ async def _save_run_artifacts_for_agent(
 
     async with cl.Step(name="📦 Saving Artifacts", type="tool", show_input=False) as step:
         try:
-            await run_in_executor(
-                agent._save_run_artifacts, run_id, current_run_dir, initial_files
-            )
+            await run_in_executor(agent._save_run_artifacts, run_id, current_run_dir, initial_files)
             step.output = f"Artifacts saved to `{current_run_dir}`"
         except Exception as exc:
             logger.exception("Artifact saving failed for run %s", run_id)
             step.output = f"⚠️ Artifact saving failed: {exc}"
 
-    await cl.Message(
-        content=f"**Run complete.** Artifacts saved to:\n`{current_run_dir}`"
-    ).send()
+    await cl.Message(content=f"**Run complete.** Artifacts saved to:\n`{current_run_dir}`").send()
 
 
 # ---------------------------------------------------------------------------

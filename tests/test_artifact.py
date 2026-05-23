@@ -1,4 +1,5 @@
 """Unit tests for biomni.artifact — the shared run-id / file-snapshot helpers."""
+
 from __future__ import annotations
 
 import logging
@@ -6,14 +7,12 @@ import os
 from datetime import datetime
 
 import pytest
-
 from biomni.artifact import (
     DEFAULT_EXCLUDED_DIRS,
     build_run_id,
     get_all_files,
     summarize_topic_for_run_id,
 )
-
 
 # --- summarize_topic_for_run_id ------------------------------------------------
 
@@ -27,7 +26,10 @@ from biomni.artifact import (
         ("Map APOE allele effects", "map_apoe_allele"),
         ("   ", ""),
         ("!!! @#$ %%%", ""),
-        ("a b c d e f g h i j k l m", "the_and_or"[:0] or ""),  # all 1-char skipped → fallback to first 3 raw lowercased
+        (
+            "a b c d e f g h i j k l m",
+            "the_and_or"[:0] or "",
+        ),  # all 1-char skipped → fallback to first 3 raw lowercased
     ],
 )
 def test_summarize_topic_known_cases(topic: str, expected: str) -> None:

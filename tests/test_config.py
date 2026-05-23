@@ -1,8 +1,8 @@
 """Tests for biomni.config — env-driven default LLM resolution."""
+
 from __future__ import annotations
 
 import pytest
-
 from biomni.config import resolve_default_llm
 
 
