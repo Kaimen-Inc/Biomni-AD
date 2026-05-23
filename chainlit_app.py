@@ -70,7 +70,7 @@ except ModuleNotFoundError:
 import chainlit as cl
 from biomni.artifact import build_run_id, get_all_files
 from biomni.config import resolve_default_llm
-from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
+from langchain_core.messages import AIMessage, HumanMessage
 
 # ---------------------------------------------------------------------------
 # Conversation history helpers
@@ -97,33 +97,11 @@ def _extract_final_answer(state: dict) -> str:
 # Constants
 # ---------------------------------------------------------------------------
 
-PLANNING_SYSTEM_PROMPT = (
-    "You are a biomedical research assistant planning a task. "
-    "Given the user's research question, write a concise numbered plan "
-    "of 3 to 7 steps describing exactly how you will solve it. "
-    "IMPORTANT: Always prefer this tool order in your plan: "
-    "(1) web/literature search tools first (advanced_web_search, search_pubmed, search_biorxiv), "
-    "(2) local data and database query tools second, "
-    "(3) custom code generation only as a last resort. "
-    "Mention specific tools, databases, or analyses you will use. "
-    "Be specific but brief. Do not execute any code yet."
-)
-
-AD1_PLANNING_SYSTEM_PROMPT = (
-    "You are an expert Alzheimer's disease research assistant planning a task. "
-    "Given the user's research question, write a concise numbered plan "
-    "of several steps describing exactly how you will solve it. "
-    "IMPORTANT — LOCAL-FIRST RULE: "
-    "(1) ALWAYS start by scanning and listing files available in the local user data path "
-    "(BIOMNI_USER_DATA_PATH / /app/user-data) and the AD data lake "
-    "(data/biomni_data/data_lake/biomniAD/) BEFORE any other action. "
-    "Use only locally identified files for as much of the analysis as possible. "
-    "Do NOT download, fetch, or call external APIs when the needed data is already present locally. "
-    "(2) Built-in domain tools second (query databases, tool functions); "
-    "(3) Custom code generation to execute these analyses using your tools. "
-    "Do NOT simulate or fabricate data. "
-    "Mention specific datasets, tools, or analyses you will use. "
-    "Be specific and tailor the plan to user's question. Do not execute any code yet."
+# Planning prompts and the plan-then-approve interaction live in chainlit_ui/planning.py.
+# Re-export here for backwards compatibility with any callers that imported them
+# from chainlit_app.
+from chainlit_ui.planning import (
+    interactive_planning as _interactive_planning,
 )
 
 DEFAULT_LLM = resolve_default_llm()
@@ -1287,82 +1265,6 @@ async def on_message(message: cl.Message):
 
 
 # ---------------------------------------------------------------------------
-# Interactive planning helpers
-# ---------------------------------------------------------------------------
-
-
-async def _interactive_planning(agent, prompt: str, agent_type: str = "a1") -> str | None:
-    """
-    Generate a research plan, show it for user approval, and handle revisions.
-    Returns the (possibly modified) prompt on approval, or None if cancelled.
-    """
-    base_prompt = AD1_PLANNING_SYSTEM_PROMPT if agent_type == "ad1" else PLANNING_SYSTEM_PROMPT
-
-    # Dynamically append the user-data directory listing so the planner
-    # knows exactly which datasets are available locally.
-    inventory = getattr(agent, "user_data_inventory", None)
-    if inventory:
-        data_root = getattr(agent, "data_root_dir", None) or ""
-        base_prompt += (
-            f"\n\nThe following datasets are available in the local user data directory "
-            f"({data_root}). Reference specific datasets from this listing when relevant "
-            f"to the user's question:\n{inventory}"
-        )
-
-    modification_context = ""
-
-    while True:
-        # Build planning messages
-        full_system = base_prompt
-        if modification_context:
-            full_system += f"\n\nUser requested these revisions to the previous plan:\n{modification_context}"
-
-        planning_messages = [
-            SystemMessage(content=full_system),
-            HumanMessage(content=prompt),
-        ]
-
-        async with cl.Step(name="📋 Generating Research Plan", type="llm", show_input=False) as step:
-            try:
-                response = await run_in_executor(agent.llm.invoke, planning_messages)
-                plan_text = response.content if hasattr(response, "content") else str(response)
-                step.output = plan_text
-            except Exception as exc:
-                logger.warning("Plan generation failed; proceeding without approval gate", exc_info=True)
-                step.output = f"⚠️ Could not generate plan ({exc}). Proceeding without a plan."
-                # Fall through to execution without approval gate
-                return prompt
-
-        # Ask the user to approve or revise
-        res = await cl.AskActionMessage(
-            content="Here is the research plan. Would you like to proceed?",
-            actions=[
-                cl.Action(name="approve", label="✅ Approve & Execute", payload={"value": "approve"}),
-                cl.Action(name="revise", label="✏️ Revise Plan", payload={"value": "revise"}),
-                cl.Action(name="cancel", label="🚫 Cancel", payload={"value": "cancel"}),
-            ],
-            timeout=300,
-        ).send()
-
-        action_value = (res.get("payload") or {}).get("value") if res else None
-
-        if res is None or action_value == "cancel":
-            return None
-
-        if action_value == "approve":
-            return prompt
-
-        # User wants to revise — collect modification request
-        mod_res = await cl.AskUserMessage(
-            content="Describe the changes you'd like in the plan:",
-            timeout=300,
-        ).send()
-
-        if mod_res:
-            modification_context = mod_res.get("output", "")
-        # Loop back to re-generate the plan
-
-
 # ---------------------------------------------------------------------------
 # Streaming execution
 # ---------------------------------------------------------------------------
