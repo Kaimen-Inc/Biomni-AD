@@ -46,7 +46,7 @@ def get_llm(
             temperature = config.temperature
         if source is None:
             if config.source in ALLOWED_SOURCES:
-                source = cast(SourceType, config.source)
+                source = cast("SourceType", config.source)
         if base_url is None:
             base_url = config.base_url
         if api_key is None:
@@ -63,7 +63,7 @@ def get_llm(
     if source is None:
         env_source = os.getenv("LLM_SOURCE") or os.getenv("BIOMNI_SOURCE")
         if env_source in ALLOWED_SOURCES:
-            source = cast(SourceType, env_source)
+            source = cast("SourceType", env_source)
         else:
             if model[:7] == "claude-":
                 source = "Anthropic"
@@ -163,8 +163,8 @@ def get_llm(
             )
         API_VERSION = "2024-12-01-preview"
         # Derive deployment name: strip "azure-" prefix if present, else fall back to DEPLOYMENT_NAME env var
-        deployment = model.replace("azure-", "") if model.startswith("azure-") else (
-            os.getenv("DEPLOYMENT_NAME") or model
+        deployment = (
+            model.replace("azure-", "") if model.startswith("azure-") else (os.getenv("DEPLOYMENT_NAME") or model)
         )
 
         # Some Azure-hosted models (e.g. gpt-5.*) reject any temperature value other

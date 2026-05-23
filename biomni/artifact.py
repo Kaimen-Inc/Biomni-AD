@@ -6,13 +6,17 @@ agent run. Centralising them prevents the two call sites from drifting on
 the directory exclude list, which previously caused mismatched
 initial/final file sets when the agent was driven from the UI.
 """
+
 from __future__ import annotations
 
 import logging
 import os
 import re
-from collections.abc import Callable, Iterable
 from datetime import datetime
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from collections.abc import Callable, Iterable
 
 logger = logging.getLogger(__name__)
 
@@ -32,10 +36,45 @@ DEFAULT_EXCLUDED_DIRS: frozenset[str] = frozenset(
 
 _TOPIC_STOPWORDS: frozenset[str] = frozenset(
     {
-        "a", "an", "and", "are", "as", "at", "be", "by", "for", "from", "in",
-        "into", "is", "it", "of", "on", "or", "that", "the", "this", "to", "with",
-        "using", "use", "please", "can", "could", "would", "should", "do", "does",
-        "analyze", "analysis", "show", "find", "run", "task", "generate", "get",
+        "a",
+        "an",
+        "and",
+        "are",
+        "as",
+        "at",
+        "be",
+        "by",
+        "for",
+        "from",
+        "in",
+        "into",
+        "is",
+        "it",
+        "of",
+        "on",
+        "or",
+        "that",
+        "the",
+        "this",
+        "to",
+        "with",
+        "using",
+        "use",
+        "please",
+        "can",
+        "could",
+        "would",
+        "should",
+        "do",
+        "does",
+        "analyze",
+        "analysis",
+        "show",
+        "find",
+        "run",
+        "task",
+        "generate",
+        "get",
     }
 )
 

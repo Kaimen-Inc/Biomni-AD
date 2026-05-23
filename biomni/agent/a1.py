@@ -1,4 +1,3 @@
-import glob
 import inspect
 import json
 import os
@@ -18,7 +17,11 @@ from langgraph.graph import END, START, StateGraph
 
 from biomni.artifact import (
     build_run_id as _shared_build_run_id,
+)
+from biomni.artifact import (
     get_all_files as _shared_get_all_files,
+)
+from biomni.artifact import (
     summarize_topic_for_run_id as _shared_summarize_topic_for_run_id,
 )
 from biomni.config import default_config
@@ -409,8 +412,14 @@ For all analyses in this run:
             return []
 
         excluded = {
-            ".git", "__pycache__", ".venv", "venv", "env",
-            ".chainlit", "node_modules", "site-packages",
+            ".git",
+            "__pycache__",
+            ".venv",
+            "venv",
+            "env",
+            ".chainlit",
+            "node_modules",
+            "site-packages",
         }
         items: list[str] = []
 
@@ -449,8 +458,14 @@ For all analyses in this run:
         data_lake_abs = os.path.abspath(self.data_lake_dir) if hasattr(self, "data_lake_dir") else ""
 
         excluded = {
-            ".git", "__pycache__", ".venv", "venv", "env",
-            ".chainlit", "node_modules", "site-packages",
+            ".git",
+            "__pycache__",
+            ".venv",
+            "venv",
+            "env",
+            ".chainlit",
+            "node_modules",
+            "site-packages",
         }
         resources: list[dict[str, str]] = []
 
@@ -469,10 +484,12 @@ For all analyses in this run:
                     continue
                 full_path = os.path.join(root, file_name)
                 rel = os.path.relpath(full_path, root_dir).replace(os.sep, "/")
-                resources.append({
-                    "name": f"user-data:{rel}",
-                    "description": f"User dataset file at {root_dir}/{rel}",
-                })
+                resources.append(
+                    {
+                        "name": f"user-data:{rel}",
+                        "description": f"User dataset file at {root_dir}/{rel}",
+                    }
+                )
                 if len(resources) >= max_items:
                     return resources
 
@@ -2273,8 +2290,8 @@ Each library is listed with its description to help you understand its functiona
         inputs = {"messages": [HumanMessage(content=prompt)], "next_step": None}
         config = {"recursion_limit": 500, "configurable": {"thread_id": 42}}
         self.log = []
-        self.raw_log = [] # Store raw messages for advanced artifact generation (e.g. Notebooks)
-        
+        self.raw_log = []  # Store raw messages for advanced artifact generation (e.g. Notebooks)
+
         # Store the final conversation state for markdown generation
         final_state = None
 
@@ -2286,7 +2303,7 @@ Each library is listed with its description to help you understand its functiona
 
         # Store the conversation state for markdown generation
         self._conversation_state = final_state
-        
+
         if final_state:
             self.raw_log = list(final_state["messages"])
 
@@ -2574,6 +2591,7 @@ Each library is listed with its description to help you understand its functiona
         run_dir = getattr(self, "_current_run_dir", None)
         if run_dir:
             from biomni.tool.support_tools import _persistent_namespace
+
             _persistent_namespace["OUTPUT_DIR"] = run_dir
             os.environ["BIOMNI_OUTPUT_PATH"] = run_dir
 
@@ -2654,11 +2672,13 @@ Each library is listed with its description to help you understand its functiona
     def _generate_notebook(self) -> dict:
         """Generate a Jupyter Notebook structure from self.raw_log."""
         cells = []
-        cells.append({
-            "cell_type": "markdown",
-            "metadata": {},
-            "source": ["# Biomni A1 Execution Trace\n", f"Run: {datetime.now().strftime('%Y%m%d_%H%M%S')}"]
-        })
+        cells.append(
+            {
+                "cell_type": "markdown",
+                "metadata": {},
+                "source": ["# Biomni A1 Execution Trace\n", f"Run: {datetime.now().strftime('%Y%m%d_%H%M%S')}"],
+            }
+        )
 
         if not hasattr(self, "raw_log") or not self.raw_log:
             return {"cells": cells, "metadata": {}, "nbformat": 4, "nbformat_minor": 5}
@@ -2671,17 +2691,17 @@ Each library is listed with its description to help you understand its functiona
                 # Check if this human message carries an observation result
                 obs_match = re.search(r"<observation>(.*?)</observation>", msg_content, re.DOTALL)
                 if msg_type == "human" and obs_match:
-                    cells.append({
-                        "cell_type": "markdown",
-                        "metadata": {},
-                        "source": [f"**Observation**:\n```\n{obs_match.group(1).strip()}\n```"]
-                    })
+                    cells.append(
+                        {
+                            "cell_type": "markdown",
+                            "metadata": {},
+                            "source": [f"**Observation**:\n```\n{obs_match.group(1).strip()}\n```"],
+                        }
+                    )
                 else:
-                    cells.append({
-                        "cell_type": "markdown",
-                        "metadata": {},
-                        "source": [f"**{msg_type.title()}**: {msg_content}"]
-                    })
+                    cells.append(
+                        {"cell_type": "markdown", "metadata": {}, "source": [f"**{msg_type.title()}**: {msg_content}"]}
+                    )
             elif msg_type == "ai":
                 code_blocks = re.findall(r"<execute>(.*?)</execute>", msg_content, re.DOTALL)
                 thinking = msg_content
@@ -2689,43 +2709,49 @@ Each library is listed with its description to help you understand its functiona
                     first_tag_pos = msg_content.find("<execute>")
                     thinking = msg_content[:first_tag_pos].strip()
                 if thinking:
-                    cells.append({
-                        "cell_type": "markdown",
-                        "metadata": {},
-                        "source": [f"**Assistant Reasoning**:\n{thinking}"]
-                    })
+                    cells.append(
+                        {"cell_type": "markdown", "metadata": {}, "source": [f"**Assistant Reasoning**:\n{thinking}"]}
+                    )
                 for code in code_blocks:
-                    cells.append({
-                        "cell_type": "code",
-                        "execution_count": None,
-                        "metadata": {},
-                        "outputs": [],
-                        "source": [code.strip()]
-                    })
+                    cells.append(
+                        {
+                            "cell_type": "code",
+                            "execution_count": None,
+                            "metadata": {},
+                            "outputs": [],
+                            "source": [code.strip()],
+                        }
+                    )
                 if hasattr(msg, "tool_calls") and msg.tool_calls:
                     for tool_call in msg.tool_calls:
                         tool_name = tool_call.get("name")
                         tool_args = tool_call.get("args")
                         if tool_name == "run_python_repl":
-                            cells.append({
-                                "cell_type": "code",
-                                "execution_count": None,
-                                "metadata": {},
-                                "outputs": [],
-                                "source": [tool_args.get("command", "# No code")]
-                            })
+                            cells.append(
+                                {
+                                    "cell_type": "code",
+                                    "execution_count": None,
+                                    "metadata": {},
+                                    "outputs": [],
+                                    "source": [tool_args.get("command", "# No code")],
+                                }
+                            )
                         else:
-                            cells.append({
-                                "cell_type": "markdown",
-                                "metadata": {},
-                                "source": [f"*Tool Call*: {tool_name}\nArgs: {json.dumps(tool_args)}"]
-                            })
+                            cells.append(
+                                {
+                                    "cell_type": "markdown",
+                                    "metadata": {},
+                                    "source": [f"*Tool Call*: {tool_name}\nArgs: {json.dumps(tool_args)}"],
+                                }
+                            )
             elif msg_type == "tool":
-                cells.append({
-                    "cell_type": "markdown",
-                    "metadata": {},
-                    "source": [f"**Observation ({getattr(msg, 'name', 'Tool')})**:\n```\n{msg_content}\n```"]
-                })
+                cells.append(
+                    {
+                        "cell_type": "markdown",
+                        "metadata": {},
+                        "source": [f"**Observation ({getattr(msg, 'name', 'Tool')})**:\n```\n{msg_content}\n```"],
+                    }
+                )
 
         return {
             "cells": cells,
@@ -2738,11 +2764,11 @@ Each library is listed with its description to help you understand its functiona
                     "name": "python",
                     "nbconvert_exporter": "python",
                     "pygments_lexer": "ipython3",
-                    "version": "3.8.5"
-                }
+                    "version": "3.8.5",
+                },
             },
             "nbformat": 4,
-            "nbformat_minor": 5
+            "nbformat_minor": 5,
         }
 
     def _save_run_artifacts(self, run_id: str, run_dir: str, initial_files: set) -> None:
@@ -2782,14 +2808,45 @@ Each library is listed with its description to help you understand its functiona
         # 4. Move any newly created output files into run_dir
         # Search in both the working directory and the BIOMNI_DATA_PATH root.
         allowed_exts = {
-            ".png", ".jpg", ".jpeg", ".gif", ".bmp", ".webp", ".svg", ".pdf",
-            ".csv", ".tsv", ".xlsx", ".xls", ".json", ".jsonl", ".txt", ".md",
-            ".html", ".parquet", ".npy", ".npz", ".pkl", ".pt", ".h5", ".hdf5",
-            ".rds", ".loom", ".h5ad",
+            ".png",
+            ".jpg",
+            ".jpeg",
+            ".gif",
+            ".bmp",
+            ".webp",
+            ".svg",
+            ".pdf",
+            ".csv",
+            ".tsv",
+            ".xlsx",
+            ".xls",
+            ".json",
+            ".jsonl",
+            ".txt",
+            ".md",
+            ".html",
+            ".parquet",
+            ".npy",
+            ".npz",
+            ".pkl",
+            ".pt",
+            ".h5",
+            ".hdf5",
+            ".rds",
+            ".loom",
+            ".h5ad",
         }
         excluded_parts = {
-            "runs", ".venv", "venv", "env", ".git", "__pycache__", ".chainlit",
-            "site-packages", "dist-info", "node_modules",
+            "runs",
+            ".venv",
+            "venv",
+            "env",
+            ".git",
+            "__pycache__",
+            ".chainlit",
+            "site-packages",
+            "dist-info",
+            "node_modules",
         }
 
         if initial_files:
@@ -2905,9 +2962,7 @@ Each library is listed with its description to help you understand its functiona
             import concurrent.futures
 
             with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
-                future = executor.submit(
-                    self._convert_markdown_to_pdf, temp_markdown_path, pdf_path
-                )
+                future = executor.submit(self._convert_markdown_to_pdf, temp_markdown_path, pdf_path)
                 future.result(timeout=60)
 
             print(f"Conversation history saved as PDF: {pdf_path}")
@@ -3769,9 +3824,7 @@ Each library is listed with its description to help you understand its functiona
                 lines.append(f"Path: `{user_data_path}`")
                 if os.path.isdir(user_data_path):
                     try:
-                        entries = sorted(
-                            [name for name in os.listdir(user_data_path) if not name.startswith(".")]
-                        )
+                        entries = sorted([name for name in os.listdir(user_data_path) if not name.startswith(".")])
                     except OSError:
                         entries = []
 

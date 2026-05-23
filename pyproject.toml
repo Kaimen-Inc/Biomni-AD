@@ -61,9 +61,18 @@ version = {attr = "biomni.version.__version__"}
 [tool.setuptools.packages.find]
 exclude = ["test*", "tutorials*"]
 
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+addopts = ["-ra", "--strict-markers"]
+
 [tool.ruff]
 src = ["src"]
 line-length = 120
+extend-exclude = [
+    # Legacy integration script kept for manual AD1 saving verification
+    "tests/verify_ad1_saving.py",
+]
 
 [tool.ruff.format]
 docstring-code-format = true

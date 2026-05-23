@@ -2,6 +2,19 @@
 
 This directory contains scripts and configuration files to set up a comprehensive bioinformatics environment with various tools and packages.
 
+## Which YAML do I use?
+
+| File | Purpose | When to use |
+|------|---------|-------------|
+| `environment.yml` | **Canonical minimal env** — Python 3.11 + LangChain stack + core scientific Python | First-time install, Docker build (default), CI |
+| `fixed_env.yml` | Reduced full env without R / CLI tools (~13 GB) | If you want most of `bio_env.yml` but can skip R |
+| `bio_env.yml` | Layered on top of `environment.yml` for full bioinformatics tooling | When running `setup.sh` (auto-installs this) |
+| `bio_env_py310.yml` | Python 3.10 side env named `biomni_py310` | Only for `analyze_copy_number_purity_ploidy_and_focal_events` (cnvkit needs Py 3.10) |
+| `r_packages.yml` | R packages layered on top of the base env | When `setup.sh` installs R support |
+| `adworkbench_env.yml` | AD Workbench-specific full env | Alternative Docker build: `--build-arg BIOMNI_ENV_FILE=biomni_env/adworkbench_env.yml` |
+
+`environment.yml` is the **single source of truth for the minimal env**. The Dockerfile defaults to it; the lightweight `pip install -e .` path in the project root provides the same core Python deps without conda. Reach for the other YAMLs only when you need the extras they layer on.
+
 **Biomni-AD** (this repository) is developed by **Kuan-lin Huang, PhD**, building on the foundational [Biomni](https://github.com/snap-stanford/Biomni) platform by Stanford's SNAP Lab.
 
 ## Branch Guide
@@ -56,7 +69,7 @@ bash setup.sh
 If you already installed the base version, and just wants to add the additional packages in the new release, you can simply do:
 
 ```bash
-bash new_software_v005.sh
+bash new_software_v008.sh
 ```
 
 Note: we have only tested this setup.sh script with Ubuntu 22.04, 64 bit.
