@@ -160,8 +160,6 @@ The active ReAct reasoning loop lives **inside the `A1` class** in `a1.py`, buil
 - Applies timeout management to individual tool executions
 - Supports custom callback handlers for logging
 
-> ⚠️ A `biomni/agent/react.py` file exists in the tree as an incomplete alternative implementation. It is **not imported anywhere** and is excluded from the linter; do not depend on it.
-
 ### `biomni/artifact.py` — Run artifact helpers
 
 Shared pure functions used by both `A1._save_run_artifacts` and the Chainlit UI:
