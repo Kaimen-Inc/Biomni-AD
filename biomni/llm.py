@@ -1,3 +1,4 @@
+import logging
 import os
 from typing import TYPE_CHECKING, Literal, Optional, cast
 
@@ -5,6 +6,8 @@ from dotenv import load_dotenv
 from langchain_core.language_models.chat_models import BaseChatModel
 
 load_dotenv(override=True)
+
+logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     from biomni.config import BiomniConfig
@@ -217,9 +220,9 @@ def get_llm(
                 )
                 if result.stdout.strip():
                     os.environ["ANTHROPIC_API_KEY"] = result.stdout.strip()
-                    print("✓ Loaded ANTHROPIC_API_KEY from ~/.bash_profile")
-            except Exception as e:
-                print(f"Note: Could not load ANTHROPIC_API_KEY from bash_profile: {e}")
+                    logger.info("Loaded ANTHROPIC_API_KEY from ~/.bash_profile")
+            except Exception:
+                logger.warning("Could not load ANTHROPIC_API_KEY from bash_profile", exc_info=True)
 
         return ChatAnthropic(
             model=model,

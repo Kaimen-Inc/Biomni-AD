@@ -14,6 +14,7 @@ Environment variables:
 """
 
 import asyncio
+import logging
 import os
 import re
 import sys
@@ -21,6 +22,8 @@ import uuid
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 from pathlib import Path
+
+logger = logging.getLogger(__name__)
 
 from dotenv import load_dotenv
 load_dotenv(override=True)
@@ -677,8 +680,8 @@ def _refresh_chainlit_welcome_markdown() -> None:
         )
 
         CHAINLIT_MD_PATH.write_text(base + prompts_block + dataset_block, encoding="utf-8")
-    except Exception as exc:
-        print(f"Warning: Could not refresh chainlit welcome markdown: {exc}")
+    except Exception:
+        logger.warning("Could not refresh chainlit welcome markdown", exc_info=True)
 
 
 _refresh_chainlit_welcome_markdown()
@@ -1026,6 +1029,7 @@ async def on_chat_start():
         if inventory_text:
             agent.user_data_inventory = inventory_text
     except Exception as exc:
+        logger.exception("Failed to initialize %s agent", label)
         await cl.Message(content=f"Failed to initialize {label}: {exc}").send()
         return
 
@@ -1101,6 +1105,7 @@ async def on_message(message: cl.Message):
                 else:
                     step.output = "No resources selected; proceeding with full tool set."
             except Exception as exc:
+                logger.warning("Tool retrieval failed; falling back to full tool set", exc_info=True)
                 step.output = f"⚠️ Tool retrieval failed ({exc}); proceeding with all tools."
 
     # ------------------------------------------------------------------
@@ -1127,8 +1132,8 @@ async def on_message(message: cl.Message):
         os.makedirs(_current_run_dir, exist_ok=True)
         agent._current_run_dir = _current_run_dir
         os.environ["BIOMNI_OUTPUT_PATH"] = _current_run_dir
-    except Exception as _e:
-        print(f"Warning: Could not pre-create run directory: {_e}")
+    except Exception:
+        logger.warning("Could not pre-create run directory", exc_info=True)
         _current_run_dir = None
 
     # Snapshot files before execution (cwd + data root) to detect new outputs.
@@ -1195,6 +1200,7 @@ async def _interactive_planning(agent, prompt: str, agent_type: str = "a1") -> s
                 plan_text = response.content if hasattr(response, "content") else str(response)
                 step.output = plan_text
             except Exception as exc:
+                logger.warning("Plan generation failed; proceeding without approval gate", exc_info=True)
                 step.output = f"⚠️ Could not generate plan ({exc}). Proceeding without a plan."
                 # Fall through to execution without approval gate
                 return prompt
@@ -1357,7 +1363,7 @@ async def _display_images(observation: str):
                     image = cl.Image(path=candidate, name=os.path.basename(candidate), display="inline")
                     await cl.Message(content="", elements=[image]).send()
                 except Exception:
-                    pass
+                    logger.warning("Failed to render image %s", candidate, exc_info=True)
                 break
 
 
@@ -1401,6 +1407,7 @@ async def _save_run_artifacts_for_agent(
             )
             step.output = f"Artifacts saved to `{current_run_dir}`"
         except Exception as exc:
+            logger.exception("Artifact saving failed for run %s", run_id)
             step.output = f"⚠️ Artifact saving failed: {exc}"
 
     await cl.Message(
