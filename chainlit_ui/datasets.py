@@ -15,7 +15,9 @@ if TYPE_CHECKING:
     from pathlib import Path
 
 # Prompt templates keyed by dataset id — shown only when those files are
-# locally present. Each entry is (dataset_id_prefix, prompt_text, category).
+# locally present. Each entry is (dataset_id, prompt_text, category) where
+# `dataset_id` is matched against subdirectory names of the AD data lake
+# by exact equality (see `discover_present_dataset_ids`).
 AD_DATASET_PROMPTS: list[tuple[str, str, str]] = [
     (
         "GCST90027158",

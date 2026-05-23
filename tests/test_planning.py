@@ -21,8 +21,11 @@ def _stub_chainlit() -> object:
     """Inject a minimal `chainlit` shim so planning.py imports succeed.
 
     Yields and removes the stub on teardown so the entry doesn't leak
-    across the rest of the pytest session — another test that wants the
-    real chainlit (or no chainlit at all) shouldn't pick up our lambdas.
+    across the rest of the pytest session. We also drop the cached
+    `chainlit_ui.planning` module — once it's been imported its
+    module-scope `cl` name is bound to the stub, so a later test that
+    re-imports planning would still see the stub unless we force a
+    fresh import.
     """
     if "chainlit" in sys.modules:
         # Caller already provides chainlit (real or stubbed elsewhere); leave alone.
@@ -37,6 +40,7 @@ def _stub_chainlit() -> object:
         yield cl
     finally:
         sys.modules.pop("chainlit", None)
+        sys.modules.pop("chainlit_ui.planning", None)
 
 
 def _import_planning():
