@@ -508,6 +508,8 @@ class BaseTask:
 
 This section describes how Biomni-AD is intended to be deployed as a managed, multi-user cloud application. It is written from the perspective of a senior platform engineer / solutions architect: the goal is a deployment that is **reproducible, isolated per user, observable, and portable** across cloud providers, with **Azure** (and the **ADDI workbench**, which sits on Azure infrastructure) as the primary reference target. The same topology maps cleanly to AWS (ECS/Fargate + EFS + Bedrock) and GCP (Cloud Run / GKE + Filestore + Vertex AI).
 
+> **Reading guide.** Items below are tagged **[Implemented]** when the behavior exists in the current codebase (`Dockerfile`, `docker-compose.yml`, `chainlit_app.py`, `biomni/`), and **[Target]** when they describe deployment-layer configuration or hardening that operators must add — they are not built into the application image today. Treat the section as a target architecture: ship the [Implemented] pieces as-is, and budget work for the [Target] pieces before a multi-tenant rollout.
+
 ### 1. Deployment Goals & Constraints
 
 | Goal | Rationale |
@@ -580,19 +582,19 @@ graph LR
 | **Run artifacts** | Azure Blob Storage + lifecycle rules | `./runs/<run_id>/` is rsynced to blob on session end; cool-tier after 30 days, archive after 180 |
 | **Chat history** | PostgreSQL Flexible Server | Chainlit's data layer (`chainlit-datalayer`) — sessions, messages, threads, feedback |
 | **LLM** | Azure OpenAI **and/or** Azure AI Foundry Claude | Set `LLM_SOURCE=AzureOpenAI` / `AzureAnthropic` + endpoint/deployment env vars; no code change |
-| **Observability** | Application Insights + Log Analytics | OpenTelemetry exporter wraps LangGraph node spans; Chainlit logs ship via stdout |
+| **Observability** | Application Insights + Log Analytics | **[Implemented]** Chainlit + stdlib `logging` write to stdout; Container Apps ships container logs to Log Analytics out of the box. **[Target]** OpenTelemetry instrumentation around LangGraph node transitions and tool calls — not wired up today; recommended before production rollout so per-turn latency and tool error rates are queryable. |
 | **CI/CD** | GitHub Actions → ACR build → Container Apps revision | Tag-driven; blue/green via Container Apps traffic splits |
 
 ### 4. Per-User Isolation Model
 
-Biomni-AD's agent executes LLM-generated Python in-process. In a multi-tenant deployment this is the highest-risk surface, so isolation is layered:
+Biomni-AD's agent executes LLM-generated Python in-process via `biomni/tool/support_tools.py::run_python_repl`, which calls `exec()` against a persistent module-level namespace. In a multi-tenant deployment this is the highest-risk surface, so isolation is layered. **Today the image gives you layers 4 and 5; layers 1–3 and 6 are deployment-layer configuration the operator must add before multi-tenant exposure.**
 
-1. **One replica per active user, not one per request.** Container Apps' session affinity routes a researcher's Chainlit websocket to a dedicated replica (`scaleRule` keyed on session header). The replica's filesystem and env are user-scoped.
-2. **Read-only base image and data lake.** `/app` and `/app/data` are mounted RO. Only `/app/user-data` and `/app/runs` are writable, and they are per-user volumes.
-3. **Network egress allowlist.** A Container Apps environment NSG restricts outbound traffic to: LLM endpoints (Azure OpenAI / Anthropic), public biomedical APIs the database tools call (UniProt, Ensembl, NCBI, etc. — explicit allowlist), the package registries pinned at build time, and ADDI internal endpoints. All other egress denied.
-4. **No host privileges.** Container runs as the non-root `mambauser` (UID 57439) — already supported via `BIOMNI_CONTAINER_USER` in `docker-compose.yml`. Production deployment sets it unconditionally; development can keep the `0:0` fallback.
-5. **Process timeouts.** `BIOMNI_TIMEOUT_SECONDS` (default 600) caps every tool call. Replicas auto-recycle on OOM / runaway loops via Container Apps health probes.
-6. **Secrets never reach the agent.** API keys are injected as env vars at process start; the agent's tool sandbox `exec()` scope is scrubbed of `os.environ` keys matching `*_API_KEY` / `*_TOKEN` before user code runs.
+1. **[Target] One replica per active user, not one per request.** Configure Container Apps session affinity so a researcher's Chainlit websocket is pinned to one replica (`affinity: sticky`, cookie-based). Combined with per-user volumes (below), this scopes filesystem state to that user.
+2. **[Target] Read-only base image and per-user writable volumes.** Mount `/app` and `/app/data` (the shared data lake) RO; mount per-user `/app/user-data` and `/app/runs` RW via Azure Files shares keyed off the OIDC `sub` claim. The Dockerfile does not enforce RO today — Container Apps' `volumeMounts` config does.
+3. **[Target] Network egress allowlist.** Configure the Container Apps environment NSG / VNET egress to allow only: LLM endpoints (Azure OpenAI / Foundry Claude), the explicit set of public biomedical APIs `biomni/tool/database.py` queries (UniProt, Ensembl, NCBI, etc.), pinned package registries, and ADDI internal endpoints. Deny-by-default for everything else.
+4. **[Implemented] Non-root container user.** The micromamba base image defines a non-root `mambauser` (UID 57439); `docker-compose.yml` exposes it via `BIOMNI_CONTAINER_USER` (default `0:0` for first-run convenience). Production deployments should pin it to `57439:57439`.
+5. **[Implemented] Per-tool timeout.** `BIOMNI_TIMEOUT_SECONDS` (default 600) caps every tool call via `biomni/config.py`. Combine with Container Apps health probes so replicas auto-recycle on OOM / runaway loops.
+6. **[Target] Secret scrubbing in the REPL namespace.** `run_python_repl` currently executes inside a long-lived `_persistent_namespace` with full access to `os.environ`, so any LLM-generated code can read `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, etc. **This is the most important hardening to add before exposing the agent to untrusted users**: wrap `exec()` so that `os.environ` is replaced with a filtered view (denylist matching `*_API_KEY`, `*_TOKEN`, `AWS_*`, `AZURE_*` credentials) for the duration of the call. Until that lands, treat API keys as visible to anyone who can submit a prompt.
 
 For workloads requiring **stronger isolation** (e.g., when users may upload sensitive data), the same image can be deployed on **Azure Container Instances with confidential containers** (AMD SEV-SNP) or on **AKS with gVisor / Kata runtime**. The Dockerfile and entrypoint require no changes.
 
@@ -622,10 +624,10 @@ The Alzheimer's Disease Data Initiative workbench provides a hosted Azure-based 
 
 ### 7. Scaling & Cost Model
 
-- **Replicas.** Container Apps scales 0 → N on incoming websocket connections; idle replicas scale to zero after the Chainlit `LANGCHAIN_SESSION_TIMEOUT`. Min replicas = 1 in prod to avoid cold-start on the first request.
+- **[Target] Replicas.** Configure Container Apps with a KEDA HTTP scaler (or `http-scale-rule` on concurrent requests) so replicas scale 0 → N on incoming Chainlit websocket connections and scale back down after the idle period defined by the scale rule's `cooldownPeriod`. Set `minReplicas: 1` in prod to avoid cold-start on the first request. The application itself has no idle-session env knob — websocket teardown is driven by Chainlit's client disconnect and the Container Apps scaler.
 - **Cost drivers** (in descending order): LLM tokens (≫ everything else), Azure Files Premium for the data lake (~$0.16/GiB/mo), Postgres flex server, then compute. Compute is typically <10% of the bill for a research-grade deployment.
-- **Per-tenant cost attribution.** OIDC `sub` is propagated to Application Insights custom dimensions and to the Anthropic/OpenAI request `metadata` field, allowing cost roll-up by user / institution.
-- **Quota enforcement.** A lightweight middleware in `chainlit_app.py` checks a per-user monthly token budget (stored in Postgres) before each LangGraph turn; the AD1 plan-then-approve gate is the natural place to surface estimated cost.
+- **[Target] Per-tenant cost attribution.** Propagate the OIDC `sub` claim into Application Insights custom dimensions and into the `metadata` field of Anthropic/OpenAI requests so cost can be rolled up by user / institution. This needs a small wrapper around the LLM call sites in `biomni/llm.py` — not implemented today.
+- **[Target] Quota enforcement.** A future addition: middleware in `chainlit_app.py` that checks a per-user monthly token budget (stored in Postgres) before each LangGraph turn, surfacing estimated cost at the AD1 plan-then-approve gate. No quota / budget logic exists in the codebase today — until it does, operators should rely on **provider-side** budgets (Azure OpenAI quota, Anthropic spend limits) as the backstop.
 
 ### 8. CI/CD & Release
 
