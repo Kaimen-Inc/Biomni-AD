@@ -8,7 +8,12 @@ services:
     image: biomni:latest
     env_file:
       - .env
-    user: "0:0"
+    # Default is root (0:0) so first-time `docker compose up` works with any
+    # bind-mount permissions. For security-hardened deployments set
+    # BIOMNI_CONTAINER_USER=57439:57439 in your .env to run as the micromamba
+    # base image's non-root `mambauser` — ensure ${BIOMNI_APP_DATA_HOST_PATH}
+    # and ${BIOMNI_RUNS_HOST_PATH} are pre-created and writable by that UID.
+    user: "${BIOMNI_CONTAINER_USER:-0:0}"
     environment:
       CHAINLIT_HOST: 0.0.0.0
       CHAINLIT_PORT: 8000

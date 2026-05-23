@@ -9,6 +9,31 @@ import os
 from dataclasses import dataclass
 
 
+def resolve_default_llm(fallback: str = "claude-sonnet-4-5") -> str:
+    """Pick the default LLM model name from environment.
+
+    Precedence: BIOMNI_LLM > Azure OpenAI deployment > Azure Anthropic deployment > fallback.
+
+    Azure OpenAI is selected only when DEPLOYMENT_NAME + ENDPOINT_URL + AZURE_OPENAI_API_KEY
+    are all set. Azure Anthropic requires DEPLOYMENT_NAME + ENDPOINT_URL containing
+    "anthropic" + AZURE_ANTHROPIC_API_KEY. This avoids misrouting users who configure
+    both Azure providers with overlapping env vars.
+    """
+    override = os.getenv("BIOMNI_LLM")
+    if override:
+        return override
+
+    deployment = os.getenv("DEPLOYMENT_NAME")
+    endpoint = os.getenv("ENDPOINT_URL")
+    if deployment and endpoint:
+        if os.getenv("AZURE_OPENAI_API_KEY"):
+            return f"azure-{deployment}"
+        if "anthropic" in endpoint and os.getenv("AZURE_ANTHROPIC_API_KEY"):
+            return deployment
+
+    return fallback
+
+
 @dataclass
 class BiomniConfig:
     """Central configuration for Biomni agent.

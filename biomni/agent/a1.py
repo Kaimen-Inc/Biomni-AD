@@ -16,6 +16,11 @@ from langchain_core.prompts import ChatPromptTemplate
 from langgraph.checkpoint.memory import MemorySaver
 from langgraph.graph import END, START, StateGraph
 
+from biomni.artifact import (
+    build_run_id as _shared_build_run_id,
+    get_all_files as _shared_get_all_files,
+    summarize_topic_for_run_id as _shared_summarize_topic_for_run_id,
+)
 from biomni.config import default_config
 from biomni.know_how import KnowHowLoader
 from biomni.llm import SourceType, get_llm
@@ -2348,15 +2353,7 @@ Each library is listed with its description to help you understand its functiona
 
     def _build_run_id(self, topic: str | None = None) -> str:
         """Build run directory ID as run_YYYYMMDD_HHMMSS_topic1_topic2_topic3."""
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        if not topic:
-            return f"run_{timestamp}"
-
-        topic_slug = self._summarize_topic_with_llm(topic) or self._summarize_topic_for_run_id(topic)
-        if not topic_slug:
-            return f"run_{timestamp}"
-
-        return f"run_{timestamp}_{topic_slug}"
+        return _shared_build_run_id(topic, llm_summarizer=self._summarize_topic_with_llm)
 
     def _summarize_topic_with_llm(self, topic: str) -> str:
         """Use configured LLM to generate a short, descriptive directory slug."""
@@ -2404,38 +2401,7 @@ Each library is listed with its description to help you understand its functiona
             return "".join(text_parts)
         return str(content or "")
 
-    @staticmethod
-    def _summarize_topic_for_run_id(topic: str) -> str:
-        """Extract a compact 1-3 word filesystem-safe summary from a prompt."""
-        stopwords = {
-            "a", "an", "and", "are", "as", "at", "be", "by", "for", "from", "in",
-            "into", "is", "it", "of", "on", "or", "that", "the", "this", "to", "with",
-            "using", "use", "please", "can", "could", "would", "should", "do", "does",
-            "analyze", "analysis", "show", "find", "run", "task", "generate", "get",
-        }
-
-        raw_tokens = re.findall(r"[A-Za-z0-9]+", topic)
-        if not raw_tokens:
-            return ""
-
-        selected: list[str] = []
-        for token in raw_tokens:
-            lower = token.lower()
-            if lower in stopwords:
-                continue
-            if len(lower) <= 2 and not lower.isdigit():
-                continue
-            selected.append(lower)
-            if len(selected) == 3:
-                break
-
-        if not selected:
-            selected = [t.lower() for t in raw_tokens[:3]]
-
-        summary = "_".join(selected)
-        summary = re.sub(r"[^0-9a-z_]+", "", summary)
-        summary = re.sub(r"_+", "_", summary).strip("_")
-        return summary[:40]
+    _summarize_topic_for_run_id = staticmethod(_shared_summarize_topic_for_run_id)
 
     def update_system_prompt_with_selected_resources(self, selected_resources):
         """Update the system prompt with the selected resources."""
@@ -2682,21 +2648,8 @@ Each library is listed with its description to help you understand its functiona
     # ---------------------------------------------------------------------------
 
     def _get_all_files(self, directory: str) -> set:
-        """Recursively get all files in directory, excluding system/env folders."""
-        excluded_dirs = {
-            "runs", ".git", "__pycache__", ".gemini", ".venv", "venv", "env",
-            ".chainlit", "node_modules", "site-packages",
-        }
-        result = set()
-        for root, dirs, files in os.walk(directory):
-            dirs[:] = [
-                d for d in dirs
-                if not d.startswith(".") and d not in excluded_dirs
-            ]
-            for fname in files:
-                if not fname.startswith("."):
-                    result.add(os.path.join(root, fname))
-        return result
+        """Recursively get all files in `directory`, excluding system/env folders."""
+        return _shared_get_all_files(directory)
 
     def _generate_notebook(self) -> dict:
         """Generate a Jupyter Notebook structure from self.raw_log."""

@@ -14,13 +14,15 @@ Environment variables:
 """
 
 import asyncio
+import logging
 import os
 import re
 import sys
 import uuid
 from concurrent.futures import ThreadPoolExecutor
-from datetime import datetime
 from pathlib import Path
+
+logger = logging.getLogger(__name__)
 
 from dotenv import load_dotenv
 load_dotenv(override=True)
@@ -66,6 +68,9 @@ except ModuleNotFoundError:
 
 import chainlit as cl
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
+
+from biomni.artifact import build_run_id, get_all_files
+from biomni.config import resolve_default_llm
 
 # ---------------------------------------------------------------------------
 # Conversation history helpers
@@ -119,20 +124,7 @@ AD1_PLANNING_SYSTEM_PROMPT = (
     "Be specific and tailor the plan to user's question. Do not execute any code yet."
 )
 
-# Auto-detect Azure OpenAI setup: require deployment + endpoint + Azure OpenAI key.
-# This avoids misrouting users who configure Azure Anthropic with the same
-# ENDPOINT_URL/DEPLOYMENT_NAME fields.
-_azure_deployment = os.getenv("DEPLOYMENT_NAME")
-_azure_endpoint = os.getenv("ENDPOINT_URL")
-_azure_openai_key = os.getenv("AZURE_OPENAI_API_KEY")
-_azure_default = f"azure-{_azure_deployment}" if (_azure_deployment and _azure_endpoint and _azure_openai_key) else None
-_azure_anthropic_key = os.getenv("AZURE_ANTHROPIC_API_KEY")
-_azure_anthropic_default = (
-    _azure_deployment
-    if (_azure_deployment and _azure_endpoint and "anthropic" in _azure_endpoint and _azure_anthropic_key)
-    else None
-)
-DEFAULT_LLM = os.getenv("BIOMNI_LLM") or _azure_default or _azure_anthropic_default or "claude-sonnet-4-5"
+DEFAULT_LLM = resolve_default_llm()
 DEFAULT_PATH = os.getenv("BIOMNI_PATH", "./data")
 # Set BIOMNI_AGENT=a1 to force the A1 agent on startup (skips the profile selector)
 FORCE_AGENT = os.getenv("BIOMNI_AGENT", "").lower()  # "a1" | "ad1" | ""
@@ -688,8 +680,8 @@ def _refresh_chainlit_welcome_markdown() -> None:
         )
 
         CHAINLIT_MD_PATH.write_text(base + prompts_block + dataset_block, encoding="utf-8")
-    except Exception as exc:
-        print(f"Warning: Could not refresh chainlit welcome markdown: {exc}")
+    except Exception:
+        logger.warning("Could not refresh chainlit welcome markdown", exc_info=True)
 
 
 _refresh_chainlit_welcome_markdown()
@@ -1037,6 +1029,7 @@ async def on_chat_start():
         if inventory_text:
             agent.user_data_inventory = inventory_text
     except Exception as exc:
+        logger.exception("Failed to initialize %s agent", label)
         await cl.Message(content=f"Failed to initialize {label}: {exc}").send()
         return
 
@@ -1112,6 +1105,7 @@ async def on_message(message: cl.Message):
                 else:
                     step.output = "No resources selected; proceeding with full tool set."
             except Exception as exc:
+                logger.warning("Tool retrieval failed; falling back to full tool set", exc_info=True)
                 step.output = f"⚠️ Tool retrieval failed ({exc}); proceeding with all tools."
 
     # ------------------------------------------------------------------
@@ -1131,22 +1125,22 @@ async def on_message(message: cl.Message):
 
     # Pre-create run directory so OUTPUT_DIR is available during code execution.
     try:
-        _run_id = _build_run_id(prompt)
+        _run_id = build_run_id(prompt)
         _runs_root = os.path.abspath(os.path.join(os.getcwd(), "runs"))
         os.makedirs(_runs_root, exist_ok=True)
         _current_run_dir = os.path.join(_runs_root, _run_id)
         os.makedirs(_current_run_dir, exist_ok=True)
         agent._current_run_dir = _current_run_dir
         os.environ["BIOMNI_OUTPUT_PATH"] = _current_run_dir
-    except Exception as _e:
-        print(f"Warning: Could not pre-create run directory: {_e}")
+    except Exception:
+        logger.warning("Could not pre-create run directory", exc_info=True)
         _current_run_dir = None
 
     # Snapshot files before execution (cwd + data root) to detect new outputs.
-    initial_files = _get_all_files(os.getcwd())
+    initial_files = get_all_files(os.getcwd())
     _data_root = getattr(agent, "data_root_dir", None)
     if _data_root and os.path.isdir(_data_root):
-        initial_files |= _get_all_files(_data_root)
+        initial_files |= get_all_files(_data_root)
 
     final_state = await _stream_execution(agent, prompt, history, thread_id)
 
@@ -1206,6 +1200,7 @@ async def _interactive_planning(agent, prompt: str, agent_type: str = "a1") -> s
                 plan_text = response.content if hasattr(response, "content") else str(response)
                 step.output = plan_text
             except Exception as exc:
+                logger.warning("Plan generation failed; proceeding without approval gate", exc_info=True)
                 step.output = f"⚠️ Could not generate plan ({exc}). Proceeding without a plan."
                 # Fall through to execution without approval gate
                 return prompt
@@ -1368,7 +1363,7 @@ async def _display_images(observation: str):
                     image = cl.Image(path=candidate, name=os.path.basename(candidate), display="inline")
                     await cl.Message(content="", elements=[image]).send()
                 except Exception:
-                    pass
+                    logger.warning("Failed to render image %s", candidate, exc_info=True)
                 break
 
 
@@ -1394,7 +1389,7 @@ async def _save_run_artifacts_for_agent(
         current_run_dir = agent._current_run_dir
         run_id = os.path.basename(current_run_dir)
     else:
-        run_id = _build_run_id(topic)
+        run_id = build_run_id(topic)
         runs_root = os.path.abspath(os.path.join(os.getcwd(), "runs"))
         os.makedirs(runs_root, exist_ok=True)
         current_run_dir = os.path.join(runs_root, run_id)
@@ -1412,6 +1407,7 @@ async def _save_run_artifacts_for_agent(
             )
             step.output = f"Artifacts saved to `{current_run_dir}`"
         except Exception as exc:
+            logger.exception("Artifact saving failed for run %s", run_id)
             step.output = f"⚠️ Artifact saving failed: {exc}"
 
     await cl.Message(
@@ -1423,59 +1419,5 @@ async def _save_run_artifacts_for_agent(
 # Utility
 # ---------------------------------------------------------------------------
 
-def _get_all_files(directory: str) -> set:
-    """Recursively collect all non-hidden file paths in a directory."""
-    result = set()
-    for root, _, files in os.walk(directory):
-        if "/." in root or root.startswith("."):
-            continue
-        for fname in files:
-            if not fname.startswith("."):
-                result.add(os.path.join(root, fname))
-    return result
-
-
-def _build_run_id(topic: str | None = None) -> str:
-    """Build run directory ID as run_YYYYMMDD_HHMMSS_topic1_topic2_topic3."""
-    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    if not topic:
-        return f"run_{timestamp}"
-
-    topic_slug = _summarize_topic_for_run_id(topic)
-    if not topic_slug:
-        return f"run_{timestamp}"
-
-    return f"run_{timestamp}_{topic_slug}"
-
-
-def _summarize_topic_for_run_id(topic: str) -> str:
-    """Extract a compact 1-3 word filesystem-safe summary from a prompt."""
-    stopwords = {
-        "a", "an", "and", "are", "as", "at", "be", "by", "for", "from", "in",
-        "into", "is", "it", "of", "on", "or", "that", "the", "this", "to", "with",
-        "using", "use", "please", "can", "could", "would", "should", "do", "does",
-        "analyze", "analysis", "show", "find", "run", "task", "generate", "get",
-    }
-
-    raw_tokens = re.findall(r"[A-Za-z0-9]+", topic)
-    if not raw_tokens:
-        return ""
-
-    selected: list[str] = []
-    for token in raw_tokens:
-        lower = token.lower()
-        if lower in stopwords:
-            continue
-        if len(lower) <= 2 and not lower.isdigit():
-            continue
-        selected.append(lower)
-        if len(selected) == 3:
-            break
-
-    if not selected:
-        selected = [t.lower() for t in raw_tokens[:3]]
-
-    summary = "_".join(selected)
-    summary = re.sub(r"[^0-9a-z_]+", "", summary)
-    summary = re.sub(r"_+", "_", summary).strip("_")
-    return summary[:40]
+# Run-id / file-snapshot helpers now live in biomni.artifact so that the agent
+# and the UI use the same exclude list — see the imports at the top of the file.

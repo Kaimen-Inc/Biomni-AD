@@ -507,28 +507,6 @@ class AD1(A1):
         }
         return notebook
 
-    def _get_all_files(self, directory):
-        """Recursively get all files in a directory, ignoring system and run directories."""
-        file_list = []
-        excluded_dirs = {
-            "runs", ".git", "__pycache__", ".gemini", ".venv", "venv", "env",
-            ".chainlit", "node_modules", "site-packages",
-        }
-
-        for root, dirs, files in os.walk(directory):
-            # Prune ignored directories early.
-            dirs[:] = [
-                d for d in dirs
-                if not d.startswith(".") and d not in excluded_dirs
-            ]
-                
-            for file in files:
-                # Ignore hidden files
-                if file.startswith('.'):
-                    continue
-                file_list.append(os.path.join(root, file))
-        return set(file_list)
-
     def _scan_ad_catalogs_summary(self) -> str:
         """Scan BiomniAD JSON catalogs and return a compact summary string."""
         current_dir = os.path.dirname(os.path.abspath(__file__))
