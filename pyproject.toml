@@ -69,6 +69,12 @@ addopts = ["-ra", "--strict-markers"]
 [tool.ruff]
 src = ["src"]
 line-length = 120
+extend-exclude = [
+    # Broken/incomplete alternative ReAct implementation — not imported anywhere
+    "biomni/agent/react.py",
+    # Legacy integration script kept for manual AD1 saving verification
+    "tests/verify_ad1_saving.py",
+]
 
 [tool.ruff.format]
 docstring-code-format = true
