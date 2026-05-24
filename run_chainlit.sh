@@ -41,7 +41,10 @@ fi
 
 # A bare `conda run` against a missing env produces a long stack trace; the
 # explicit check gives a one-line actionable error instead.
-if ! "$CONDA_CMD" env list | grep -q "^${REQUIRED_ENV}[[:space:]]"; then
+#
+# awk with exact-string comparison (no regex) so env names containing
+# dots/plus/brackets (technically allowed by conda) don't confuse us.
+if ! "$CONDA_CMD" env list | awk -v name="$REQUIRED_ENV" 'NR > 1 && $1 == name { found=1 } END { exit !found }'; then
     echo "ERROR: conda environment '${REQUIRED_ENV}' not found." >&2
     echo "       Create it with:  cd biomni_env && bash setup.sh" >&2
     exit 1

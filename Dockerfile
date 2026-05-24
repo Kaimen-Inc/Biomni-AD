@@ -10,15 +10,15 @@
 #                     so HEALTHCHECK and ENTRYPOINT can run python directly
 #                     without per-invocation ``micromamba run`` overhead.
 #
-# Base image is pinned by multi-arch manifest digest in both stages.
-# Update the digest deliberately when bumping the base version.
-
-ARG MICROMAMBA_BASE=mambaorg/micromamba:1.5.10@sha256:e3797091302382ea841498bc93a7b0a50f7c1448333d5e946d2d1608d0c5f43d
+# Base image is pinned by multi-arch manifest digest in both stages. The
+# digest is inlined on each FROM (not stored in an ARG) so Dependabot's
+# Docker updater can recognise and bump it — it only rewrites the literal
+# FROM line, not ARG defaults.
 
 # ──────────────────────────────────────────────────────────────────────────
 # Stage 1: builder
 # ──────────────────────────────────────────────────────────────────────────
-FROM ${MICROMAMBA_BASE} AS builder
+FROM mambaorg/micromamba:1.5.10@sha256:e3797091302382ea841498bc93a7b0a50f7c1448333d5e946d2d1608d0c5f43d AS builder
 
 ARG BIOMNI_ENV_FILE=biomni_env/environment.yml
 
@@ -49,17 +49,26 @@ RUN --mount=type=cache,target=/root/.cache/pip,sharing=locked \
 # ──────────────────────────────────────────────────────────────────────────
 # Stage 2: runtime
 # ──────────────────────────────────────────────────────────────────────────
-FROM ${MICROMAMBA_BASE} AS runtime
+# Same digest as stage 1 — keep both lines in sync when bumping. The
+# duplication is intentional: Dependabot's Docker updater rewrites the
+# literal FROM line and won't follow an ARG.
+FROM mambaorg/micromamba:1.5.10@sha256:e3797091302382ea841498bc93a7b0a50f7c1448333d5e946d2d1608d0c5f43d AS runtime
 
 # Build-arg metadata for provenance. The CI workflow passes GIT_SHA / GIT_REF
 # so a pulled image can be traced back to a commit without registry tag soup.
 ARG GIT_SHA=""
 ARG GIT_REF=""
 
-# OCI image labels — surfaced by GHCR, used by image scanners and policy
-# engines. Keep these in lockstep with the metadata-action labels in
-# .github/workflows/docker.yml so registry-side and image-embedded metadata
-# agree.
+# OCI image labels.
+#
+# These are the default labels baked into the image. The CI publish path
+# (.github/workflows/docker.yml) layers additional / overriding labels via
+# docker-metadata-action — specifically ``image.revision`` (= github.sha)
+# and ``image.version`` (= the primary tag, e.g. ``sha-abc1234``). For
+# images built outside CI (``docker build .``) these fields fall back to
+# whatever GIT_SHA / GIT_REF build-args the operator passes, or empty.
+# That's intentional: in-CI metadata wins, local builds get whatever the
+# builder feeds in.
 LABEL org.opencontainers.image.title="Biomni-AD" \
       org.opencontainers.image.description="Alzheimer's-specialized biomedical AI agent (Chainlit UI)" \
       org.opencontainers.image.source="https://github.com/Kaimen-Inc/Biomni-AD" \
@@ -77,16 +86,23 @@ COPY --from=builder --chown=57439:57439 /opt/conda/envs/biomni_e1 /opt/conda/env
 
 # Copy application sources. The biomni dir path must match the editable
 # install location used in stage 1 (/app/biomni); the others are runtime
-# assets. ``--chown`` makes the tree owned by the base image's non-root
-# mambauser so the image can run as either root (default for first-time
-# compose runs) or 57439:57439 (production-hardened mode) — chainlit's
-# init writes translation files into /app/.chainlit, which would fail
-# read-only.
+# assets. ``--chown=57439:57439`` matches the base image's mambauser
+# (MAMBA_USER_ID; stable across the 1.5.x series — if upstream bumps it,
+# both the FROM digest and these uids must be updated together) so the
+# tree is owned correctly whether the image runs as root (compose default
+# for first-time setup) or 57439:57439 (production-hardened mode).
+# Chainlit's init writes translation files into /app/.chainlit/, which
+# would fail if the tree were root-owned and the container ran as
+# mambauser.
 #
 # chainlit_ui/ is shipped source-only on purpose (pyproject excludes it
-# from the wheel) — the chainlit_app.py entrypoint imports it from cwd,
-# so the directory must be present at the chainlit working directory.
-COPY --chown=57439:57439 pyproject.toml README.md MANIFEST.in /app/
+# from the wheel) — the chainlit_app.py entrypoint imports it relative
+# to cwd, so the directory must be present at the chainlit working dir.
+#
+# pyproject.toml, README.md, MANIFEST.in are NOT copied here: the
+# editable install in stage 1 baked the package metadata into the env's
+# site-packages (.pth + .dist-info), so the runtime stage doesn't need
+# the originals.
 COPY --chown=57439:57439 biomni /app/biomni
 COPY --chown=57439:57439 chainlit_app.py chainlit.md /app/
 COPY --chown=57439:57439 chainlit_ui /app/chainlit_ui

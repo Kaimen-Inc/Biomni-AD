@@ -12,6 +12,9 @@ name: Docker image
 
 on:
   pull_request:
+    # Cover everything the Dockerfile COPYs or that affects build dependencies.
+    # When in doubt, add the path here — over-matching wastes a few minutes
+    # of CI; under-matching lets a broken-build PR merge to a release branch.
     paths:
       - "Dockerfile"
       - ".dockerignore"
@@ -19,8 +22,13 @@ on:
       - "docker/**"
       - "biomni_env/environment.yml"
       - "pyproject.toml"
+      - "MANIFEST.in"
       - "biomni/**"
       - "chainlit_app.py"
+      - "chainlit_ui/**"
+      - "chainlit.md"
+      - ".chainlit/**"
+      - "public/**"
       - ".github/workflows/docker.yml"
   push:
     branches:
@@ -60,9 +68,16 @@ jobs:
           push: false
           tags: biomni-ad:ci
           cache-from: type=gha
-          cache-to: type=gha,mode=max
-          # Surface build-time vulnerabilities and provenance info in the
-          # build summary; doesn't fail the job on findings.
+          # ``mode=min`` (default) keeps PR cache writes small — only the
+          # final layers are exported. The publish job uses ``mode=max``
+          # to feed every intermediate stage back into the GHA cache so
+          # branch builds benefit from PR-warmed caches.
+          cache-to: type=gha,mode=min
+          # ``provenance: false`` skips SLSA attestations on PR builds —
+          # they aren't published anywhere so the attestation has no
+          # downstream consumer. The publish job sets the same value
+          # explicitly for the same reason (Container Apps and other
+          # consumers we currently target don't read attestations).
           provenance: false
 
   publish:
@@ -89,11 +104,15 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
 
       # Tag strategy:
-      #   - branch name  (refs/heads/main → :main)
-      #   - git SHA short (always — primary content-addressed tag)
-      #   - semver tag   (v1.2.3 → :1.2.3 + :1.2 + :latest)
-      # SHA tag is what production should pin to; branch and semver tags
-      # are convenience aliases.
+      #   - branch name        (refs/heads/main → :main; / in feat branches
+      #                         sanitised to - per Docker tag rules)
+      #   - git SHA short      (always — primary content-addressed tag,
+      #                         what production should pin to)
+      #   - :latest            (only when pushing the default branch —
+      #                         conventional "newest published" alias)
+      #   - semver aliases     (v1.2.3 git tag → :1.2.3 and :1.2)
+      # Branch and :latest tags are convenience aliases; the :<sha> tag
+      # is the canonical immutable pointer.
       - name: Extract image metadata
         id: meta
         uses: docker/metadata-action@v5
@@ -101,6 +120,7 @@ jobs:
           images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
           tags: |
             type=ref,event=branch
+            type=raw,value=latest,enable={{is_default_branch}}
             type=semver,pattern={{version}}
             type=semver,pattern={{major}}.{{minor}}
             type=sha,format=short
@@ -118,9 +138,19 @@ jobs:
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
+          # ``mode=max`` exports every intermediate stage; PR builds run
+          # later read these as ``cache-from`` for fast canary checks.
           cache-to: type=gha,mode=max
-          # Annotate the image manifest with the source commit so operators
-          # can recover provenance from a pulled image alone.
+          # No SLSA provenance attestations — keeps the manifest list
+          # clean (no unknown/unknown platform entry that confuses some
+          # older orchestrators) and matches the PR build job.
+          provenance: false
+          # Build-args feed the Dockerfile's GIT_SHA / GIT_REF ARGs so
+          # the in-image LABELs carry a meaningful default for tooling
+          # that inspects the image without consulting GHCR metadata.
+          # metadata-action also writes image.revision / image.version
+          # via the labels: input above; both layers agree because both
+          # derive from github.sha / github.ref_name.
           build-args: |
             GIT_SHA=${{ github.sha }}
             GIT_REF=${{ github.ref_name }}
