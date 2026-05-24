@@ -1,9 +1,9 @@
-"""Tests for biomni.config — env-driven default LLM resolution."""
+"""Tests for biomni.config — env-driven default LLM resolution + resilience knobs."""
 
 from __future__ import annotations
 
 import pytest
-from biomni.config import resolve_default_llm
+from biomni.config import BiomniConfig, resolve_default_llm
 
 
 @pytest.fixture(autouse=True)
@@ -14,6 +14,10 @@ def _clear_env(monkeypatch: pytest.MonkeyPatch) -> None:
         "ENDPOINT_URL",
         "AZURE_OPENAI_API_KEY",
         "AZURE_ANTHROPIC_API_KEY",
+        "BIOMNI_LLM_MAX_RETRIES",
+        "BIOMNI_LLM_REQUEST_TIMEOUT",
+        "BIOMNI_ENABLE_PROMPT_CACHING",
+        "BIOMNI_ENABLE_LLM_TELEMETRY",
     ):
         monkeypatch.delenv(k, raising=False)
 
@@ -63,3 +67,46 @@ def test_partial_azure_config_falls_back(monkeypatch: pytest.MonkeyPatch) -> Non
     monkeypatch.setenv("DEPLOYMENT_NAME", "mydep")
     monkeypatch.setenv("AZURE_OPENAI_API_KEY", "k")
     assert resolve_default_llm() == "claude-sonnet-4-5"
+
+
+# ---------------------------------------------------------------------------
+# Resilience knobs: retry / timeout / caching / telemetry
+# ---------------------------------------------------------------------------
+
+
+def test_resilience_defaults() -> None:
+    cfg = BiomniConfig()
+    assert cfg.llm_max_retries == 3
+    assert cfg.llm_request_timeout == 120.0
+    assert cfg.enable_prompt_caching is True
+    assert cfg.enable_llm_telemetry is False
+    snap = cfg.to_dict()
+    for key in (
+        "llm_max_retries",
+        "llm_request_timeout",
+        "enable_prompt_caching",
+        "enable_llm_telemetry",
+    ):
+        assert key in snap
+
+
+def test_env_overrides_resilience(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("BIOMNI_LLM_MAX_RETRIES", "7")
+    monkeypatch.setenv("BIOMNI_LLM_REQUEST_TIMEOUT", "45.5")
+    monkeypatch.setenv("BIOMNI_ENABLE_PROMPT_CACHING", "false")
+    monkeypatch.setenv("BIOMNI_ENABLE_LLM_TELEMETRY", "true")
+    cfg = BiomniConfig()
+    assert cfg.llm_max_retries == 7
+    assert cfg.llm_request_timeout == 45.5
+    assert cfg.enable_prompt_caching is False
+    assert cfg.enable_llm_telemetry is True
+
+
+@pytest.mark.parametrize("raw", ["none", "None", "0"])
+def test_request_timeout_none_sentinels(monkeypatch: pytest.MonkeyPatch, raw: str) -> None:
+    """Explicit sentinels disable the per-call timeout. Empty string ≠ disable
+    (matches shell convention — an unset/blank var falls back to the default).
+    """
+    monkeypatch.setenv("BIOMNI_LLM_REQUEST_TIMEOUT", raw)
+    cfg = BiomniConfig()
+    assert cfg.llm_request_timeout is None

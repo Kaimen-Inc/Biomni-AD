@@ -61,6 +61,23 @@ class BiomniConfig:
     llm: str = "claude-sonnet-4-5"
     temperature: float = 0.7
 
+    # LLM resilience settings
+    # Provider SDKs (anthropic, openai, etc.) implement their own exponential
+    # backoff on 429 / 5xx — we forward these knobs to the SDK constructor.
+    llm_max_retries: int = 3
+    # Per-call request timeout (seconds). None disables. Distinct from
+    # `timeout_seconds`, which gates code/tool execution, not LLM HTTP calls.
+    llm_request_timeout: float | None = 120.0
+
+    # Prompt caching (currently honored for Anthropic models). When True the
+    # agent annotates the large system prompt with cache_control so the
+    # provider can charge cached-input rates on subsequent turns.
+    enable_prompt_caching: bool = True
+
+    # Per-run LLM usage / cost telemetry. Cheap; off by default to avoid
+    # changing existing log output for users not opted in.
+    enable_llm_telemetry: bool = False
+
     # Tool settings
     use_tool_retriever: bool = True
     auto_network_limited_mode: bool = True
@@ -106,6 +123,17 @@ class BiomniConfig:
         if os.getenv("BIOMNI_SOURCE"):
             self.source = os.getenv("BIOMNI_SOURCE")
 
+        # LLM resilience env-var overrides.
+        if os.getenv("BIOMNI_LLM_MAX_RETRIES"):
+            self.llm_max_retries = int(os.getenv("BIOMNI_LLM_MAX_RETRIES"))
+        if os.getenv("BIOMNI_LLM_REQUEST_TIMEOUT"):
+            raw = os.getenv("BIOMNI_LLM_REQUEST_TIMEOUT").strip().lower()
+            self.llm_request_timeout = None if raw in ("", "none", "0") else float(raw)
+        if os.getenv("BIOMNI_ENABLE_PROMPT_CACHING"):
+            self.enable_prompt_caching = os.getenv("BIOMNI_ENABLE_PROMPT_CACHING").lower() == "true"
+        if os.getenv("BIOMNI_ENABLE_LLM_TELEMETRY"):
+            self.enable_llm_telemetry = os.getenv("BIOMNI_ENABLE_LLM_TELEMETRY").lower() == "true"
+
         # Protocols.io access token (prefer specific env vars)
         env_token = os.getenv("PROTOCOLS_IO_ACCESS_TOKEN") or os.getenv("BIOMNI_PROTOCOLS_IO_ACCESS_TOKEN")
         if env_token:
@@ -118,6 +146,10 @@ class BiomniConfig:
             "timeout_seconds": self.timeout_seconds,
             "llm": self.llm,
             "temperature": self.temperature,
+            "llm_max_retries": self.llm_max_retries,
+            "llm_request_timeout": self.llm_request_timeout,
+            "enable_prompt_caching": self.enable_prompt_caching,
+            "enable_llm_telemetry": self.enable_llm_telemetry,
             "use_tool_retriever": self.use_tool_retriever,
             "auto_network_limited_mode": self.auto_network_limited_mode,
             "commercial_mode": self.commercial_mode,

@@ -1,5 +1,6 @@
 import inspect
 import json
+import logging
 import os
 import re
 import shutil
@@ -7,6 +8,8 @@ from collections.abc import Generator
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Literal, TypedDict
+
+logger = logging.getLogger(__name__)
 
 import pandas as pd
 from dotenv import load_dotenv
@@ -26,7 +29,8 @@ from biomni.artifact import (
 )
 from biomni.config import default_config
 from biomni.know_how import KnowHowLoader
-from biomni.llm import SourceType, get_llm
+from biomni.llm import SourceType, get_llm, resolve_source
+from biomni.llm_resilience import LLMUsageTracker, prepare_messages_for_cache
 from biomni.model.retriever import ToolRetriever
 from biomni.tool.support_tools import run_python_repl
 from biomni.tool.tool_registry import ToolRegistry
@@ -234,6 +238,23 @@ class A1:
             api_key=api_key,
             config=default_config,
         )
+        # Resolve the source string once so per-call resilience helpers
+        # (prompt caching, telemetry) can dispatch without re-running the
+        # auto-detection heuristics.
+        try:
+            self._llm_source = resolve_source(
+                model=llm or default_config.llm,
+                source=source,
+                base_url=base_url,
+            )
+        except ValueError:
+            # If detection fails, leave caching disabled rather than crash;
+            # get_llm() above would already have raised on a truly bad config.
+            self._llm_source = None
+        self._llm_prompt_caching = bool(
+            getattr(default_config, "enable_prompt_caching", False) and self._llm_source == "Anthropic"
+        )
+        self.usage_tracker = LLMUsageTracker()
         self.module2api = module2api
         self.use_tool_retriever = use_tool_retriever
 
@@ -253,6 +274,36 @@ class A1:
         # Add timeout parameter
         self.timeout_seconds = timeout_seconds  # 10 minutes default timeout
         self.configure()
+
+    def _invoke_llm(self, messages: list[BaseMessage], *, cache_system: bool = True) -> BaseMessage:
+        """Invoke ``self.llm`` with prompt-cache annotation and usage tracking.
+
+        Centralizes two cross-cutting concerns so the ReAct nodes don't have
+        to repeat them:
+
+        * Optionally mark the system message with ``cache_control`` so
+          Anthropic bills subsequent turns at the cache-read rate.
+        * Record token usage on every response into ``self.usage_tracker``.
+
+        ``cache_system=False`` opts out for one-shot calls with unique
+        system prompts (caching wastes a write there).
+        """
+        prepared = (
+            prepare_messages_for_cache(messages, self._llm_source, enabled=self._llm_prompt_caching)
+            if cache_system
+            else messages
+        )
+        response = self.llm.invoke(prepared)
+        try:
+            self.usage_tracker.record(response)
+        except Exception:
+            # Telemetry is best-effort — never let it break a run.
+            logger.debug("usage tracking failed", exc_info=True)
+        return response
+
+    def llm_usage_summary(self) -> dict:
+        """Return a snapshot of LLM token usage for this agent instance."""
+        return self.usage_tracker.summary()
 
     def _build_network_limited_instruction(self) -> str:
         """Build policy text for network-limited operation mode."""
@@ -1871,7 +1922,7 @@ Each library is listed with its description to help you understand its functiona
                 system_prompt += "\n\nIMPORTANT FOR GPT MODELS: You MUST use XML tags <execute> or <solution> in EVERY response. Do not use markdown code blocks (```) - use <execute> tags instead."
 
             messages = [SystemMessage(content=system_prompt)] + state["messages"]
-            response = self.llm.invoke(messages)
+            response = self._invoke_llm(messages)
 
             # Normalize Responses API content blocks (list of dicts) into a plain string
             content = response.content
@@ -2085,7 +2136,7 @@ Each library is listed with its description to help you understand its functiona
                 Think hard what are missing to solve the task.
                 No question asked, just feedbacks.
                 """
-                feedback = self.llm.invoke(messages + [HumanMessage(content=feedback_prompt)])
+                feedback = self._invoke_llm(messages + [HumanMessage(content=feedback_prompt)])
 
                 # Add feedback as a new message
                 state["messages"].append(
@@ -2374,8 +2425,7 @@ Each library is listed with its description to help you understand its functiona
 
     def _summarize_topic_with_llm(self, topic: str) -> str:
         """Use configured LLM to generate a short, descriptive directory slug."""
-        llm = getattr(self, "llm", None)
-        if llm is None:
+        if getattr(self, "llm", None) is None:
             return ""
 
         try:
@@ -2388,7 +2438,10 @@ Each library is listed with its description to help you understand its functiona
                 ),
                 HumanMessage(content=f"Prompt: {topic}"),
             ]
-            response = llm.invoke(messages)
+            # cache_system=False: this one-shot system prompt is tiny and unique
+            # to the call site, so writing it to the cache would cost more than
+            # the savings on any future hit.
+            response = self._invoke_llm(messages, cache_system=False)
             text = self._extract_llm_text(response)
             candidate = text.strip().splitlines()[0] if text.strip() else ""
             candidate = re.sub(r"[^0-9a-zA-Z_\s-]+", "", candidate)
