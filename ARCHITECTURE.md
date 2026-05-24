@@ -575,7 +575,7 @@ graph LR
 | **Edge / TLS / WAF** | Azure Front Door + WAF policy | Public ingress, OWASP rule set, DDoS Standard |
 | **Identity** | Microsoft Entra ID (OIDC) | Chainlit `oauth_callback` hook; user `sub` claim used as session/run-id prefix |
 | **App runtime** | **Azure Container Apps** (preferred) or AKS | Runs the existing `Dockerfile` (micromamba + `chainlit run`) unmodified; per-revision rollouts |
-| **Image registry** | Azure Container Registry | Built from this repo's `Dockerfile`; tag = git SHA |
+| **Image registry** | Azure Container Registry (mirror of GHCR) | **[Implemented]** `.github/workflows/docker.yml` builds the `Dockerfile` on every PR and publishes to GHCR (`ghcr.io/kaimen-inc/biomni-ad`) on push to `main` / `feat/adworkbench` / tags. Tags: `:<sha>`, `:<branch>`, plus semver aliases for git tags. For ACR-based deployments, mirror from GHCR rather than rebuilding. |
 | **Secrets** | Azure Key Vault + Container Apps secret refs | `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `AZURE_*` keys, DB password — never baked into the image |
 | **Shared data lake** | Azure Files (Premium, SMB), mounted **read-only** at `/app/data` | The 77-file ~11GB Biomni data lake; downloaded once into the file share, then mounted by every replica |
 | **Per-user scratch** | Azure Files (per-user share) at `/app/user-data` | User uploads + downloaded AD catalog files (`biomniAD/<dataset_id>/`) |
@@ -583,7 +583,9 @@ graph LR
 | **Chat history** | PostgreSQL Flexible Server | Chainlit's data layer (`chainlit-datalayer`) — sessions, messages, threads, feedback |
 | **LLM** | Azure OpenAI **and/or** Azure AI Foundry Claude | Set `LLM_SOURCE=AzureOpenAI` / `AzureAnthropic` + endpoint/deployment env vars; no code change |
 | **Observability** | Application Insights + Log Analytics | **[Implemented]** Chainlit + stdlib `logging` write to stdout; Container Apps ships container logs to Log Analytics out of the box. **[Target]** OpenTelemetry instrumentation around LangGraph node transitions and tool calls — not wired up today; recommended before production rollout so per-turn latency and tool error rates are queryable. |
-| **CI/CD** | GitHub Actions → ACR build → Container Apps revision | Tag-driven; blue/green via Container Apps traffic splits |
+| **CI/CD** | GitHub Actions → GHCR → Container Apps revision | **[Implemented]** GHCR publish on push (see Image registry row). **[Target]** Container Apps revision rollout from GHCR (`az containerapp update --image ghcr.io/...:<sha>`) with blue/green via traffic splits — operator-side wiring. |
+| **Container liveness** | Container Apps HTTP / TCP probe | **[Implemented]** `HEALTHCHECK` baked into the Dockerfile (TCP probe on `:8000` via `python -c`) and mirrored in `docker-compose.yml`. Container Apps' default probe configuration picks up the `EXPOSE 8000` port; no extra wiring needed. |
+| **Supply chain** | Dependabot + pinned base digest | **[Implemented]** Base image pinned by digest (`mambaorg/micromamba:1.5.10@sha256:...`); `.github/dependabot.yml` watches Dockerfile and GitHub Actions for security advisories weekly. |
 
 ### 4. Per-User Isolation Model
 

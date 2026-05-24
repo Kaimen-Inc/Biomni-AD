@@ -28,3 +28,15 @@ services:
       - ${BIOMNI_RUNS_HOST_PATH:-./runs}:/app/runs
       - ${BIOMNI_USER_DATA_HOST_PATH:-/tmp/biomni_user_data}:/app/user-data:ro
     restart: unless-stopped
+    # Mirrors the Dockerfile HEALTHCHECK so `docker compose ps` / orchestrators
+    # see the same liveness signal. The runtime image puts the env's bin on
+    # PATH, so `python` is the conda env's interpreter — no micromamba run
+    # wrapper needed. start_period covers Chainlit's cold-start import time
+    # (~30–60s for the full agent stack).
+    healthcheck:
+      test: ["CMD", "python", "-c",
+             "import socket; s=socket.create_connection(('127.0.0.1', 8000), timeout=3); s.close()"]
+      interval: 30s
+      timeout: 5s
+      start_period: 90s
+      retries: 3
