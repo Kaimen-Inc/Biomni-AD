@@ -37,6 +37,13 @@ ENV/
 .chainlit/translations/
 # Keep .chainlit/config.toml (app configuration worth version-controlling)
 
+# chainlit.md is regenerated on every launch from chainlit.md.template with
+# machine-local data lake / user-data paths spliced into the managed marker
+# blocks (see chainlit_app.py::_refresh_chainlit_welcome_markdown). Tracking
+# it would produce spurious diffs on every dev machine. The template is the
+# tracked source of truth.
+chainlit.md
+
 # =============================================================================
 # Agent run artifacts
 # =============================================================================

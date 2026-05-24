@@ -26,7 +26,7 @@ on:
       - "biomni/**"
       - "chainlit_app.py"
       - "chainlit_ui/**"
-      - "chainlit.md"
+      - "chainlit.md.template"
       - ".chainlit/**"
       - "public/**"
       - ".github/workflows/docker.yml"

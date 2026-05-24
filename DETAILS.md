@@ -93,7 +93,7 @@ Biomni/
 │
 ├── chainlit_app.py                # Chainlit UI entry point (plan-then-approve workflow)
 ├── run_chainlit.sh                # Chainlit launcher script
-├── chainlit.md                    # Chainlit welcome page content
+├── chainlit.md.template           # Chainlit welcome-page template (rendered to chainlit.md at launch; gitignored)
 ├── docker/                        # Docker entrypoint scripts
 ├── docker-compose.yml             # Docker Compose configuration
 ├── Dockerfile                     # Micromamba-based container image

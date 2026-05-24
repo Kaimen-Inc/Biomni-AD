@@ -115,6 +115,11 @@ FORCE_AGENT = os.getenv("BIOMNI_AGENT", "").lower()  # "a1" | "ad1" | ""
 SUPPORTED_IMAGE_EXTENSIONS = (".png", ".jpg", ".jpeg", ".gif", ".bmp", ".webp")
 
 CHAINLIT_MD_PATH = Path(__file__).with_name("chainlit.md")
+# ``chainlit.md`` itself is gitignored — it's rewritten on every launch with
+# the local data inventory, producing a spurious diff on every dev machine.
+# ``chainlit.md.template`` is the source of truth in git: same content with
+# the managed marker blocks empty.
+CHAINLIT_MD_TEMPLATE_PATH = Path(__file__).with_name("chainlit.md.template")
 _WELCOME_DATASET_BLOCK_START = "<!-- BIOMNI_LOCAL_DATASET_SECTION_START -->"
 _WELCOME_DATASET_BLOCK_END = "<!-- BIOMNI_LOCAL_DATASET_SECTION_END -->"
 _SUGGESTED_PROMPTS_BLOCK_START = "<!-- BIOMNI_SUGGESTED_PROMPTS_START -->"
@@ -574,10 +579,17 @@ def _build_welcome_local_dataset_section() -> str:
 
 
 def _refresh_chainlit_welcome_markdown() -> None:
-    """Append or replace managed sections (suggested prompts + dataset list) in chainlit.md."""
+    """Append or replace managed sections (suggested prompts + dataset list) in chainlit.md.
+
+    Reads from ``chainlit.md`` if it already exists (preserves any operator
+    edits between launches), else from ``chainlit.md.template`` (the tracked
+    source of truth), else from a hardcoded minimal fallback.
+    """
     try:
         if CHAINLIT_MD_PATH.exists():
             original = CHAINLIT_MD_PATH.read_text(encoding="utf-8")
+        elif CHAINLIT_MD_TEMPLATE_PATH.exists():
+            original = CHAINLIT_MD_TEMPLATE_PATH.read_text(encoding="utf-8")
         else:
             original = (
                 "## Hi, I'm Biomni-AD 🧠\n"

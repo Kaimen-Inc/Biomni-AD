@@ -51,7 +51,7 @@ The underlying **Biomni** platform is a general-purpose biomedical AI agent that
 | [ARCHITECTURE.md](ARCHITECTURE.md) | System design, agent framework, tool ecosystem, and data lake |
 | [CONTRIBUTION.md](CONTRIBUTION.md) | How to contribute tools, data, software, benchmarks, and know-how |
 | [DETAILS.md](DETAILS.md) | Technical reference: module roles, code organization, and entry points |
-| [chainlit.md](chainlit.md) | Chainlit interactive UI welcome page content |
+| [chainlit.md.template](chainlit.md.template) | Chainlit welcome-page template (rendered to `chainlit.md` on launch with the local data inventory; `chainlit.md` itself is gitignored) |
 | [biomni_env/README.md](biomni_env/README.md) | Environment installation instructions |
 | [docs/configuration.md](docs/configuration.md) | Configuration management guide |
 | [docs/known_conflicts.md](docs/known_conflicts.md) | Known package conflicts and workarounds |

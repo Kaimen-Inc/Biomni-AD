@@ -104,7 +104,10 @@ COPY --from=builder --chown=57439:57439 /opt/conda/envs/biomni_e1 /opt/conda/env
 # site-packages (.pth + .dist-info), so the runtime stage doesn't need
 # the originals.
 COPY --chown=57439:57439 biomni /app/biomni
-COPY --chown=57439:57439 chainlit_app.py chainlit.md /app/
+# chainlit.md.template (not chainlit.md) is the tracked source — chainlit_app.py
+# rewrites chainlit.md on every launch with the local data inventory, so
+# the file itself is gitignored.
+COPY --chown=57439:57439 chainlit_app.py chainlit.md.template /app/
 COPY --chown=57439:57439 chainlit_ui /app/chainlit_ui
 COPY --chown=57439:57439 .chainlit /app/.chainlit
 COPY --chown=57439:57439 public /app/public
