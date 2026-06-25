@@ -116,21 +116,34 @@ COPY --chmod=755 --chown=57439:57439 docker/entrypoint.sh /app/docker/entrypoint
 # Activate the env by prepending its bin to PATH. ENTRYPOINT and
 # HEALTHCHECK then call ``python`` directly, avoiding the ~200ms
 # per-invocation cost of ``micromamba run -n biomni_e1``.
+#
+# Logging defaults target Azure Container Insights / Log Analytics:
+#   LOG_LEVEL=INFO            structured-log verbosity (DEBUG for triage)
+#   BIOMNI_LOG_FORMAT=json    one JSON object per stdout line (KQL-queryable)
+#   BIOMNI_ENABLE_LLM_TELEMETRY=true  emit per-run token/cost telemetry events
+# GIT_SHA/GIT_REF are surfaced as env too so the /healthz + /readyz probes can
+# report which image build is live (build-args are otherwise label-only).
 ENV PATH=/opt/conda/envs/biomni_e1/bin:$PATH \
     MPLBACKEND=Agg \
     PYTHONUNBUFFERED=1 \
     CHAINLIT_HOST=0.0.0.0 \
     CHAINLIT_PORT=8000 \
-    BIOMNI_PATH=/app/data
+    BIOMNI_PATH=/app/data \
+    LOG_LEVEL=INFO \
+    BIOMNI_LOG_FORMAT=json \
+    BIOMNI_ENABLE_LLM_TELEMETRY=true \
+    BIOMNI_GIT_SHA=${GIT_SHA} \
+    BIOMNI_GIT_REF=${GIT_REF}
 
 EXPOSE 8000
 
-# TCP probe: Chainlit binds 8000 only after startup completes, so a
-# successful connect implies the app is serving. start-period covers the
-# ~30–60s of import time for the full agent stack on cold start.
+# HTTP liveness probe against /healthz — confirms the app is actually serving
+# (not just that the port is open). start-period covers the ~30–60s of import
+# time for the full agent stack on cold start. Kubernetes uses its own probes
+# (see deploy/k8s/); this HEALTHCHECK is for Docker/Compose deployments.
 HEALTHCHECK --interval=30s --timeout=5s --start-period=90s --retries=3 \
   CMD python -c \
-      "import socket; s=socket.create_connection(('127.0.0.1', 8000), timeout=3); s.close()" \
+      "import sys,urllib.request; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8000/healthz', timeout=3).status==200 else 1)" \
       || exit 1
 
 ENTRYPOINT ["/app/docker/entrypoint.sh"]
