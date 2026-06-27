@@ -181,6 +181,22 @@ def test_setup_logging_is_idempotent():
     assert logging.getLogger().level == logging.DEBUG
 
 
+def test_setup_logging_removes_foreign_root_handlers():
+    """A foreign root handler (e.g. chainlit's basicConfig StreamHandler) must be
+    dropped so records aren't emitted twice — once plain, once JSON."""
+    import io
+
+    root = logging.getLogger()
+    foreign = logging.StreamHandler(io.StringIO())
+    root.addHandler(foreign)
+
+    obs.setup_logging("INFO", stream=io.StringIO(), force=True)
+
+    assert foreign not in root.handlers
+    managed = [h for h in root.handlers if getattr(h, "_biomni_managed", False)]
+    assert len(managed) == 1
+
+
 def test_setup_logging_level_from_env(monkeypatch):
     import io
 
