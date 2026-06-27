@@ -69,6 +69,14 @@ class BiomniConfig:
     # `timeout_seconds`, which gates code/tool execution, not LLM HTTP calls.
     llm_request_timeout: float | None = 120.0
 
+    # Total wall-clock budget for one agent run (seconds). None disables (default,
+    # preserving existing behavior). When set, the agent stops cleanly between
+    # ReAct turns once the budget is exceeded — bounding the *number* of turns,
+    # complementing `timeout_seconds` (which bounds a single code/tool step) and
+    # the recursion limit. Recommended for interactive/demo deployments so a
+    # long-running query fails fast and visibly instead of spinning.
+    run_timeout_seconds: int | None = None
+
     # Prompt caching (currently honored for Anthropic models). When True the
     # agent annotates the large system prompt with cache_control so the
     # provider can charge cached-input rates on subsequent turns.
@@ -129,6 +137,11 @@ class BiomniConfig:
         if os.getenv("BIOMNI_LLM_REQUEST_TIMEOUT"):
             raw = os.getenv("BIOMNI_LLM_REQUEST_TIMEOUT").strip().lower()
             self.llm_request_timeout = None if raw in ("", "none", "0") else float(raw)
+        if os.getenv("BIOMNI_RUN_TIMEOUT_SECONDS"):
+            raw = os.getenv("BIOMNI_RUN_TIMEOUT_SECONDS").strip().lower()
+            # Non-positive (incl. a negative typo, which would arm a deadline in
+            # the past and abort every run on turn 1) disables the budget.
+            self.run_timeout_seconds = None if raw in ("", "none") else (int(raw) if int(raw) > 0 else None)
         if os.getenv("BIOMNI_ENABLE_PROMPT_CACHING"):
             self.enable_prompt_caching = os.getenv("BIOMNI_ENABLE_PROMPT_CACHING").lower() == "true"
         if os.getenv("BIOMNI_ENABLE_LLM_TELEMETRY"):
@@ -148,6 +161,7 @@ class BiomniConfig:
             "temperature": self.temperature,
             "llm_max_retries": self.llm_max_retries,
             "llm_request_timeout": self.llm_request_timeout,
+            "run_timeout_seconds": self.run_timeout_seconds,
             "enable_prompt_caching": self.enable_prompt_caching,
             "enable_llm_telemetry": self.enable_llm_telemetry,
             "use_tool_retriever": self.use_tool_retriever,

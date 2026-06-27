@@ -16,10 +16,27 @@ def _clear_env(monkeypatch: pytest.MonkeyPatch) -> None:
         "AZURE_ANTHROPIC_API_KEY",
         "BIOMNI_LLM_MAX_RETRIES",
         "BIOMNI_LLM_REQUEST_TIMEOUT",
+        "BIOMNI_RUN_TIMEOUT_SECONDS",
         "BIOMNI_ENABLE_PROMPT_CACHING",
         "BIOMNI_ENABLE_LLM_TELEMETRY",
     ):
         monkeypatch.delenv(k, raising=False)
+
+
+def test_run_timeout_defaults_to_disabled() -> None:
+    cfg = BiomniConfig()
+    assert cfg.run_timeout_seconds is None
+    assert "run_timeout_seconds" in cfg.to_dict()
+
+
+@pytest.mark.parametrize(
+    "raw,expected",
+    [("300", 300), ("0", None), ("-30", None), ("none", None), ("", None)],
+)
+def test_run_timeout_env_override(monkeypatch: pytest.MonkeyPatch, raw: str, expected) -> None:
+    # Non-positive values disable the budget rather than arming a past deadline.
+    monkeypatch.setenv("BIOMNI_RUN_TIMEOUT_SECONDS", raw)
+    assert BiomniConfig().run_timeout_seconds == expected
 
 
 def test_resolve_falls_back_to_default() -> None:
