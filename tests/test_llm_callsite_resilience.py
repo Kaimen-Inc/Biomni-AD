@@ -106,9 +106,7 @@ def test_retriever_fallback_routes_through_get_llm(monkeypatch: pytest.MonkeyPat
 def test_retriever_honors_env_retries(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("BIOMNI_LLM_MAX_RETRIES", "5")
     calls: list[dict] = []
-    monkeypatch.setattr(
-        "biomni.llm.get_llm", _recording_get_llm(["TOOLS: []\nDATA_LAKE: []\nLIBRARIES: []"], calls)
-    )
+    monkeypatch.setattr("biomni.llm.get_llm", _recording_get_llm(["TOOLS: []\nDATA_LAKE: []\nLIBRARIES: []"], calls))
 
     from biomni.model.retriever import ToolRetriever
 
