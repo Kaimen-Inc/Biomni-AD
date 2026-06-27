@@ -58,6 +58,14 @@ spec:
               value: "json"
             - name: BIOMNI_ENABLE_LLM_TELEMETRY
               value: "true"
+            # Total wall-clock budget per query: a run exceeding this is stopped
+            # cleanly between ReAct turns (emits a run_timeout event) instead of
+            # spinning. Recommended for interactive/demo so slow queries fail fast.
+            - name: BIOMNI_RUN_TIMEOUT_SECONDS
+              value: "600"
+            # Run-liveness heartbeat cadence (seconds).
+            - name: BIOMNI_RUN_HEARTBEAT_SECONDS
+              value: "15"
             # Opt-in PII scrub of e-mail-shaped strings in logs (default off).
             - name: BIOMNI_LOG_REDACT_EMAILS
               value: "true"

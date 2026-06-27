@@ -257,7 +257,17 @@ class A1:
         self._llm_prompt_caching = bool(
             getattr(default_config, "enable_prompt_caching", False) and self._llm_source == "Anthropic"
         )
+        # Resolved model name for per-call telemetry (provider objects expose it
+        # under different attributes; fall back to the configured/auto name).
+        self._llm_model_name = (
+            getattr(self.llm, "model", None) or getattr(self.llm, "model_name", None) or llm or default_config.llm
+        )
         self.usage_tracker = LLMUsageTracker()
+        # Per-run telemetry state (reset by ``_begin_run``): the ReAct turn
+        # counter, the run start time, and the wall-clock deadline (if armed).
+        self._react_step = 0
+        self._run_started_monotonic: float | None = None
+        self._run_deadline: float | None = None
         self.module2api = module2api
         self.use_tool_retriever = use_tool_retriever
 
@@ -287,6 +297,10 @@ class A1:
         * Optionally mark the system message with ``cache_control`` so
           Anthropic bills subsequent turns at the cache-read rate.
         * Record token usage on every response into ``self.usage_tracker``.
+        * Emit a per-call ``llm_call`` telemetry event (latency, outcome,
+          finish reason, token usage) so a slow or failing provider call can be
+          attributed mid-run — the aggregate ``llm_usage`` event only fires once
+          a run completes, which is useless when a run hangs.
 
         ``cache_system=False`` opts out for one-shot calls with unique
         system prompts (caching wastes a write there).
@@ -296,17 +310,114 @@ class A1:
             if cache_system
             else messages
         )
-        response = self.llm.invoke(prepared)
+        started = time.monotonic()
         try:
-            self.usage_tracker.record(response)
+            response = self.llm.invoke(prepared)
+        except Exception as exc:
+            # The provider SDK has already exhausted its retries (429/5xx) by the
+            # time this raises; record the failed call before propagating so the
+            # outage is visible in telemetry, not just the surfaced traceback.
+            self._emit_llm_call(None, time.monotonic() - started, status="error", error_type=type(exc).__name__)
+            raise
+        usage = None
+        try:
+            usage = self.usage_tracker.record(response)
         except Exception:
             # Telemetry is best-effort — never let it break a run.
             logger.debug("usage tracking failed", exc_info=True)
+        self._emit_llm_call(response, time.monotonic() - started, status="ok", usage=usage)
         return response
+
+    @staticmethod
+    def _extract_finish_reason(response: Any) -> str | None:
+        """Pull the provider stop/finish reason from a chat-model response."""
+        meta = getattr(response, "response_metadata", None) or {}
+        if not isinstance(meta, dict):
+            return None
+        reason = meta.get("stop_reason") or meta.get("finish_reason")
+        return str(reason) if reason else None
+
+    def _emit_llm_call(self, response: Any, elapsed_s: float, *, status: str, usage=None, error_type=None) -> None:
+        """Emit one ``llm_call`` telemetry event. Best-effort; never raises."""
+        try:
+            fields: dict[str, Any] = {
+                "status": status,
+                "latency_ms": round(elapsed_s * 1000, 1),
+                "model": self._llm_model_name,
+                "source": self._llm_source,
+                "step": getattr(self, "_react_step", None),
+            }
+            if error_type is not None:
+                fields["error_type"] = error_type
+            if response is not None:
+                fields["finish_reason"] = self._extract_finish_reason(response)
+            if usage is not None:
+                # Mirror the fields of the per-run llm_usage event so per-call and
+                # aggregate telemetry can be reconciled. Counts are ints (0, not
+                # None), so the None-filter below keeps legitimate zeros.
+                fields["input_tokens"] = usage.input_tokens
+                fields["output_tokens"] = usage.output_tokens
+                fields["cache_read_tokens"] = usage.cache_read_tokens
+                fields["cache_creation_tokens"] = usage.cache_creation_tokens
+            emit_event("llm_call", logger=logger, **{k: v for k, v in fields.items() if v is not None})
+        except Exception:  # pragma: no cover - telemetry must never break a run
+            logger.debug("llm_call telemetry failed", exc_info=True)
 
     def llm_usage_summary(self) -> dict:
         """Return a snapshot of LLM token usage for this agent instance."""
         return self.usage_tracker.summary()
+
+    def _begin_run(self) -> None:
+        """Reset per-run telemetry counters and arm the wall-clock deadline.
+
+        Called at the start of each user query (``go`` / ``go_stream``, and the
+        Chainlit streaming path) so the ReAct turn counter and the optional
+        ``run_timeout_seconds`` budget are scoped to one run rather than the
+        agent's lifetime.
+        """
+        self._react_step = 0
+        self._run_started_monotonic = time.monotonic()
+        budget = getattr(default_config, "run_timeout_seconds", None)
+        self._run_deadline = (self._run_started_monotonic + budget) if budget else None
+
+    def _run_elapsed_ms(self) -> float | None:
+        """Milliseconds since the current run started, or None if not in a run."""
+        start = getattr(self, "_run_started_monotonic", None)
+        return round((time.monotonic() - start) * 1000, 1) if start is not None else None
+
+    def _enforce_run_deadline(self, state: "AgentState") -> bool:
+        """If the run's wall-clock budget is exhausted, stop the graph cleanly.
+
+        Returns True when the deadline has passed — the caller (the ``generate``
+        node) then short-circuits to ``end`` with a user-facing message instead
+        of starting another LLM turn. Bounds the number of ReAct turns; a single
+        in-flight code/LLM step is still bounded by ``timeout_seconds`` /
+        ``llm_request_timeout``.
+        """
+        deadline = getattr(self, "_run_deadline", None)
+        if deadline is None or time.monotonic() < deadline:
+            return False
+        budget = getattr(default_config, "run_timeout_seconds", None)
+        emit_event(
+            "run_timeout",
+            logger=logger,
+            step=getattr(self, "_react_step", 0),
+            elapsed_ms=self._run_elapsed_ms(),
+            budget_s=budget,
+        )
+        state["messages"].append(
+            AIMessage(
+                content=(
+                    "<solution>\n"
+                    f"This analysis was stopped after exceeding the configured time budget "
+                    f"({budget}s). Any partial results and reasoning above still apply; please "
+                    "narrow the question or break it into smaller steps and try again.\n"
+                    "</solution>"
+                )
+            )
+        )
+        state["next_step"] = "end"
+        return True
 
     @staticmethod
     def _classify_execution_status(result: str) -> str:
@@ -1964,6 +2075,14 @@ Each library is listed with its description to help you understand its functiona
 
         # Define the nodes
         def generate(state: AgentState) -> AgentState:
+            # Enforce the per-run wall-clock budget before spending another LLM
+            # turn, then record per-turn progress so a healthy-but-slow run is
+            # distinguishable from a wedged one in the log pipeline.
+            if self._enforce_run_deadline(state):
+                return state
+            self._react_step += 1
+            emit_event("agent_step", logger=logger, step=self._react_step, elapsed_ms=self._run_elapsed_ms())
+
             # Add OpenAI-specific formatting reminders if using OpenAI models
             system_prompt = self.system_prompt
             if hasattr(self.llm, "model_name") and (
@@ -2387,6 +2506,7 @@ Each library is listed with its description to help you understand its functiona
         """
         self.critic_count = 0
         self.user_task = prompt
+        self._begin_run()
 
         if self.use_tool_retriever:
             selected_resources_names = self._prepare_resources_for_retrieval(prompt)
@@ -2457,6 +2577,7 @@ Each library is listed with its description to help you understand its functiona
         """
         self.critic_count = 0
         self.user_task = prompt
+        self._begin_run()
 
         if self.use_tool_retriever:
             selected_resources_names = self._prepare_resources_for_retrieval(prompt)

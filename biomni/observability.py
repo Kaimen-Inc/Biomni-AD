@@ -39,12 +39,15 @@ import logging
 import os
 import re
 import sys
+import threading
+import time
+from collections.abc import Mapping  # runtime use (isinstance in RunHeartbeat)
 from contextlib import contextmanager
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
-    from collections.abc import Iterable, Mapping
+    from collections.abc import Callable, Iterable
 
 # ---------------------------------------------------------------------------
 # Correlation context
@@ -454,11 +457,94 @@ def diff_usage_summary(before: Mapping[str, Any], after: Mapping[str, Any]) -> d
     return delta
 
 
+# ---------------------------------------------------------------------------
+# Liveness heartbeat
+# ---------------------------------------------------------------------------
+
+
+class RunHeartbeat:
+    """Emit a periodic ``run_heartbeat`` event while a long operation is in flight.
+
+    A multi-step agent run can spend minutes inside a single LLM call or code
+    execution with no log output, making a healthy-but-slow run indistinguishable
+    from a wedged one. This context manager spawns a daemon thread that logs an
+    elapsed-time event every ``interval`` seconds until the block exits, so the
+    run's liveness is continuously visible in the log pipeline.
+
+    The caller's correlation context is captured at ``__enter__`` (in the calling
+    thread) and replayed for each emit, so heartbeats carry the run's session_id /
+    run_id even though they fire from a separate thread.
+
+    Usage::
+
+        with RunHeartbeat(interval=15, status=lambda: {"step": agent.react_step}):
+            run_the_agent()
+    """
+
+    def __init__(
+        self,
+        *,
+        interval: float = 15.0,
+        event: str = "run_heartbeat",
+        logger: logging.Logger | None = None,
+        status: Callable[[], Mapping[str, Any]] | None = None,
+    ) -> None:
+        # Small positive floor guards against a 0/negative interval busy-looping
+        # the thread; callers pick a sane cadence (Chainlit defaults to ~15s).
+        self._interval = max(0.05, float(interval))
+        self._event = event
+        self._logger = logger
+        self._status = status
+        self._stop = threading.Event()
+        self._thread: threading.Thread | None = None
+        self._ctx: contextvars.Context | None = None
+        self._start = 0.0
+
+    def __enter__(self) -> RunHeartbeat:
+        if self._thread is not None and self._thread.is_alive():
+            raise RuntimeError("RunHeartbeat is single-use and not reentrant")
+        self._ctx = capture_context()
+        self._start = time.monotonic()
+        self._stop.clear()
+        self._thread = threading.Thread(target=self._loop, name="biomni-heartbeat", daemon=True)
+        self._thread.start()
+        return self
+
+    def __exit__(self, *_exc: object) -> bool:
+        self._stop.set()
+        thread = self._thread
+        if thread is not None:
+            thread.join(timeout=2.0)
+        return False  # never suppress exceptions
+
+    def _loop(self) -> None:
+        # Event.wait returns True once stopped; the loop ends without a final emit.
+        # Guard the whole body: a heartbeat that dies on an unexpected error must
+        # not leave an unjoinable thread or a stack trace on stderr.
+        while not self._stop.wait(self._interval):
+            try:
+                self._ctx.run(self._emit) if self._ctx is not None else self._emit()
+            except Exception:  # pragma: no cover - defensive: keep the heartbeat alive
+                logging.getLogger("biomni.events").debug("heartbeat emit failed", exc_info=True)
+
+    def _emit(self) -> None:
+        fields: dict[str, Any] = {"elapsed_ms": round((time.monotonic() - self._start) * 1000, 1)}
+        if self._status is not None:
+            try:
+                extra = self._status()
+                if isinstance(extra, Mapping):
+                    fields.update(extra)
+            except Exception:  # status callback must never break the heartbeat
+                logging.getLogger("biomni.events").debug("heartbeat status callback failed", exc_info=True)
+        emit_event(self._event, logger=self._logger, **fields)
+
+
 __all__ = [
     "HumanFormatter",
     "JsonFormatter",
     "REDACTED",
     "Redactor",
+    "RunHeartbeat",
     "bind_run",
     "capture_context",
     "diff_usage_summary",

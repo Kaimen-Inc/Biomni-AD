@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import logging
+import time
 from concurrent.futures import ThreadPoolExecutor
 
 import pytest
@@ -327,3 +328,66 @@ def test_log_llm_usage_emits_event_with_summary_fields():
     assert line["total_tokens"] == 1234
     assert line["model"] == "claude-sonnet-4-5"
     assert line["latency_ms"] == 42
+
+
+# ---------------------------------------------------------------------------
+# RunHeartbeat
+# ---------------------------------------------------------------------------
+
+
+def _heartbeats(stream):
+    out = []
+    for line in stream.getvalue().splitlines():
+        if line.strip():
+            obj = json.loads(line)
+            if obj.get("event") == "run_heartbeat":
+                out.append(obj)
+    return out
+
+
+def test_heartbeat_emits_periodically_with_elapsed_and_context():
+    stream, _ = _capture()
+    with obs.bind_run(session_id="S", run_id="R"), obs.RunHeartbeat(interval=0.05, status=lambda: {"step": 7}):
+        time.sleep(0.22)
+    beats = _heartbeats(stream)
+    assert len(beats) >= 2  # several ticks within the window
+    assert beats[0]["session_id"] == "S" and beats[0]["run_id"] == "R"
+    assert beats[0]["step"] == 7
+    assert "elapsed_ms" in beats[0]
+
+
+def test_heartbeat_stops_after_exit():
+    stream, _ = _capture()
+    with obs.RunHeartbeat(interval=0.05):
+        time.sleep(0.12)
+    count_at_exit = len(_heartbeats(stream))
+    time.sleep(0.2)
+    assert len(_heartbeats(stream)) == count_at_exit  # no ticks after __exit__
+
+
+def test_heartbeat_survives_failing_status_callback():
+    stream, _ = _capture()
+
+    def boom():
+        raise RuntimeError("status failed")
+
+    with obs.RunHeartbeat(interval=0.05, status=boom):
+        time.sleep(0.12)
+    # Still emits (status failure is swallowed; elapsed_ms always present).
+    beats = _heartbeats(stream)
+    assert beats and "elapsed_ms" in beats[0]
+
+
+def test_heartbeat_zero_interval_does_not_busy_loop():
+    # interval<=0 must be floored, not spin. Bounded ticks in a short window.
+    stream, _ = _capture()
+    with obs.RunHeartbeat(interval=0):
+        time.sleep(0.12)
+    assert len(_heartbeats(stream)) < 100
+
+
+def test_heartbeat_is_not_reentrant():
+    hb = obs.RunHeartbeat(interval=0.05)
+    with hb:
+        with pytest.raises(RuntimeError, match="not reentrant"):
+            hb.__enter__()

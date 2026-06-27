@@ -628,7 +628,7 @@ The Alzheimer's Disease Data Initiative workbench provides a hosted Azure-based 
 
 - **[Target] Replicas.** Configure Container Apps with a KEDA HTTP scaler (or `http-scale-rule` on concurrent requests) so replicas scale 0 → N on incoming Chainlit websocket connections and scale back down after the idle period defined by the scale rule's `cooldownPeriod`. Set `minReplicas: 1` in prod to avoid cold-start on the first request. The application itself has no idle-session env knob — websocket teardown is driven by Chainlit's client disconnect and the Container Apps scaler.
 - **Cost drivers** (in descending order): LLM tokens (≫ everything else), Azure Files Premium for the data lake (~$0.16/GiB/mo), Postgres flex server, then compute. Compute is typically <10% of the bill for a research-grade deployment.
-- **[Target] Per-tenant cost attribution.** Propagate the OIDC `sub` claim into Application Insights custom dimensions and into the `metadata` field of Anthropic/OpenAI requests so cost can be rolled up by user / institution. This needs a small wrapper around the LLM call sites in `biomni/llm.py` — not implemented today.
+- **Per-call cost telemetry (implemented).** Every LLM call emits an `llm_call` event (model, latency, finish reason, token counts) and each run emits an aggregate `llm_usage` event — see *Observability & Telemetry* below. **[Target] Per-tenant attribution** still needs the OIDC `sub` claim propagated into the event fields and into the `metadata` field of Anthropic/OpenAI requests so cost can be rolled up by user / institution.
 - **[Target] Quota enforcement.** A future addition: middleware in `chainlit_app.py` that checks a per-user monthly token budget (stored in Postgres) before each LangGraph turn, surfacing estimated cost at the AD1 plan-then-approve gate. No quota / budget logic exists in the codebase today — until it does, operators should rely on **provider-side** budgets (Azure OpenAI quota, Anthropic spend limits) as the backstop.
 
 ### 8. CI/CD & Release
@@ -653,6 +653,46 @@ Rollback is a one-click traffic re-split on Container Apps; image rollback is im
 The same `Dockerfile` and `docker-compose.yml` shipped in this repo run unmodified on a developer laptop or an on-prem VM. The cloud topology above is a superset: every cloud service maps to a local equivalent (filesystem instead of Azure Files, sqlite instead of Postgres, local `./runs` instead of Blob, `.env` instead of Key Vault). This means the **same image** services local dev, single-VM deployments, ADDI, and a full multi-tenant Azure deployment — no per-environment forks.
 
 See [docs/docker_vm_deployment.md](docs/docker_vm_deployment.md) for the single-VM path.
+
+### 10. Observability & Telemetry
+
+The app is built to be operable as many pods behind a managed Kubernetes/Container-Apps tier where the only log transport is **stdout**. The observability stack lives in [`biomni/observability.py`](biomni/observability.py) and [`biomni/health.py`](biomni/health.py).
+
+**Structured logging.** `setup_logging()` (called once at Chainlit startup) installs a JSON formatter on the root logger: one JSON object per stdout line, so Azure Container Insights → Log Analytics turns each field into a queryable KQL column. Controlled by `LOG_LEVEL` (default `INFO`) and `BIOMNI_LOG_FORMAT` (`json` default; `text` for local dev).
+
+**Correlation.** Each chat binds a `session_id` and each message a `run_id` (contextvars), auto-injected into every record — including logs emitted from the agent's worker thread (the context is captured on the event loop and replayed across the thread boundary). One KQL filter reconstructs a single query's full trajectory across interleaved pods.
+
+**Redaction.** A single format-time chokepoint scrubs provider keys, harvested env secrets, and base64 image blobs from every line; e-mail-shaped PII is opt-in via `BIOMNI_LOG_REDACT_EMAILS`. Raw generated code and tool output are **never** logged verbatim (possible biomedical/PHI content).
+
+**Event catalog** (all carry `session_id`/`run_id` when in a run):
+
+| `event` | When | Key fields | Answers |
+|---------|------|-----------|---------|
+| `chat_start` | New chat session | `agent_type`, `llm` | Which agent/model a session used |
+| `agent_step` | Each ReAct turn (`generate`) | `step`, `elapsed_ms` | "stuck" vs. legitimately doing N steps |
+| `llm_call` | Each LLM provider call | `status`, `latency_ms`, `model`, `finish_reason`, token counts, `error_type` | **Is the LLM the bottleneck?** slow turns / retries / failures |
+| `code_execution` | Each code/tool step (`execute`) | `language`, `status` (ok/**timeout**/error), `duration_ms`, `code_sha256`, `output_chars` | Did a step hit the 600s timeout or error? |
+| `run_heartbeat` | Every `BIOMNI_RUN_HEARTBEAT_SECONDS` while a run is in flight | `elapsed_ms`, `step` | Liveness — distinguishes slow-but-healthy from wedged |
+| `run_timeout` | Run exceeded `BIOMNI_RUN_TIMEOUT_SECONDS` | `step`, `elapsed_ms`, `budget_s` | A run was stopped by the wall-clock budget |
+| `llm_usage` | End of each run | token totals, `cache_hit_ratio`, `latency_ms` | Per-run token spend / cost |
+
+**Timeouts (three layers).** `BIOMNI_LLM_REQUEST_TIMEOUT` (per LLM HTTP call, 120s) → `BIOMNI_TIMEOUT_SECONDS` (per code/tool step, 600s) → `BIOMNI_RUN_TIMEOUT_SECONDS` (total wall-clock per run; unset by default — **set it for interactive/demo so a long query fails fast and visibly** with a `run_timeout` event and a user-facing message instead of spinning).
+
+**Perceived liveness.** While a code step blocks, the Chainlit UI ticks an elapsed-time line on the running step (so it doesn't look frozen), and the backend `run_heartbeat` provides the same signal in the log pipeline.
+
+**Health probes.** `GET /healthz` (liveness: process up, dependency-free) and `GET /readyz` (readiness: data dir mounted + an LLM credential present → `503` otherwise) are registered ahead of Chainlit's SPA catch-all. See [`deploy/k8s/biomni-ad.yaml`](deploy/k8s/biomni-ad.yaml) for probe wiring.
+
+**Troubleshooting a slow/hung query.** Filter Log Analytics by the run's `run_id`, order by time, and read the event sequence: a long `llm_call` `latency_ms` points at the provider (or 429 retries); a `code_execution` with `status: timeout` or a large `duration_ms` points at a slow data/compute step; gaps between events with only `run_heartbeat` ticks mean a single step is taking the time. Example:
+
+```kusto
+ContainerLogV2
+| where ContainerName == "biomni-ad"
+| extend log = parse_json(LogMessage)
+| where log.run_id == "<run_id>"
+| project TimeGenerated, event = log.event, status = log.status,
+          latency_ms = log.latency_ms, duration_ms = log.duration_ms, step = log.step
+| order by TimeGenerated asc
+```
 
 ---
 

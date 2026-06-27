@@ -110,7 +110,7 @@ OPENAI_BASE_URL=https://api.openai.com/v1
 
 # Biomni Settings
 BIOMNI_PATH=/path/to/data                   # Default: ./data
-BIOMNI_TIMEOUT_SECONDS=1200                 # Default: 600
+BIOMNI_TIMEOUT_SECONDS=1200                 # Default: 600  (per code/tool step)
 BIOMNI_LLM=model_name                        # Default: claude-sonnet-4-20250514
 BIOMNI_TEMPERATURE=0.7                      # Default: 0.7
 BIOMNI_USE_TOOL_RETRIEVER=true             # Default: true
@@ -119,6 +119,22 @@ LLM_SOURCE=Anthropic                        # Preferred source selector
 BIOMNI_SOURCE=Anthropic                     # Also supported (backward compatibility)
 BIOMNI_CUSTOM_BASE_URL=http://localhost:8000/v1
 BIOMNI_CUSTOM_API_KEY=custom_key
+
+# LLM resilience
+BIOMNI_LLM_MAX_RETRIES=3                     # Default: 3    (provider-SDK 429/5xx backoff)
+BIOMNI_LLM_REQUEST_TIMEOUT=120               # Default: 120  (seconds per LLM HTTP call; none/0 disables)
+BIOMNI_ENABLE_PROMPT_CACHING=true            # Default: true (Anthropic system-prompt cache)
+BIOMNI_RUN_TIMEOUT_SECONDS=600               # Default: unset (total wall-clock budget per run; bounds
+                                             #          the number of ReAct turns. Recommended for
+                                             #          interactive/demo so slow queries fail fast.)
+
+# Observability / telemetry (see ARCHITECTURE.md "Observability & Telemetry")
+LOG_LEVEL=INFO                               # Default: INFO  (DEBUG for triage)
+BIOMNI_LOG_FORMAT=json                        # Default: json (one JSON object/line); use "text" for dev
+BIOMNI_ENABLE_LLM_TELEMETRY=true             # Default: false (library); true in the container image.
+                                             #          Emits a per-run llm_usage token/cost event.
+BIOMNI_RUN_HEARTBEAT_SECONDS=15              # Default: 15   (run-liveness heartbeat cadence; Chainlit)
+BIOMNI_LOG_REDACT_EMAILS=false               # Default: false (opt-in scrub of e-mail-shaped PII in logs)
 ```
 
 ### Python Configuration

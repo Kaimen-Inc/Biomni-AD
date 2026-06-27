@@ -73,6 +73,7 @@ from biomni.artifact import build_run_id, get_all_files
 from biomni.config import default_config, resolve_default_llm
 from biomni.health import register_health_routes
 from biomni.observability import (
+    RunHeartbeat,
     bind_run,
     capture_context,
     diff_usage_summary,
@@ -1258,9 +1259,34 @@ async def _process_message(message: cl.Message):
 
 
 # ---------------------------------------------------------------------------
-# ---------------------------------------------------------------------------
 # Streaming execution
 # ---------------------------------------------------------------------------
+
+# Cadence (seconds) for the in-UI "running… Ns" timer on an executing code step.
+_STEP_TIMER_INTERVAL = 3.0
+# Cadence (seconds) for the backend run-liveness heartbeat log event.
+_HEARTBEAT_SECONDS = float(os.getenv("BIOMNI_RUN_HEARTBEAT_SECONDS", "15"))
+
+
+async def _tick_step_timer(step: cl.Step, language: str, code: str, started: float) -> None:
+    """Refresh a running code step with an elapsed-time line so it doesn't look frozen.
+
+    A single code execution can block for up to ``timeout_seconds`` with no
+    streamed output; without this the step appears hung. Cancelled when the
+    observation arrives. Best-effort — any UI error just stops the timer.
+    """
+    try:
+        while True:
+            await asyncio.sleep(_STEP_TIMER_INTERVAL)
+            elapsed = int(time.monotonic() - started)
+            step.output = f"```{language}\n{code}\n```\n\n⏱ running… {elapsed}s"
+            try:
+                await step.update()
+            except Exception:
+                logger.debug("step timer update failed", exc_info=True)
+                return
+    except asyncio.CancelledError:
+        pass
 
 
 async def _stream_execution(
@@ -1282,78 +1308,98 @@ async def _stream_execution(
     final_state = None
     solution_found = False
     code_steps: list[cl.Step] = []
+    code_timers: list[asyncio.Task] = []
 
-    async for state in stream_langgraph(agent.app, inputs, config):
-        final_state = state
-        message = state["messages"][-1]
-        content = message.content if isinstance(message.content, str) else ""
+    # Reset per-run telemetry counters and arm the wall-clock budget for this query.
+    if hasattr(agent, "_begin_run"):
+        agent._begin_run()
 
-        if not content or content == prompt:
-            continue
+    # Heartbeat thread: emit run-liveness events every few seconds so a slow-but-
+    # healthy run is distinguishable from a wedged one in the log pipeline; the
+    # per-step UI timer below gives the user the same signal.
+    with RunHeartbeat(
+        interval=_HEARTBEAT_SECONDS,
+        logger=logger,
+        status=lambda: {"step": getattr(agent, "_react_step", None)},
+    ):
+        async for state in stream_langgraph(agent.app, inputs, config):
+            final_state = state
+            message = state["messages"][-1]
+            content = message.content if isinstance(message.content, str) else ""
 
-        # ------------------------------------------------------------------
-        # Parse XML tags from the agent's raw output
-        # ------------------------------------------------------------------
+            if not content or content == prompt:
+                continue
 
-        # Locate first structural tag to separate reasoning prefix
-        tag_positions = []
-        for tag in ["<execute>", "<solution>", "<observation>"]:
-            pos = content.find(tag)
-            if pos != -1:
-                tag_positions.append(pos)
+            # ------------------------------------------------------------------
+            # Parse XML tags from the agent's raw output
+            # ------------------------------------------------------------------
 
-        # 1. Reasoning / thinking (text before the first tag)
-        if tag_positions:
-            first_tag = min(tag_positions)
-            thinking = content[:first_tag].strip()
-            if thinking:
-                async with cl.Step(name="🤔 Thinking", type="llm", show_input=False) as step:
-                    step.output = thinking
+            # Locate first structural tag to separate reasoning prefix
+            tag_positions = []
+            for tag in ["<execute>", "<solution>", "<observation>"]:
+                pos = content.find(tag)
+                if pos != -1:
+                    tag_positions.append(pos)
 
-        # 2. Solution (final answer)
-        solution_match = re.search(r"<solution>(.*?)</solution>", content, re.DOTALL)
-        if solution_match and not solution_found:
-            solution_found = True
-            solution_text = solution_match.group(1).strip()
-            await cl.Message(content=solution_text).send()
+            # 1. Reasoning / thinking (text before the first tag)
+            if tag_positions:
+                first_tag = min(tag_positions)
+                thinking = content[:first_tag].strip()
+                if thinking:
+                    async with cl.Step(name="🤔 Thinking", type="llm", show_input=False) as step:
+                        step.output = thinking
 
-        # 3. Code execution block
-        execute_match = re.search(r"<execute>(.*?)</execute>", content, re.DOTALL)
-        if execute_match:
-            code = execute_match.group(1).strip()
-            language = "python"
-            if code.startswith("#!R"):
-                language = "r"
-                code = re.sub(r"^#!R\s*", "", code, count=1)
-            elif code.startswith("#!BASH") or code.startswith("#!CLI"):
-                language = "bash"
-                code = re.sub(r"^#!(BASH|CLI)\s*", "", code, count=1)
+            # 2. Solution (final answer)
+            solution_match = re.search(r"<solution>(.*?)</solution>", content, re.DOTALL)
+            if solution_match and not solution_found:
+                solution_found = True
+                solution_text = solution_match.group(1).strip()
+                await cl.Message(content=solution_text).send()
 
-            code_step = cl.Step(name=f"⚡ Executing {language.upper()}", type="run", show_input=False)
-            await code_step.__aenter__()
-            code_step.output = f"```{language}\n{code}\n```"
-            code_steps.append(code_step)
-            # Do NOT exit the step yet; we close it when the observation arrives
+            # 3. Code execution block
+            execute_match = re.search(r"<execute>(.*?)</execute>", content, re.DOTALL)
+            if execute_match:
+                code = execute_match.group(1).strip()
+                language = "python"
+                if code.startswith("#!R"):
+                    language = "r"
+                    code = re.sub(r"^#!R\s*", "", code, count=1)
+                elif code.startswith("#!BASH") or code.startswith("#!CLI"):
+                    language = "bash"
+                    code = re.sub(r"^#!(BASH|CLI)\s*", "", code, count=1)
 
-        # 4. Observation (result of code execution)
-        obs_match = re.search(r"<observation>(.*?)</observation>", content, re.DOTALL)
-        if obs_match:
-            observation = obs_match.group(1).strip()
+                code_step = cl.Step(name=f"⚡ Executing {language.upper()}", type="run", show_input=False)
+                await code_step.__aenter__()
+                code_step.output = f"```{language}\n{code}\n```"
+                code_steps.append(code_step)
+                # Tick an elapsed-time line while the (blocking) code runs so the
+                # step doesn't look frozen; cancelled when the observation lands.
+                code_timers.append(asyncio.create_task(_tick_step_timer(code_step, language, code, time.monotonic())))
+                # Do NOT exit the step yet; we close it when the observation arrives
 
-            # Close the pending code step now that we have a result
-            if code_steps:
-                finished_step = code_steps.pop()
-                await finished_step.__aexit__(None, None, None)
+            # 4. Observation (result of code execution)
+            obs_match = re.search(r"<observation>(.*?)</observation>", content, re.DOTALL)
+            if obs_match:
+                observation = obs_match.group(1).strip()
 
-            async with cl.Step(name="👁 Observation", type="tool", show_input=False) as obs_step:
-                # Truncate very long output for display
-                display_obs = observation[:3000] + "\n...[truncated]" if len(observation) > 3000 else observation
-                obs_step.output = display_obs
+                # Close the pending code step now that we have a result
+                if code_timers:
+                    await _cancel_task(code_timers.pop())
+                if code_steps:
+                    finished_step = code_steps.pop()
+                    await finished_step.__aexit__(None, None, None)
 
-                # Display any generated images mentioned in the observation
-                await _display_images(observation)
+                async with cl.Step(name="👁 Observation", type="tool", show_input=False) as obs_step:
+                    # Truncate very long output for display
+                    display_obs = observation[:3000] + "\n...[truncated]" if len(observation) > 3000 else observation
+                    obs_step.output = display_obs
 
-    # Close any code steps that never received an observation (edge case)
+                    # Display any generated images mentioned in the observation
+                    await _display_images(observation)
+
+    # Close any code steps/timers that never received an observation (edge case)
+    for timer in code_timers:
+        await _cancel_task(timer)
     for step in code_steps:
         await step.__aexit__(None, None, None)
 
@@ -1368,6 +1414,15 @@ async def _stream_execution(
                 await cl.Message(content=cleaned).send()
 
     return final_state
+
+
+async def _cancel_task(task: asyncio.Task) -> None:
+    """Cancel a task and await its completion, swallowing the cancellation."""
+    task.cancel()
+    try:
+        await task
+    except (asyncio.CancelledError, Exception):
+        pass
 
 
 # ---------------------------------------------------------------------------
