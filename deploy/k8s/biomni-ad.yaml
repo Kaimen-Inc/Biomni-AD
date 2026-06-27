@@ -1,0 +1,126 @@
+# Example Kubernetes manifest for the Biomni-AD Chainlit app on AKS.
+#
+# This is a starting point, not a turnkey production config. Review resource
+# limits, replica count, ingress, and the Secret/ConfigMap wiring for your
+# cluster before applying. The pieces that matter for *observability* — the
+# focus of this manifest — are the three probes and the log-shaping env vars.
+#
+#   kubectl apply -f deploy/k8s/biomni-ad.yaml
+#
+# Logs: the container writes one JSON object per line to stdout. On AKS with
+# Container Insights enabled, those land in the Log Analytics workspace and are
+# queryable with KQL, e.g.:
+#
+#   ContainerLogV2
+#   | where ContainerName == "biomni-ad"
+#   | extend log = parse_json(LogMessage)
+#   | where log.event == "llm_usage"
+#   | summarize tokens=sum(toint(log.total_tokens)) by bin(TimeGenerated, 1h)
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: biomni-ad-secrets
+type: Opaque
+stringData:
+  # Provide whichever provider your BIOMNI_LLM resolves to. Readiness (/readyz)
+  # fails closed until at least one credential is present.
+  ANTHROPIC_API_KEY: "replace-me"
+  # OPENAI_API_KEY: "replace-me"
+  # AZURE_OPENAI_API_KEY: "replace-me"
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: biomni-ad
+  labels:
+    app: biomni-ad
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: biomni-ad
+  template:
+    metadata:
+      labels:
+        app: biomni-ad
+    spec:
+      containers:
+        - name: biomni-ad
+          image: ghcr.io/kaimen-inc/biomni-ad:latest # pin to a sha- tag in prod
+          ports:
+            - name: http
+              containerPort: 8000
+          env:
+            - name: LOG_LEVEL
+              value: "INFO"
+            - name: BIOMNI_LOG_FORMAT
+              value: "json"
+            - name: BIOMNI_ENABLE_LLM_TELEMETRY
+              value: "true"
+            # Opt-in PII scrub of e-mail-shaped strings in logs (default off).
+            - name: BIOMNI_LOG_REDACT_EMAILS
+              value: "true"
+          envFrom:
+            - secretRef:
+                name: biomni-ad-secrets
+
+          # Startup probe: gates the other two until the heavy agent stack has
+          # finished importing (~30-60s cold start). failureThreshold*period =
+          # up to 5 min before the pod is declared failed to start.
+          startupProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            periodSeconds: 10
+            failureThreshold: 30
+            timeoutSeconds: 3
+
+          # Liveness: restart the pod only if the process is wedged. Cheap,
+          # dependency-free — never gate this on upstream (LLM) availability.
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            periodSeconds: 20
+            timeoutSeconds: 3
+            failureThreshold: 3
+
+          # Readiness: pull the pod from the Service if it can't serve — data
+          # dir unmounted or no LLM credential. Returns 503 when not ready.
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: http
+            periodSeconds: 15
+            timeoutSeconds: 3
+            failureThreshold: 3
+
+          resources:
+            requests:
+              cpu: "1"
+              memory: 2Gi
+            limits:
+              # Agent-generated code runs in-process; cap memory so a runaway
+              # snippet is OOMKilled (visible in kube events) instead of taking
+              # the node down.
+              cpu: "2"
+              memory: 6Gi
+
+          # SIGTERM is sent on rollout/scale-down; give in-flight agent runs a
+          # chance to drain before SIGKILL.
+      terminationGracePeriodSeconds: 60
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: biomni-ad
+  labels:
+    app: biomni-ad
+spec:
+  selector:
+    app: biomni-ad
+  ports:
+    - name: http
+      port: 80
+      targetPort: http

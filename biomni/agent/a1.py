@@ -1,9 +1,11 @@
+import hashlib
 import inspect
 import json
 import logging
 import os
 import re
 import shutil
+import time
 from collections.abc import Generator
 from datetime import datetime
 from pathlib import Path
@@ -32,6 +34,7 @@ from biomni.know_how import KnowHowLoader
 from biomni.llm import SourceType, get_llm, resolve_source
 from biomni.llm_resilience import LLMUsageTracker, prepare_messages_for_cache
 from biomni.model.retriever import ToolRetriever
+from biomni.observability import emit_event
 from biomni.tool.support_tools import run_python_repl
 from biomni.tool.tool_registry import ToolRegistry
 from biomni.utils import (
@@ -304,6 +307,53 @@ class A1:
     def llm_usage_summary(self) -> dict:
         """Return a snapshot of LLM token usage for this agent instance."""
         return self.usage_tracker.summary()
+
+    @staticmethod
+    def _classify_execution_status(result: str) -> str:
+        """Map a code-execution result string to ok / error / timeout.
+
+        The execution helpers signal failure in-band via string prefixes
+        (``run_with_timeout`` returns ``"ERROR: Code execution timed out…"`` on
+        timeout; the language runners return ``"Error…"`` on failure).
+        """
+        if result.startswith("ERROR: Code execution timed out"):
+            return "timeout"
+        if result.startswith(("Error", "ERROR")):
+            return "error"
+        return "ok"
+
+    def _audit_code_execution(
+        self,
+        *,
+        language: str,
+        executed_code: str,
+        result: str,
+        duration_ms: float,
+        timeout_s: int,
+    ) -> None:
+        """Emit a structured audit event for one code execution.
+
+        Logs *what ran* (language, content hash, size) and *what happened*
+        (status, duration, output size) — never the raw source or output, which
+        can contain user/biomedical data. Best-effort: never raises.
+        """
+        try:
+            code = executed_code or ""
+            output = result if isinstance(result, str) else str(result)
+            emit_event(
+                "code_execution",
+                logger=logger,
+                language=language,
+                code_sha256=hashlib.sha256(code.encode("utf-8", "replace")).hexdigest()[:12],
+                code_chars=len(code),
+                status=self._classify_execution_status(output),
+                duration_ms=duration_ms,
+                timeout_s=timeout_s,
+                output_chars=len(output),
+                output_truncated=len(output) > 10000,
+            )
+        except Exception:  # pragma: no cover - audit logging must never break a run
+            logger.debug("code-execution audit logging failed", exc_info=True)
 
     def _build_network_limited_instruction(self) -> str:
         """Build policy text for network-limited operation mode."""
@@ -2016,14 +2066,22 @@ Each library is listed with its description to help you understand its functiona
                 # Set timeout duration (10 minutes = 600 seconds)
                 timeout = self.timeout_seconds
 
+                # ``executed_code`` is the marker-stripped source actually run;
+                # ``language`` and the timing below feed the code-execution audit
+                # log emitted once the result is in.
+                executed_code = code
+                _exec_started = time.monotonic()
+
                 # Check if the code is R code
                 if (
                     code.strip().startswith("#!R")
                     or code.strip().startswith("# R code")
                     or code.strip().startswith("# R script")
                 ):
+                    language = "r"
                     # Remove the R marker and run as R code
                     r_code = re.sub(r"^#!R|^# R code|^# R script", "", code, count=1).strip()
+                    executed_code = r_code
                     result = run_with_timeout(run_r_code, [r_code], timeout=timeout)
                 # Check if the code is a Bash script or CLI command
                 elif (
@@ -2033,17 +2091,22 @@ Each library is listed with its description to help you understand its functiona
                 ):
                     # Handle both Bash scripts and CLI commands with the same function
                     if code.strip().startswith("#!CLI"):
+                        language = "cli"
                         # For CLI commands, extract the command and run it as a simple bash script
                         cli_command = re.sub(r"^#!CLI", "", code, count=1).strip()
                         # Remove any newlines to ensure it's a single command
                         cli_command = cli_command.replace("\n", " ")
+                        executed_code = cli_command
                         result = run_with_timeout(run_bash_script, [cli_command], timeout=timeout)
                     else:
+                        language = "bash"
                         # For Bash scripts, remove the marker and run as a bash script
                         bash_script = re.sub(r"^#!BASH|^# Bash script", "", code, count=1).strip()
+                        executed_code = bash_script
                         result = run_with_timeout(run_bash_script, [bash_script], timeout=timeout)
                 # Otherwise, run as Python code
                 else:
+                    language = "python"
                     # Clear any previous plots before execution
                     self._clear_execution_plots()
 
@@ -2052,6 +2115,17 @@ Each library is listed with its description to help you understand its functiona
                     result = run_with_timeout(run_python_repl, [code], timeout=timeout)
 
                     # Plots are now captured directly in the execution entry above
+
+                # Audit trail: the agent executes LLM-generated code un-sandboxed,
+                # so record what ran (hash + size, never the raw source/output —
+                # those may contain biomedical data) for incident response.
+                self._audit_code_execution(
+                    language=language,
+                    executed_code=executed_code,
+                    result=result,
+                    duration_ms=round((time.monotonic() - _exec_started) * 1000, 1),
+                    timeout_s=timeout,
+                )
 
                 if len(result) > 10000:
                     result = (

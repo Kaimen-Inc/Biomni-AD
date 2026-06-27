@@ -18,6 +18,7 @@ import logging
 import os
 import re
 import sys
+import time
 import uuid
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
@@ -69,8 +70,34 @@ except ModuleNotFoundError:
 
 import chainlit as cl
 from biomni.artifact import build_run_id, get_all_files
-from biomni.config import resolve_default_llm
+from biomni.config import default_config, resolve_default_llm
+from biomni.health import register_health_routes
+from biomni.observability import (
+    bind_run,
+    capture_context,
+    diff_usage_summary,
+    emit_event,
+    log_llm_usage,
+    set_session_id,
+    setup_logging,
+)
 from langchain_core.messages import AIMessage, HumanMessage
+
+# Configure structured (JSON) logging to stdout before anything else logs, so
+# every app/agent/library line is one queryable record in the container log
+# pipeline (Azure Container Insights / Log Analytics). Honors $LOG_LEVEL and
+# $BIOMNI_LOG_FORMAT (json|text).
+setup_logging()
+
+# Register Kubernetes liveness (/healthz) and readiness (/readyz) probes on
+# Chainlit's FastAPI app. Done at import so the routes exist before uvicorn
+# starts serving. Wiring failure must never block app startup.
+try:
+    from chainlit.server import app as _fastapi_app
+
+    register_health_routes(_fastapi_app)
+except Exception:  # pragma: no cover - defensive: probes are non-critical to boot
+    logger.warning("Could not register health endpoints", exc_info=True)
 
 # ---------------------------------------------------------------------------
 # Conversation history helpers
@@ -880,9 +907,16 @@ def _build_user_data_sidebar_elements() -> list[cl.Text]:
 
 
 async def run_in_executor(fn, *args):
-    """Run a synchronous function in a thread-pool executor."""
+    """Run a synchronous function in a thread-pool executor.
+
+    The caller's context is captured *here* (in the event-loop thread) and
+    replayed inside the worker, so correlation ids (session_id / run_id)
+    propagate into agent-side logs — executors do not copy contextvars on their
+    own. Capturing inside the worker would snapshot its empty context instead.
+    """
+    ctx = capture_context()
     loop = asyncio.get_event_loop()
-    return await loop.run_in_executor(None, fn, *args)
+    return await loop.run_in_executor(None, lambda: ctx.run(fn, *args))
 
 
 async def stream_langgraph(agent_app, inputs, config):
@@ -898,7 +932,11 @@ async def stream_langgraph(agent_app, inputs, config):
             asyncio.run_coroutine_threadsafe(queue.put(None), loop)  # sentinel
 
     executor = ThreadPoolExecutor(max_workers=1)
-    executor.submit(_producer)
+    # Capture the active context here (caller thread) and replay it in the
+    # producer thread so the agent graph's logs (LLM calls, code-execution
+    # audit) carry the session_id/run_id.
+    ctx = capture_context()
+    executor.submit(ctx.run, _producer)
 
     while True:
         state = await queue.get()
@@ -1008,6 +1046,11 @@ async def set_starters():
 @cl.on_chat_start
 async def on_chat_start():
     """Initialize the selected agent and greet the user."""
+    # One correlation id per chat session, bound for the lifetime of this
+    # handler so agent-init logs carry it. on_message rebinds it per message.
+    thread_id = uuid.uuid4().hex
+    set_session_id(thread_id)
+
     # Determine agent type: CLI env var > chat profile selection > default AD1
     if FORCE_AGENT in ("a1", "ad1"):
         agent_type = FORCE_AGENT
@@ -1016,6 +1059,7 @@ async def on_chat_start():
         agent_type = "a1" if str(profile).upper() == "A1" else "ad1"
 
     label = "AD1" if agent_type == "ad1" else "A1"
+    emit_event("chat_start", agent_type=agent_type, llm=DEFAULT_LLM)
     try:
         if agent_type == "ad1":
             from biomni.agent.ad1 import AD1
@@ -1028,7 +1072,7 @@ async def on_chat_start():
         cl.user_session.set("agent", agent)
         cl.user_session.set("agent_type", agent_type)
         cl.user_session.set("history", [])
-        cl.user_session.set("thread_id", str(uuid.uuid4()))
+        cl.user_session.set("thread_id", thread_id)
         cl.user_session.set("dataset_listing", _build_dataset_listing(agent))
         cl.user_session.set("dataset_panel_shown", False)
 
@@ -1058,8 +1102,59 @@ async def on_chat_start():
 # ---------------------------------------------------------------------------
 
 
+def _usage_snapshot(agent) -> dict | None:
+    """Best-effort snapshot of an agent's cumulative LLM usage."""
+    try:
+        if agent is not None and hasattr(agent, "llm_usage_summary"):
+            return agent.llm_usage_summary()
+    except Exception:
+        logger.debug("usage snapshot failed", exc_info=True)
+    return None
+
+
+def _emit_run_telemetry(agent, usage_before: dict | None, started: float) -> None:
+    """Emit a per-run ``llm_usage`` event (token counts + cost + latency).
+
+    Gated on ``enable_llm_telemetry`` (env ``BIOMNI_ENABLE_LLM_TELEMETRY``); the
+    delta is computed against the snapshot taken before the run so the numbers
+    are per-message, not cumulative across the chat. Never raises.
+    """
+    if not getattr(default_config, "enable_llm_telemetry", False):
+        return
+    try:
+        usage_after = _usage_snapshot(agent)
+        if usage_before is None or usage_after is None:
+            return
+        delta = diff_usage_summary(usage_before, usage_after)
+        if delta.get("calls", 0) <= 0:
+            return
+        log_llm_usage(
+            delta,
+            model=DEFAULT_LLM,
+            source=getattr(agent, "_llm_source", None),
+            latency_ms=round((time.monotonic() - started) * 1000, 1),
+            agent_type=cl.user_session.get("agent_type"),
+        )
+    except Exception:
+        logger.debug("run telemetry emission failed", exc_info=True)
+
+
 @cl.on_message
 async def on_message(message: cl.Message):
+    """Bind per-message correlation ids and emit run telemetry around the handler."""
+    thread_id = cl.user_session.get("thread_id", "unknown")
+    run_id = uuid.uuid4().hex
+    agent = cl.user_session.get("agent")
+    usage_before = _usage_snapshot(agent)
+    started = time.monotonic()
+    with bind_run(session_id=thread_id, run_id=run_id):
+        try:
+            await _process_message(message)
+        finally:
+            _emit_run_telemetry(agent, usage_before, started)
+
+
+async def _process_message(message: cl.Message):
     agent = cl.user_session.get("agent")
     agent_type = cl.user_session.get("agent_type", "a1")
 
