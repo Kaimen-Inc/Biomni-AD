@@ -365,14 +365,21 @@ def setup_logging(
     Returns the installed handler.
     """
     root = logging.getLogger()
-    existing = [h for h in root.handlers if getattr(h, _MANAGED_ATTR, False)]
-    if existing and not force:
+    managed = [h for h in root.handlers if getattr(h, _MANAGED_ATTR, False)]
+    if managed and not force:
         # Already configured. Just keep level in sync (e.g. a later call with an
         # explicit level) and return the existing handler.
         root.setLevel(_resolve_level(level))
-        return existing[0]
+        return managed[0]
 
-    for handler in existing:
+    # Claim the root logger: drop *every* existing handler, not just a prior
+    # managed one. Libraries imported before us install their own root handler
+    # — chainlit's CLI calls logging.basicConfig() at import time, adding a
+    # plain-text StreamHandler. Left in place it double-emits every record
+    # (once plain, once JSON), corrupting the structured stream Container
+    # Insights parses. Safe because this function is the single source of
+    # truth for biomni's stdout logging.
+    for handler in list(root.handlers):
         root.removeHandler(handler)
 
     fmt = (fmt or os.getenv("BIOMNI_LOG_FORMAT") or "json").strip().lower()
