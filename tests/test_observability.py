@@ -197,6 +197,27 @@ def test_setup_logging_removes_foreign_root_handlers():
     assert len(managed) == 1
 
 
+def test_setup_logging_stamps_service_identity(monkeypatch):
+    """Every record carries static service identity for multi-pod attribution."""
+    monkeypatch.setenv("OTEL_SERVICE_NAME", "biomni-ad")
+    monkeypatch.setenv("BIOMNI_ENV", "staging")
+    monkeypatch.setenv("BIOMNI_VERSION", "9.9.9")
+    stream, _ = _capture(fmt="json")
+    logging.getLogger("biomni.test").info("hello")
+    rec = json.loads(stream.getvalue().strip().splitlines()[-1])
+    assert rec["service"] == "biomni-ad"
+    assert rec["env"] == "staging"
+    assert rec["version"] == "9.9.9"
+    assert isinstance(rec["pid"], int)
+    assert "host" in rec
+
+
+def test_service_identity_does_not_pollute_correlation_context():
+    """Service fields live on the record, not in get_context() (correlation only)."""
+    obs.setup_logging("INFO", stream=__import__("io").StringIO(), force=True)
+    assert obs.get_context() == {}
+
+
 def test_setup_logging_level_from_env(monkeypatch):
     import io
 

@@ -38,6 +38,7 @@ import json
 import logging
 import os
 import re
+import socket
 import sys
 import threading
 import time
@@ -236,6 +237,12 @@ _RESERVED_RECORD_KEYS = frozenset(
 )
 
 
+# Static service identity (service/version/env/host/pid) stamped on every
+# record. Populated once by setup_logging; empty until then so pre-setup and
+# library/test imports stay side-effect free. See _resolve_service_fields.
+_SERVICE_FIELDS: dict[str, Any] = {}
+
+
 def _record_fields(record: logging.LogRecord) -> dict[str, Any]:
     """Assemble the base + context + extra fields for a record (pre-redaction)."""
     try:
@@ -249,6 +256,9 @@ def _record_fields(record: logging.LogRecord) -> dict[str, Any]:
         "logger": record.name,
         "msg": message,
     }
+    # Static identity first, so correlation ids and caller-supplied fields below
+    # win on any key collision (they never collide in practice).
+    fields.update(_SERVICE_FIELDS)
     # Correlation ids (read live from contextvars — works in worker threads when
     # the caller propagated context via capture_context).
     fields.update(get_context())
@@ -339,6 +349,44 @@ def _resolve_level(level: str | int | None) -> int:
     return getattr(logging, name, logging.INFO)
 
 
+def _detect_version() -> str | None:
+    """Installed biomni package version, or None if it can't be determined."""
+    try:
+        from importlib.metadata import PackageNotFoundError, version
+
+        try:
+            return version("biomni")
+        except PackageNotFoundError:
+            return None
+    except Exception:  # pragma: no cover - importlib.metadata should always exist
+        return None
+
+
+def _resolve_service_fields() -> dict[str, Any]:
+    """Static identity stamped on every log line so records are attributable.
+
+    Lets you filter a shared Log Analytics workspace by service/version/env and
+    tell pods (and workers within a pod) apart. All env-overridable; ``service``
+    follows the OpenTelemetry ``OTEL_SERVICE_NAME`` convention. ``host`` is the
+    pod name under Kubernetes (the pod's hostname). ``version``/``env`` are
+    omitted when unknown rather than logged as null.
+    """
+    fields: dict[str, Any] = {
+        "service": os.getenv("OTEL_SERVICE_NAME") or os.getenv("BIOMNI_SERVICE_NAME") or "biomni",
+        "pid": os.getpid(),
+    }
+    host = os.getenv("HOSTNAME") or socket.gethostname()
+    if host:
+        fields["host"] = host
+    version = os.getenv("BIOMNI_VERSION") or _detect_version()
+    if version:
+        fields["version"] = version
+    env = os.getenv("BIOMNI_ENV") or os.getenv("DEPLOY_ENV") or os.getenv("ENVIRONMENT")
+    if env:
+        fields["env"] = env
+    return fields
+
+
 def setup_logging(
     level: str | int | None = None,
     *,
@@ -392,6 +440,11 @@ def setup_logging(
 
     root.addHandler(handler)
     root.setLevel(_resolve_level(level))
+
+    # Resolve service identity once, here, so it reflects the process env at
+    # configure time and is stamped on every record by _record_fields.
+    global _SERVICE_FIELDS
+    _SERVICE_FIELDS = _resolve_service_fields()
 
     if quiet_noisy_loggers:
         for name in _NOISY_LOGGERS:
