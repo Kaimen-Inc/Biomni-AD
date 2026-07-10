@@ -71,6 +71,7 @@ except ModuleNotFoundError:
 import chainlit as cl
 from biomni.artifact import build_run_id, get_all_files
 from biomni.config import default_config, resolve_default_llm
+from biomni.fs_scan import scan_directory
 from biomni.health import register_health_routes
 from biomni.observability import (
     RunHeartbeat,
@@ -236,38 +237,14 @@ def _list_path_entries_recursive(
     Returns a (preview_items, total_file_count) tuple. Preview items are
     relative POSIX-style paths suitable for UI display.
 
-    ``exclude_top_subdirs`` names top-level subdirectories to skip entirely.
+    Thin adapter over :func:`biomni.fs_scan.scan_directory` — the scan is
+    bounded (file cap + wall-clock deadline) and cached, so this never hangs on
+    a large or network-backed workspace. ``total_file_count`` is a lower bound
+    when the underlying scan was truncated; callers that display it should treat
+    it as approximate (see ``_build_user_data_tree_content``).
     """
-    if not path or not os.path.isdir(path):
-        return [], 0
-
-    excluded_dirs = {".git", "__pycache__", ".venv", "venv", "env", "node_modules", "site-packages"}
-
-    preview: list[str] = []
-    total_count = 0
-
-    for root, dirs, files in os.walk(path):
-        rel_root = os.path.relpath(root, path)
-        depth = 0 if rel_root == "." else rel_root.count(os.sep) + 1
-        if depth > max_depth:
-            dirs[:] = []
-            continue
-
-        visible = [d for d in dirs if not d.startswith(".") and d not in excluded_dirs]
-        if depth == 0 and exclude_top_subdirs:
-            visible = [d for d in visible if d not in exclude_top_subdirs]
-        dirs[:] = sorted(visible)
-
-        for file_name in sorted(files):
-            if file_name.startswith("."):
-                continue
-            total_count += 1
-            rel = file_name if rel_root == "." else f"{rel_root}/{file_name}"
-            rel = rel.replace(os.sep, "/")
-            if len(preview) < max_items:
-                preview.append(rel)
-
-    return preview, total_count
+    result = scan_directory(path, max_depth=max_depth, exclude_top_subdirs=exclude_top_subdirs)
+    return result.files[:max_items], result.file_count
 
 
 def _collect_path_stats(path: str, max_depth: int = 10, exclude_top_subdirs: set[str] | None = None) -> dict:
@@ -275,49 +252,18 @@ def _collect_path_stats(path: str, max_depth: int = 10, exclude_top_subdirs: set
 
     ``exclude_top_subdirs`` names top-level subdirectories to skip entirely
     (useful for counting the datalake root without the biomniAD subfolder).
+
+    Backed by the bounded/cached scanner; ``truncated`` is True when the counts
+    are a floor (workspace larger than the scan budget).
     """
-    stats = {
-        "total_files": 0,
-        "total_dirs": 0,
-        "top_level_counts": {},
-        "extension_counts": {},
+    result = scan_directory(path, max_depth=max_depth, exclude_top_subdirs=exclude_top_subdirs)
+    return {
+        "total_files": result.file_count,
+        "total_dirs": result.dir_count,
+        "top_level_counts": dict(result.top_level_counts),
+        "extension_counts": dict(result.extension_counts),
+        "truncated": result.bounded,
     }
-    if not path or not os.path.isdir(path):
-        return stats
-
-    excluded_dirs = {".git", "__pycache__", ".venv", "venv", "env", "node_modules", "site-packages"}
-
-    for root, dirs, files in os.walk(path):
-        rel_root = os.path.relpath(root, path)
-        depth = 0 if rel_root == "." else rel_root.count(os.sep) + 1
-        if depth > max_depth:
-            dirs[:] = []
-            continue
-
-        visible_dirs = [d for d in dirs if not d.startswith(".") and d not in excluded_dirs]
-        if depth == 0 and exclude_top_subdirs:
-            visible_dirs = [d for d in visible_dirs if d not in exclude_top_subdirs]
-        dirs[:] = sorted(visible_dirs)
-        stats["total_dirs"] += len(visible_dirs)
-
-        for file_name in files:
-            if file_name.startswith("."):
-                continue
-
-            stats["total_files"] += 1
-
-            ext = Path(file_name).suffix.lower() or "[no_ext]"
-            ext_counts = stats["extension_counts"]
-            ext_counts[ext] = ext_counts.get(ext, 0) + 1
-
-            if rel_root == ".":
-                top = "[root]"
-            else:
-                top = rel_root.split(os.sep, 1)[0]
-            top_counts = stats["top_level_counts"]
-            top_counts[top] = top_counts.get(top, 0) + 1
-
-    return stats
 
 
 def _format_compact_counts(counts: dict[str, int], max_items: int = 8) -> str:
@@ -420,20 +366,43 @@ def _build_tree_preview_lines(paths: list[str], max_lines: int = 60, max_depth: 
 
 def _build_user_data_tree_content(root_path: str, preview_files: int = 300) -> tuple[str, int]:
     """Build concise per-root content for sidebar readability."""
-    preview, total_files = _list_path_entries_recursive(root_path, max_items=preview_files)
-    if total_files == 0:
+    result = scan_directory(root_path, max_depth=10)
+    if result.file_count == 0:
+        # Distinguish a genuinely empty root from a scan that hit the
+        # time/size budget before reading any file (slow network mount) — the
+        # latter must not masquerade as "no files".
+        if result.bounded:
+            return (
+                "(listing unavailable — the workspace scan hit its time/size budget before any file "
+                "was read; the folder is likely very large or on a slow mount. Open it directly to browse.)",
+                0,
+            )
         return "(no files found)", 0
 
+    preview = result.files[:preview_files]
     tree_lines = _build_tree_preview_lines(preview, max_lines=70, max_depth=3)
     lines: list[str] = [
         f"Directory structure preview (showing first {len(preview)} files)",
         "",
         *tree_lines,
     ]
-    if total_files > len(preview):
-        lines.append(f"... and {total_files - len(preview)} more files")
+    if result.bounded:
+        # Workspace exceeded the scan budget: the tree is a partial sample.
+        lines.append(
+            f"... workspace is large — listing capped at {result.count_label()} files "
+            "(not fully indexed; scan bounded for responsiveness)"
+        )
+    elif result.file_count > len(preview):
+        lines.append(f"... and {result.file_count - len(preview)} more files")
 
-    return "\n".join(lines), total_files
+    return "\n".join(lines), result.file_count
+
+
+def _root_count_label(root_path: str, exclude_top_subdirs: set[str] | None = None) -> str:
+    """Cached file count for a root, with a trailing ``+`` when the scan was
+    bounded (a floor, not an exact total). Reuses the cached scan so calling it
+    for a tab label right after building the tree is free."""
+    return scan_directory(root_path, max_depth=10, exclude_top_subdirs=exclude_top_subdirs).count_label()
 
 
 def _build_sidebar_overview_content() -> str:
@@ -451,6 +420,21 @@ def _build_sidebar_overview_content() -> str:
     lines: list[str] = ["At-a-glance overview", ""]
     grand_files = 0
     grand_dirs = 0
+    grand_truncated = False
+
+    def _add(label: str, stats: dict) -> None:
+        # Render one section line and fold its counts into the grand totals. A
+        # trailing "+" signals the scan was bounded (workspace larger than the
+        # scan budget), so the number is a floor, not an exact count.
+        nonlocal grand_files, grand_dirs, grand_truncated
+        if stats["total_files"] <= 0:
+            return
+        grand_files += stats["total_files"]
+        grand_dirs += stats["total_dirs"]
+        grand_truncated = grand_truncated or stats.get("truncated", False)
+        plus = "+" if stats.get("truncated") else ""
+        lines.append(f"{label}: {stats['total_files']}{plus} files, {stats['total_dirs']}{plus} folders")
+        lines.append("")
 
     # --- 1. AD Workbench Datasets -------------------------------------------
     # When HOST_PATH is defined this is an AD-Workbench deployment. The host
@@ -465,53 +449,35 @@ def _build_sidebar_overview_content() -> str:
         elif os.path.isdir(user_data_host_path):
             ad_path = user_data_host_path
         if ad_path:
-            stats = _collect_path_stats(ad_path)
-            if stats["total_files"] > 0:
-                grand_files += stats["total_files"]
-                grand_dirs += stats["total_dirs"]
-                lines.append(f"AD Workbench Datasets: {stats['total_files']} files, {stats['total_dirs']} folders")
-                lines.append("")
+            _add("AD Workbench Datasets", _collect_path_stats(ad_path))
     else:
         # Local / non-AD-Workbench deployment: show regular user data roots.
         for env_name, root in _resolve_user_data_roots():
-            stats = _collect_path_stats(root)
-            if stats["total_files"] > 0:
-                grand_files += stats["total_files"]
-                grand_dirs += stats["total_dirs"]
-                display = _display_data_root_label(env_name)
-                lines.append(f"{display}: {stats['total_files']} files, {stats['total_dirs']} folders")
-                lines.append("")
+            _add(_display_data_root_label(env_name), _collect_path_stats(root))
 
     # --- 2. Biomni-AD Datalake ----------------------------------------------
     builtin_root = _resolve_builtin_data_lake_root()
     biomni_ad_root = os.path.join(builtin_root, "biomniAD")
     if os.path.isdir(biomni_ad_root):
-        stats = _collect_path_stats(biomni_ad_root)
-        if stats["total_files"] > 0:
-            grand_files += stats["total_files"]
-            grand_dirs += stats["total_dirs"]
-            lines.append(f"Biomni-AD Datalake: {stats['total_files']} files, {stats['total_dirs']} folders")
-            lines.append("")
+        _add("Biomni-AD Datalake", _collect_path_stats(biomni_ad_root))
 
     # --- 3. Biomni Datalake (root of data_lake, excluding biomniAD) ----------
     if os.path.isdir(builtin_root):
-        stats = _collect_path_stats(builtin_root, exclude_top_subdirs={"biomniAD"})
-        if stats["total_files"] > 0:
-            grand_files += stats["total_files"]
-            grand_dirs += stats["total_dirs"]
-            lines.append(f"Biomni Datalake: {stats['total_files']} files, {stats['total_dirs']} folders")
-            lines.append("")
+        _add("Biomni Datalake", _collect_path_stats(builtin_root, exclude_top_subdirs={"biomniAD"}))
 
     if grand_files == 0 and grand_dirs == 0:
         return "No local data roots found."
 
+    plus = "+" if grand_truncated else ""
     lines.extend(
         [
             "Combined totals",
-            f"Files: {grand_files}",
-            f"Folders: {grand_dirs}",
+            f"Files: {grand_files}{plus}",
+            f"Folders: {grand_dirs}{plus}",
         ]
     )
+    if grand_truncated:
+        lines.append("(partial — workspace exceeded the scan budget; counts are a lower bound)")
     return "\n".join(lines)
 
 
@@ -532,18 +498,10 @@ def _list_local_data_lake_files(base_path: str, max_items: int = 30) -> list[str
     if data_lake_dir is None:
         return []
 
-    items: list[str] = []
-    for root, _dirs, files in os.walk(data_lake_dir):
-        for file_name in files:
-            if file_name.startswith("."):
-                continue
-            full_path = Path(root) / file_name
-            rel = full_path.relative_to(data_lake_dir).as_posix()
-            if rel == "_custom_data_index.json":
-                continue
-            items.append(rel)
-
-    items = sorted(set(items))
+    # Bounded/cached scan so this can't stall process startup even if the
+    # built-in data lake is pointed at a large volume.
+    result = scan_directory(str(data_lake_dir))
+    items = sorted(f for f in result.files if f != "_custom_data_index.json")
     return items[:max_items]
 
 
@@ -557,15 +515,19 @@ def _build_welcome_local_dataset_section() -> str:
     # User data can come from BIOMNI_USER_DATA_PATH and legacy BIOMNI_DATA_PATH/BIOMNI_PATH.
     user_roots = _resolve_user_data_roots()
     user_total_files = 0
+    user_count_label = "0"
     user_preview: list[str] = []
     if user_roots:
         first_root = user_roots[0][1]
-        user_preview, user_total_files = _list_path_entries_recursive(first_root, max_items=20)
+        _user_scan = scan_directory(first_root, max_depth=10)
+        user_preview = _user_scan.files[:20]
+        user_total_files = _user_scan.file_count
+        user_count_label = _user_scan.count_label()
 
     # One-line summary for the collapsed header
     summary_parts = [f"{len(data_lake_files)} data lake files"]
     if user_total_files:
-        summary_parts.append(f"{user_total_files} user data files")
+        summary_parts.append(f"{user_count_label} user data files")
 
     lines: list[str] = []
     lines.append(f"<details><summary>📊 {' · '.join(summary_parts)} available — click to expand</summary>")
@@ -592,7 +554,7 @@ def _build_welcome_local_dataset_section() -> str:
                 lines.append(f"- `{_display_data_root_label(env_name)}`: `{root}`")
         lines.append("")
         if user_preview:
-            lines.append(f"Detected files: {user_total_files}")
+            lines.append(f"Detected files: {user_count_label}")
             for name in user_preview:
                 lines.append(f"- `{name}`")
             if user_total_files > len(user_preview):
@@ -805,6 +767,32 @@ def _build_full_user_data_inventory() -> str:
     user_data_host_path = os.getenv("BIOMNI_USER_DATA_HOST_PATH", "").strip()
     user_data_path = os.getenv("BIOMNI_USER_DATA_PATH", "").strip()
 
+    def _section(label: str, root: str) -> None:
+        result = scan_directory(root, max_depth=10)
+        if result.file_count == 0:
+            # A timed-out scan (0 files but bounded) must still tell the agent the
+            # path exists but wasn't indexed, so it enumerates on demand rather
+            # than concluding the workspace is empty.
+            if result.bounded:
+                sections.append(
+                    f"{label} ({root}) — listing unavailable (scan hit its time/size budget before "
+                    "any file was read; enumerate with os.listdir()/glob on the path)"
+                )
+            return
+        preview = result.files[:500]
+        tree_lines = _build_tree_preview_lines(preview, max_lines=300, max_depth=6)
+        section = f"{label} ({root}) — {result.count_label()} files:\n" + "\n".join(tree_lines)
+        if result.bounded:
+            # Tell the agent the listing is partial so it enumerates on demand
+            # (os.listdir/glob) rather than trusting this as the full inventory.
+            section += (
+                f"\n  ... workspace is large — only the first {len(preview)} files are listed "
+                "(scan bounded for responsiveness; use os.listdir()/glob on the path for the rest)"
+            )
+        elif result.file_count > len(preview):
+            section += f"\n  ... and {result.file_count - len(preview)} more files"
+        sections.append(section)
+
     # --- User / AD Workbench data ---
     if user_data_host_path:
         ad_path = ""
@@ -813,21 +801,10 @@ def _build_full_user_data_inventory() -> str:
         elif os.path.isdir(user_data_host_path):
             ad_path = user_data_host_path
         if ad_path:
-            preview, total = _list_path_entries_recursive(ad_path, max_items=500, max_depth=10)
-            if total > 0:
-                tree_lines = _build_tree_preview_lines(preview, max_lines=300, max_depth=6)
-                sections.append(f"AD Workbench / User Data ({ad_path}) — {total} files:\n" + "\n".join(tree_lines))
-                if total > len(preview):
-                    sections[-1] += f"\n  ... and {total - len(preview)} more files"
+            _section("AD Workbench / User Data", ad_path)
     else:
         for env_name, root in _resolve_user_data_roots():
-            preview, total = _list_path_entries_recursive(root, max_items=500, max_depth=10)
-            if total > 0:
-                label = _display_data_root_label(env_name)
-                tree_lines = _build_tree_preview_lines(preview, max_lines=300, max_depth=6)
-                sections.append(f"{label} ({root}) — {total} files:\n" + "\n".join(tree_lines))
-                if total > len(preview):
-                    sections[-1] += f"\n  ... and {total - len(preview)} more files"
+            _section(_display_data_root_label(env_name), root)
 
     return "\n\n".join(sections) if sections else ""
 
@@ -860,13 +837,17 @@ def _build_user_data_sidebar_elements() -> list[cl.Text]:
             if total_files > 0:
                 content = f"Path: {ad_path}\n\n{tree_content}"
                 elements.append(
-                    cl.Text(name=f"Tree [AD Workbench Datasets] ({total_files})", content=content, display="page")
+                    cl.Text(
+                        name=f"Tree [AD Workbench Datasets] ({_root_count_label(ad_path)})",
+                        content=content,
+                        display="page",
+                    )
                 )
     else:
         for env_name, root in _resolve_user_data_roots():
             tree_content, total_files = _build_user_data_tree_content(root)
             if total_files > 0:
-                label = f"Tree [{_display_data_root_label(env_name)}] ({total_files})"
+                label = f"Tree [{_display_data_root_label(env_name)}] ({_root_count_label(root)})"
                 content = f"Path: {root}\n\n{tree_content}"
                 elements.append(cl.Text(name=label, content=content, display="page"))
 
@@ -879,25 +860,33 @@ def _build_user_data_sidebar_elements() -> list[cl.Text]:
         tree_content, total_files = _build_user_data_tree_content(biomni_ad_root)
         if total_files > 0:
             content = f"Path: {biomni_ad_root}\n\n{tree_content}"
-            elements.append(cl.Text(name=f"Tree [Biomni-AD Datalake] ({total_files})", content=content, display="page"))
+            elements.append(
+                cl.Text(
+                    name=f"Tree [Biomni-AD Datalake] ({_root_count_label(biomni_ad_root)})",
+                    content=content,
+                    display="page",
+                )
+            )
 
     # Biomni Datalake (root, excluding biomniAD)
     if os.path.isdir(builtin_root):
-        preview, total_files = _list_path_entries_recursive(
-            builtin_root, max_items=300, exclude_top_subdirs={"biomniAD"}
-        )
-        if total_files > 0:
+        lake = scan_directory(builtin_root, max_depth=10, exclude_top_subdirs={"biomniAD"})
+        if lake.file_count > 0:
+            preview = lake.files[:300]
             tree_lines = _build_tree_preview_lines(preview, max_lines=70, max_depth=3)
             lake_lines: list[str] = [
                 f"Directory structure preview (showing first {len(preview)} files)",
                 "",
                 *tree_lines,
             ]
-            if total_files > len(preview):
-                lake_lines.append(f"... and {total_files - len(preview)} more files")
-            tree_content = "\n".join(lake_lines)
-            content = f"Path: {builtin_root}\n\n{tree_content}"
-            elements.append(cl.Text(name=f"Tree [Biomni Datalake] ({total_files})", content=content, display="page"))
+            if lake.bounded:
+                lake_lines.append(f"... listing capped at {lake.count_label()} files (scan bounded for responsiveness)")
+            elif lake.file_count > len(preview):
+                lake_lines.append(f"... and {lake.file_count - len(preview)} more files")
+            content = f"Path: {builtin_root}\n\n" + "\n".join(lake_lines)
+            elements.append(
+                cl.Text(name=f"Tree [Biomni Datalake] ({lake.count_label()})", content=content, display="page")
+            )
 
     return elements
 
@@ -1087,15 +1076,23 @@ async def on_chat_start():
         await cl.Message(content=f"Failed to initialize {label}: {exc}").send()
         return
 
-    # Render local-data panel in the native sidebar at startup,
-    # keeping the center welcome/search screen unchanged.
-    sidebar_content = cl.user_session.get("dataset_listing") or _build_dataset_listing(agent)
-    sidebar_elements = _build_user_data_sidebar_elements()
-    if not sidebar_elements:
-        sidebar_elements = [cl.Text(name="Local Datasets", content=sidebar_content)]
-    await cl.ElementSidebar.set_title("Local Datasets")
-    await cl.ElementSidebar.set_elements(sidebar_elements)
-    cl.user_session.set("dataset_panel_shown", True)
+    # Render local-data panel in the native sidebar at startup, keeping the
+    # center welcome/search screen unchanged. The tree build walks the user-data
+    # mount, so it MUST run in a worker thread — running it inline would block
+    # the asyncio event loop for the duration of the walk, starving the /healthz
+    # liveness probe and getting the pod restarted on a large workspace. Guarded
+    # so a scan/sidebar hiccup degrades to no panel rather than failing the
+    # already-usable session.
+    try:
+        sidebar_content = cl.user_session.get("dataset_listing") or _build_dataset_listing(agent)
+        sidebar_elements = await run_in_executor(_build_user_data_sidebar_elements)
+        if not sidebar_elements:
+            sidebar_elements = [cl.Text(name="Local Datasets", content=sidebar_content)]
+        await cl.ElementSidebar.set_title("Local Datasets")
+        await cl.ElementSidebar.set_elements(sidebar_elements)
+        cl.user_session.set("dataset_panel_shown", True)
+    except Exception:
+        logger.exception("Failed to render local-data sidebar (session remains usable)")
 
 
 # ---------------------------------------------------------------------------

@@ -30,6 +30,7 @@ from biomni.artifact import (
     summarize_topic_for_run_id as _shared_summarize_topic_for_run_id,
 )
 from biomni.config import default_config
+from biomni.fs_scan import scan_directory
 from biomni.know_how import KnowHowLoader
 from biomni.llm import SourceType, get_llm, resolve_source
 from biomni.llm_resilience import LLMUsageTracker, prepare_messages_for_cache
@@ -597,62 +598,35 @@ For all analyses in this run:
         return local_tools + network_tools
 
     def _get_data_lake_items(self) -> list[str]:
-        """Return all files currently present in the data lake (recursive)."""
-        items: list[str] = []
+        """Return all files currently present in the data lake (recursive).
 
+        Backed by the bounded/cached scanner: on AKS ``data_lake_dir`` may be a
+        network-backed mount, and this runs on the boot/system-prompt path
+        (``_get_data_lake_resources`` and AD1's local-data-priority build), so an
+        unbounded walk here would re-introduce the boot stall via a different
+        entry point.
+        """
         if not os.path.isdir(self.data_lake_dir):
-            return items
+            return []
 
-        for root, _dirs, files in os.walk(self.data_lake_dir):
-            for file_name in files:
-                full_path = os.path.join(root, file_name)
-                relative_path = os.path.relpath(full_path, self.data_lake_dir).replace(os.sep, "/")
-                if relative_path == "_custom_data_index.json":
-                    continue
-                items.append(relative_path)
-
-        return sorted(set(items))
+        result = scan_directory(self.data_lake_dir)
+        return sorted(f for f in result.files if f != "_custom_data_index.json")
 
     def _get_data_root_items(self, max_depth: int = 3) -> list[str]:
         """Return files and directories under the configured BIOMNI_DATA_PATH root.
 
         This captures datasets placed directly under the data root (e.g.
         /mnt/dataset1/files) that are outside the standard data_lake sub-tree.
+
+        Backed by the bounded/cached scanner so it cannot hang while building the
+        system prompt on a large or network-backed workspace.
         """
         root_dir = getattr(self, "data_root_dir", None)
         if not root_dir or not os.path.isdir(root_dir):
             return []
 
-        excluded = {
-            ".git",
-            "__pycache__",
-            ".venv",
-            "venv",
-            "env",
-            ".chainlit",
-            "node_modules",
-            "site-packages",
-        }
-        items: list[str] = []
-
-        for root, dirs, files in os.walk(root_dir):
-            # Respect max depth
-            depth = root.replace(root_dir, "").count(os.sep)
-            if depth >= max_depth:
-                dirs[:] = []
-                continue
-            # Prune hidden and excluded dirs
-            dirs[:] = [d for d in dirs if not d.startswith(".") and d not in excluded]
-            for file_name in files:
-                if file_name.startswith("."):
-                    continue
-                full_path = os.path.join(root, file_name)
-                rel = os.path.relpath(full_path, root_dir).replace(os.sep, "/")
-                if rel == "_custom_data_index.json":
-                    continue
-                items.append(rel)
-
-        return sorted(set(items))
+        result = scan_directory(root_dir, max_depth=max_depth)
+        return sorted(f for f in result.files if f != "_custom_data_index.json")
 
     def _get_user_data_resources(self, max_depth: int = 6, max_items: int = 500) -> list[dict[str, str]]:
         """Build user-data resources from data_root_dir for retrieval indexing.
@@ -661,51 +635,31 @@ For all analyses in this run:
         ``data_lake/`` directory, this method indexes files under the
         user-mounted data root (e.g. /app/user-data or /mnt) so the tool
         retriever can surface VM-mounted datasets when relevant.
+
+        Bounded by the shared scanner (file cap + wall-clock deadline); the
+        built-in data-lake subtree is pruned so its files are not double-listed.
         """
         root_dir = getattr(self, "data_root_dir", None)
         if not root_dir or not os.path.isdir(root_dir):
             return []
 
-        # Avoid double-counting files already under data_lake_dir
-        data_lake_abs = os.path.abspath(self.data_lake_dir) if hasattr(self, "data_lake_dir") else ""
+        # Avoid double-counting files already under data_lake_dir (which may be
+        # nested beneath the user root).
+        prune = [self.data_lake_dir] if getattr(self, "data_lake_dir", "") else None
 
-        excluded = {
-            ".git",
-            "__pycache__",
-            ".venv",
-            "venv",
-            "env",
-            ".chainlit",
-            "node_modules",
-            "site-packages",
-        }
-        resources: list[dict[str, str]] = []
-
-        for root, dirs, files in os.walk(root_dir):
-            # Skip anything already covered by the built-in data lake
-            if data_lake_abs and os.path.abspath(root).startswith(data_lake_abs):
-                dirs[:] = []
-                continue
-            depth = root.replace(root_dir, "").count(os.sep)
-            if depth >= max_depth:
-                dirs[:] = []
-                continue
-            dirs[:] = [d for d in dirs if not d.startswith(".") and d not in excluded]
-            for file_name in files:
-                if file_name.startswith("."):
-                    continue
-                full_path = os.path.join(root, file_name)
-                rel = os.path.relpath(full_path, root_dir).replace(os.sep, "/")
-                resources.append(
-                    {
-                        "name": f"user-data:{rel}",
-                        "description": f"User dataset file at {root_dir}/{rel}",
-                    }
-                )
-                if len(resources) >= max_items:
-                    return resources
-
-        return resources
+        result = scan_directory(
+            root_dir,
+            max_depth=max_depth,
+            prune_subtrees=prune,
+            max_files_override=max_items,
+        )
+        return [
+            {
+                "name": f"user-data:{rel}",
+                "description": f"User dataset file at {root_dir}/{rel}",
+            }
+            for rel in result.files
+        ]
 
     def _resolve_data_path(self, data_path: str) -> str:
         """Resolve a data path to an absolute path with data-lake-first semantics.
