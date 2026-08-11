@@ -105,3 +105,6 @@ docs/source/_autosummary/
 *.bak
 *tar.gz
 *tarscripts/vm_setup.sh
+
+# Local review artifacts (lavish-axi)
+.lavish/

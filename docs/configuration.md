@@ -151,6 +151,10 @@ BIOMNI_PREFS_DIR=/data/state/prefs           # Default: $BIOMNI_STATE_DIR/prefs
 BIOMNI_RUNS_STATE_DIR=/data/state/runs       # Default: $BIOMNI_STATE_DIR/runs
 BIOMNI_RUN_STALE_AFTER_S=180                 # Default: 180   (heartbeat age after which a run is
                                              #          reported as interrupted, not running)
+BIOMNI_ALLOW_ANONYMOUS_PERSISTENCE=true      # Default: false (with no auth gateway the storage key is
+                                             #          per-connection, so anything saved can never be
+                                             #          read back; off by default to avoid orphaned
+                                             #          directories. Enable for local development.)
 
 # Authentication gateway headers (identity is asserted by the gateway, never by
 # the app; each accepts a comma-separated list and is additive to the defaults)
