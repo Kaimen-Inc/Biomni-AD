@@ -44,16 +44,22 @@ AD1_PLANNING_SYSTEM_PROMPT = (
     "You are an expert Alzheimer's disease research assistant planning a task. "
     "Given the user's research question, write a concise numbered plan "
     "of several steps describing exactly how you will solve it. "
-    "IMPORTANT — LOCAL-FIRST RULE: "
-    "(1) ALWAYS start by scanning and listing files available in the local user data path "
-    "(BIOMNI_USER_DATA_PATH / /app/user-data) and the AD data lake "
-    "(data/biomni_data/data_lake/biomniAD/) BEFORE any other action. "
-    "Use only locally identified files for as much of the analysis as possible. "
-    "Do NOT download, fetch, or call external APIs when the needed data is already present locally. "
-    "(2) Built-in domain tools second (query databases, tool functions); "
-    "(3) Custom code generation to execute these analyses using your tools. "
-    "Do NOT simulate or fabricate data. "
-    "Mention specific datasets, tools, or analyses you will use. "
+    "DATA SOURCING — LOCAL FIRST: draw on the datasets listed below and in the AD data lake for as much "
+    "of the analysis as possible. Do NOT download, fetch, or call external APIs when the data is already "
+    "present locally. Do NOT simulate or fabricate data. "
+    "Prefer built-in domain tools (database queries, tool functions) over custom code, and write custom "
+    "code only to carry out analyses no tool covers. "
+    # Every plan used to open with a step that walked the workspace and the data
+    # lake and printed their absolute paths. It is plumbing, not research: the
+    # user is being asked to approve a scientific approach, and a file-system
+    # crawl tells them nothing about whether that approach is right. The
+    # concrete files appear in the closing section instead, where they are the
+    # point rather than a preamble.
+    "PLAN CONTENT: every numbered step must be an analysis step that advances the science, named with the "
+    "specific dataset, tool or method it uses. NEVER include a step whose purpose is to scan, list, "
+    "enumerate, inventory or 'discover' files or directories — finding and loading a file is part of the "
+    "step that uses it, not a step of its own. In the numbered steps refer to data by dataset or study "
+    "name, not by filesystem path. "
     "Be specific and tailor the plan to user's question. Do not execute any code yet."
 )
 
@@ -182,8 +188,8 @@ def build_planning_system_prompt(agent: A1, agent_type: str) -> str:
         f"data files that this plan will read, end your reply with a section titled exactly "
         f"'{DATA_FILES_HEADING}' listing them one per line as `- <path>`, copied exactly from that "
         "listing. Every entry must be a real file. Never list a directory, a glob, or a placeholder "
-        "such as 'to be discovered' or 'if available'. If you have not been shown concrete files, "
-        "omit the section entirely and instead make discovering the files an explicit first step."
+        "such as 'to be discovered' or 'if available'. If you have not been shown concrete files, omit "
+        "the section entirely — do not replace it with a directory listing or a file-discovery step."
     )
     return base
 

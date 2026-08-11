@@ -67,7 +67,9 @@ def test_ad1_prompt_returns_ad_template() -> None:
     planning = _import_planning()
     out = planning.build_planning_system_prompt(_Agent(), "ad1")
     assert "expert Alzheimer" in out
-    assert "LOCAL-FIRST RULE" in out
+    assert "LOCAL FIRST" in out
+    # The plan describes research, not file-system plumbing.
+    assert "NEVER include a step whose purpose is to scan, list, enumerate" in out
 
 
 def test_unknown_agent_type_defaults_to_general() -> None:
