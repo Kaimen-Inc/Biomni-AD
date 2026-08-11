@@ -60,6 +60,7 @@ from biomni.utils import (
     should_skip_message,
     textify_api_dict,
 )
+from biomni.workspace_prefs import default_prefs, resolve_output_dir
 
 if os.path.exists(".env"):
     load_dotenv(".env", override=True)
@@ -638,6 +639,12 @@ For all analyses in this run:
 
         Bounded by the shared scanner (file cap + wall-clock deadline); the
         built-in data-lake subtree is pruned so its files are not double-listed.
+
+        When the UI has set ``scope_roots`` (the folders the user selected in the
+        workspace settings), only those are indexed. Without that, indexing the
+        whole root would let the retriever keep surfacing files the user
+        explicitly excluded, and would re-introduce the full traversal that the
+        scope selection exists to avoid.
         """
         root_dir = getattr(self, "data_root_dir", None)
         if not root_dir or not os.path.isdir(root_dir):
@@ -647,19 +654,28 @@ For all analyses in this run:
         # nested beneath the user root).
         prune = [self.data_lake_dir] if getattr(self, "data_lake_dir", "") else None
 
-        result = scan_directory(
-            root_dir,
-            max_depth=max_depth,
-            prune_subtrees=prune,
-            max_files_override=max_items,
-        )
-        return [
-            {
-                "name": f"user-data:{rel}",
-                "description": f"User dataset file at {root_dir}/{rel}",
-            }
-            for rel in result.files
-        ]
+        scope_roots = [r for r in getattr(self, "scope_roots", None) or [] if os.path.isdir(r)]
+        search_roots = scope_roots or [root_dir]
+        # Split the item budget across selected folders so one large folder
+        # cannot crowd the others out of the index entirely.
+        per_root = max(1, max_items // len(search_roots))
+
+        resources: list[dict[str, str]] = []
+        for search_root in search_roots:
+            result = scan_directory(
+                search_root,
+                max_depth=max_depth,
+                prune_subtrees=prune,
+                max_files_override=per_root,
+            )
+            resources.extend(
+                {
+                    "name": f"user-data:{os.path.relpath(os.path.join(search_root, rel), root_dir)}",
+                    "description": f"User dataset file at {os.path.join(search_root, rel)}",
+                }
+                for rel in result.files
+            )
+        return resources
 
     def _resolve_data_path(self, data_path: str) -> str:
         """Resolve a data path to an absolute path with data-lake-first semantics.
@@ -2469,7 +2485,7 @@ Each library is listed with its description to help you understand its functiona
         # Create run directory BEFORE execution so OUTPUT_DIR is available during code runs.
         try:
             run_id = self._build_run_id(prompt)
-            runs_root = os.path.abspath(os.path.join(os.getcwd(), "runs"))
+            runs_root = self._resolve_runs_root()
             os.makedirs(runs_root, exist_ok=True)
             current_run_dir = os.path.join(runs_root, run_id)
             os.makedirs(current_run_dir, exist_ok=True)
@@ -2540,7 +2556,7 @@ Each library is listed with its description to help you understand its functiona
         # Pre-create run directory so OUTPUT_DIR is available during code execution.
         try:
             run_id = self._build_run_id(prompt)
-            runs_root = os.path.abspath(os.path.join(os.getcwd(), "runs"))
+            runs_root = self._resolve_runs_root()
             os.makedirs(runs_root, exist_ok=True)
             current_run_dir = os.path.join(runs_root, run_id)
             os.makedirs(current_run_dir, exist_ok=True)
@@ -2571,6 +2587,20 @@ Each library is listed with its description to help you understand its functiona
     def _build_run_id(self, topic: str | None = None) -> str:
         """Build run directory ID as run_YYYYMMDD_HHMMSS_topic1_topic2_topic3."""
         return _shared_build_run_id(topic, llm_summarizer=self._summarize_topic_with_llm)
+
+    def _resolve_runs_root(self) -> str:
+        """Where this agent writes run directories.
+
+        The Chainlit UI sets ``runs_root`` from the signed-in user's resolved
+        output target; when the agent is driven directly (notebook, script) we
+        fall back to the same resolution order the UI uses, so both paths honour
+        BIOMNI_OUTPUT_ROOT and only then land in cwd/runs.
+        """
+        configured = getattr(self, "runs_root", None)
+        if configured:
+            return str(configured)
+        target = resolve_output_dir(default_prefs(), workspace_root=getattr(self, "data_root_dir", None))
+        return target.path
 
     def _summarize_topic_with_llm(self, topic: str) -> str:
         """Use configured LLM to generate a short, descriptive directory slug."""

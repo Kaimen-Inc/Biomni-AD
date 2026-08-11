@@ -251,7 +251,7 @@ class AD1(A1):
 
         # 1. Setup run directory
         run_id = self._build_run_id(prompt)
-        runs_root = os.path.abspath(os.path.join(os.getcwd(), "runs"))
+        runs_root = self._resolve_runs_root()
         current_run_dir = os.path.join(runs_root, run_id)
         os.makedirs(current_run_dir, exist_ok=True)
 
@@ -704,7 +704,7 @@ ALZHEIMER'S & DEMENTIA DATA SOURCING PROTOCOL
 
         def get_runs_list():
             """Get list of recent runs with prompt history."""
-            runs_dir = os.path.join(os.getcwd(), "runs")
+            runs_dir = self._resolve_runs_root()
             if not os.path.exists(runs_dir):
                 return "No runs found yet."
 
@@ -1093,7 +1093,7 @@ ALZHEIMER'S & DEMENTIA DATA SOURCING PROTOCOL
 
             # Setup run directory
             run_id = self._build_run_id(prompt_input)
-            runs_root = os.path.abspath(os.path.join(os.getcwd(), "runs"))
+            runs_root = self._resolve_runs_root()
             os.makedirs(runs_root, exist_ok=True)  # Ensure runs_root exists
             current_run_dir = os.path.join(runs_root, run_id)
             os.makedirs(current_run_dir, exist_ok=True)
