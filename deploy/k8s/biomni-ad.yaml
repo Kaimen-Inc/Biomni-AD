@@ -29,6 +29,27 @@ stringData:
   # OPENAI_API_KEY: "replace-me"
   # AZURE_OPENAI_API_KEY: "replace-me"
 ---
+# Persistent storage for run outputs, user preferences and run records.
+#
+# Without this the app falls back to a container-local ./runs directory, and a
+# rollout or restart destroys every artifact the user produced. The UI warns
+# when it detects that fallback.
+#
+# ReadWriteOnce is sufficient at replicas: 1 (as configured below). Scaling out
+# requires ReadWriteMany (e.g. an Azure Files share) because several pods would
+# otherwise write the same preference and run-record files.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: biomni-ad-state
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 20Gi
+  # storageClassName: azurefile-csi   # switch to a RWX class before scaling out
+---
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -69,9 +90,35 @@ spec:
             # Opt-in PII scrub of e-mail-shaped strings in logs (default off).
             - name: BIOMNI_LOG_REDACT_EMAILS
               value: "true"
+
+            # Run artifacts. Without this the app writes to a container-local
+            # ./runs and every result is lost on restart. Points at the PVC
+            # mounted below; users can override per session in the UI.
+            - name: BIOMNI_OUTPUT_ROOT
+              value: "/data/outputs"
+
+            # Per-user preferences (data scope, output directory) and durable
+            # run records, so a user who closes the tab still finds their jobs.
+            - name: BIOMNI_STATE_DIR
+              value: "/data/state"
+
+            # Header names asserted by the authentication gateway. The defaults
+            # already cover the common conventions; set these only when the
+            # gateway uses different names. Identity is trusted from these
+            # headers, so the gateway MUST strip client-supplied copies.
+            # - name: BIOMNI_AUTH_USER_ID_HEADER
+            #   value: "x-auth-request-user-id"
+            # - name: BIOMNI_AUTH_EMAIL_HEADER
+            #   value: "x-auth-request-email"
+            # - name: BIOMNI_AUTH_WORKSPACE_HEADER
+            #   value: "x-workspace-id"
           envFrom:
             - secretRef:
                 name: biomni-ad-secrets
+
+          volumeMounts:
+            - name: state
+              mountPath: /data
 
           # Startup probe: gates the other two until the heavy agent stack has
           # finished importing (~30-60s cold start). failureThreshold*period =
@@ -116,8 +163,15 @@ spec:
               memory: 6Gi
 
           # SIGTERM is sent on rollout/scale-down; give in-flight agent runs a
-          # chance to drain before SIGKILL.
+          # chance to drain before SIGKILL. Runs that do not finish in time are
+          # reported as "interrupted" to the user on their next session rather
+          # than being lost silently (see biomni/run_registry.py).
       terminationGracePeriodSeconds: 60
+
+      volumes:
+        - name: state
+          persistentVolumeClaim:
+            claimName: biomni-ad-state
 ---
 apiVersion: v1
 kind: Service
