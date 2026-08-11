@@ -14,10 +14,12 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 import re
 from typing import TYPE_CHECKING
 
 import chainlit as cl
+from biomni.observability import emit_event
 from langchain_core.messages import HumanMessage, SystemMessage
 
 if TYPE_CHECKING:
@@ -66,6 +68,46 @@ _DATA_FILES_HEADING_RE = re.compile(rf"^[^A-Za-z]*{re.escape(DATA_FILES_HEADING)
 _BULLET_RE = re.compile(r"^\s*(?:[-*+]|\d+[.)])\s+(.*\S)\s*$")
 
 
+# Wording that marks an entry as aspirational rather than a file the plan has
+# actually committed to reading.
+_PLACEHOLDER_MARKERS = (
+    "to be discovered",
+    "to be determined",
+    "if available",
+    "if present",
+    "if found",
+    "if it exists",
+    "tbd",
+    "unknown",
+    "look for",
+    "check ",
+)
+
+
+def _is_concrete_file(entry: str) -> bool:
+    """Whether a listed entry names a real file rather than a place to look.
+
+    The planner is instructed to list only concrete files, but instruction
+    compliance is not a guarantee, and a list of directories annotated with
+    "(files to be discovered)" is worse than no list: it reads as a commitment
+    the plan has not made.
+    """
+    lowered = entry.lower()
+    if any(marker in lowered for marker in _PLACEHOLDER_MARKERS):
+        return False
+    if entry.endswith(("/", os.sep)):
+        return False
+    if "*" in entry or "?" in entry:  # a glob is not a file
+        return False
+    # A trailing parenthetical is where models put their hedging.
+    if entry.endswith(")") and "(" in entry:
+        return False
+    # Require something that looks like a filename: a dotted suffix on the last
+    # path segment. Extension-less data files exist, but accepting them here
+    # would also accept every bare directory path, which is the failure mode.
+    return "." in os.path.basename(entry.rstrip())
+
+
 def extract_planned_data_files(plan_text: str) -> list[str]:
     """Pull the declared input files out of a generated plan.
 
@@ -101,7 +143,7 @@ def extract_planned_data_files(plan_text: str) -> list[str]:
         entry = match.group(1).strip().strip("`").strip()
         if entry.lower() in {"none", "n/a", "(none)"}:
             return []
-        if entry:
+        if entry and _is_concrete_file(entry):
             files.append(entry)
 
     # De-duplicate while preserving the planner's order.
@@ -128,14 +170,20 @@ def build_planning_system_prompt(agent: A1, agent_type: str) -> str:
 
     # Reviewers asked that a plan commit to the data it will read, so the user
     # can correct the file choice before any code runs rather than discovering
-    # the wrong input in the results. Asking for a fixed trailing section (and
-    # for an explicit "none" rather than silence) makes the answer checkable.
+    # the wrong input in the results.
+    #
+    # The section must contain real files or nothing. An earlier version invited
+    # the model to list what it intended to look at, and it filled the section
+    # with directories and "(files to be discovered in Step 1)" - which tells
+    # the user nothing they did not already know and makes the plan look like it
+    # has committed to data when it has not.
     base += (
-        f"\n\n{DATA_FILES_HEADING} requirement: after the numbered steps, end your reply with a "
-        f"section titled exactly '{DATA_FILES_HEADING}' listing, one per line as `- <path>`, the "
-        "specific data files the plan will read. Use paths exactly as they appear in the listing "
-        "above. If the plan reads no local files, write '- none' instead. Do not list files you "
-        "have not been shown; if you need to discover them first, say so as a step."
+        f"\n\n{DATA_FILES_HEADING} requirement: if - and only if - the listing above named concrete "
+        f"data files that this plan will read, end your reply with a section titled exactly "
+        f"'{DATA_FILES_HEADING}' listing them one per line as `- <path>`, copied exactly from that "
+        "listing. Every entry must be a real file. Never list a directory, a glob, or a placeholder "
+        "such as 'to be discovered' or 'if available'. If you have not been shown concrete files, "
+        "omit the section entirely and instead make discovering the files an explicit first step."
     )
     return base
 
@@ -160,7 +208,9 @@ async def interactive_planning(agent: A1, prompt: str, agent_type: str = "a1") -
             HumanMessage(content=prompt),
         ]
 
-        async with cl.Step(name="📋 Generating Research Plan", type="llm", show_input=False) as step:
+        # default_open: the plan is the thing the user is being asked to approve,
+        # so it must be readable without first expanding a collapsed step.
+        async with cl.Step(name="📋 Generating Research Plan", type="llm", show_input=False, default_open=True) as step:
             try:
                 # NB: asyncio.to_thread would also work but copies the caller's
                 # contextvars into the worker — the rest of chainlit_app.py
@@ -176,18 +226,18 @@ async def interactive_planning(agent: A1, prompt: str, agent_type: str = "a1") -
                 step.output = f"⚠️ Could not generate plan ({exc}). Proceeding without a plan."
                 return prompt
 
-        # Surface the declared inputs separately from the prose so the file
-        # choice is reviewable at a glance instead of buried in the plan text.
+        # The plan already carries its own data-files section and is shown
+        # expanded, so repeating the list here only duplicated it on screen.
+        # Logged rather than rendered: still useful for telemetry, invisible in
+        # the transcript.
         planned_files = extract_planned_data_files(plan_text)
+        emit_event("plan_data_files", count=len(planned_files))
+
         question = "Here is the research plan. Would you like to proceed?"
         if planned_files:
-            listed = "\n".join(f"- `{path}`" for path in planned_files[:20])
-            if len(planned_files) > 20:
-                listed += f"\n- _... and {len(planned_files) - 20} more_"
             question = (
-                f"**{DATA_FILES_HEADING}:**\n{listed}\n\n"
-                "If that is not the right data, choose **Revise Plan** and say which files to use.\n\n"
-                f"{question}"
+                "If the data files listed in the plan are not the right ones, choose "
+                "**Revise Plan** and say which to use.\n\n" + question
             )
 
         res = await cl.AskActionMessage(

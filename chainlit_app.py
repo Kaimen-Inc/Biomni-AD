@@ -1387,20 +1387,24 @@ async def _process_message(message: cl.Message):
                 resources = await run_in_executor(agent._prepare_resources_for_retrieval, prompt)
                 if resources:
                     await run_in_executor(agent.update_system_prompt_with_selected_resources, resources)
-                    tools_n = len(resources.get("tools", []))
-                    data_n = len(resources.get("data_lake", []))
-                    libs_n = len(resources.get("libraries", []))
-                    knowhow_n = len(resources.get("know_how", []))
-                    total = tools_n + data_n + libs_n + knowhow_n
-                    step.output = (
-                        f"Selected {total} resources: "
-                        f"🔧 {tools_n} tools, "
-                        f"📊 {data_n} datasets, "
-                        f"⚙️ {libs_n} libraries, "
-                        f"📚 {knowhow_n} know-how documents."
+                    # Counts go to the log, not the transcript. This step used to
+                    # announce things like "91 datasets", which reads as though
+                    # the agent had loaded 91 datasets for the question. It had
+                    # not: these are candidate references made available to the
+                    # model, and the number is an artefact of how many entries
+                    # the retriever considered relevant. The data that actually
+                    # matters is the data the plan commits to, which the plan
+                    # itself now states.
+                    emit_event(
+                        "resources_selected",
+                        tools=len(resources.get("tools", [])),
+                        datasets=len(resources.get("data_lake", [])),
+                        libraries=len(resources.get("libraries", [])),
+                        know_how=len(resources.get("know_how", [])),
                     )
+                    step.output = "Matched the available tools and data references to your question."
                 else:
-                    step.output = "No resources selected; proceeding with full tool set."
+                    step.output = "Using the full tool set."
             except Exception as exc:
                 logger.warning("Tool retrieval failed; falling back to full tool set", exc_info=True)
                 step.output = f"⚠️ Tool retrieval failed ({exc}); proceeding with all tools."

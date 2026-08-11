@@ -172,7 +172,10 @@ def test_planning_prompt_requests_the_file_section():
 
     prompt = planning.build_planning_system_prompt(_Agent(), "a1")
     assert planning.DATA_FILES_HEADING in prompt
-    assert "'- none'" in prompt
+    # Must demand real files and forbid the directory/placeholder listings the
+    # model produced before, rather than inviting a section that says nothing.
+    assert "omit the section entirely" in prompt
+    assert "Never list a directory" in prompt
 
 
 def test_extract_matches_a_numbered_heading():
@@ -184,3 +187,32 @@ def test_extract_matches_a_numbered_heading():
 def test_extract_matches_a_markdown_heading():
     plan = f"### {_heading()}\n- a.csv\n"
     assert _extract(plan) == ["a.csv"]
+
+
+# ---------------------------------------------------------------------------
+# Placeholder filtering: a list of directories is worse than no list
+# ---------------------------------------------------------------------------
+
+
+def test_extract_drops_directory_entries():
+    plan = f"{_heading()}\n- /ws/studyA/\n- /ws/studyB\n- /ws/studyA/real.csv\n"
+    assert _extract(plan) == ["/ws/studyA/real.csv"]
+
+
+def test_extract_drops_to_be_discovered_placeholders():
+    plan = (
+        f"{_heading()}\n"
+        "- /ws/GCST90027158/ (files to be discovered in Step 1)\n"
+        "- /ws/NG00105-eQTL/ (files to be discovered in Step 1)\n"
+    )
+    assert _extract(plan) == []
+
+
+def test_extract_drops_hedged_and_glob_entries():
+    plan = f"{_heading()}\n- /ws/a/NG00102.csv (if available)\n- /ws/a/*.csv\n- /ws/a/kept.tsv\n"
+    assert _extract(plan) == ["/ws/a/kept.tsv"]
+
+
+def test_extract_keeps_plain_concrete_paths():
+    plan = f"{_heading()}\n- studyA/plasma_1.csv\n- /abs/path/data.tsv.gz\n"
+    assert _extract(plan) == ["studyA/plasma_1.csv", "/abs/path/data.tsv.gz"]
