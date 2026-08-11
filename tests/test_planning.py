@@ -108,3 +108,68 @@ def test_missing_attributes_are_safe() -> None:
     out = planning.build_planning_system_prompt(Bare(), "a1")
     # Should still return the base prompt without crashing on getattr
     assert "biomedical research assistant" in out
+
+
+# ---------------------------------------------------------------------------
+# extract_planned_data_files
+# ---------------------------------------------------------------------------
+
+
+def _extract(text: str):
+    return _import_planning().extract_planned_data_files(text)
+
+
+def _heading():
+    return _import_planning().DATA_FILES_HEADING
+
+
+def test_extract_reads_the_declared_files():
+    plan = f"1. Load data\n2. Model it\n\n{_heading()}\n- studyA/a.csv\n- studyB/b.tsv\n"
+    assert _extract(plan) == ["studyA/a.csv", "studyB/b.tsv"]
+
+
+def test_extract_unwraps_backticks_and_bold_heading():
+    plan = f"**{_heading()}**\n- `studyA/a.csv`\n"
+    assert _extract(plan) == ["studyA/a.csv"]
+
+
+def test_extract_accepts_other_bullet_styles():
+    plan = f"{_heading()}:\n* one.csv\n1. two.csv\n+ three.csv\n"
+    assert _extract(plan) == ["one.csv", "two.csv", "three.csv"]
+
+
+def test_extract_treats_none_as_no_files():
+    for marker in ("none", "None", "n/a", "(none)"):
+        assert _extract(f"{_heading()}\n- {marker}\n") == []
+
+
+def test_extract_returns_empty_without_the_section():
+    assert _extract("1. Just a plan with no file section") == []
+    assert _extract("") == []
+
+
+def test_extract_stops_at_the_end_of_the_bullet_block():
+    plan = f"{_heading()}\n- a.csv\n\nSome trailing prose\n- not-a-file\n"
+    assert _extract(plan) == ["a.csv"]
+
+
+def test_extract_tolerates_a_blank_line_after_the_heading():
+    plan = f"{_heading()}\n\n- a.csv\n"
+    assert _extract(plan) == ["a.csv"]
+
+
+def test_extract_deduplicates_preserving_order():
+    plan = f"{_heading()}\n- a.csv\n- b.csv\n- a.csv\n"
+    assert _extract(plan) == ["a.csv", "b.csv"]
+
+
+def test_planning_prompt_requests_the_file_section():
+    planning = _import_planning()
+
+    class _Agent:
+        user_data_inventory = "studyA/a.csv"
+        data_root_dir = "/workspace"
+
+    prompt = planning.build_planning_system_prompt(_Agent(), "a1")
+    assert planning.DATA_FILES_HEADING in prompt
+    assert "'- none'" in prompt

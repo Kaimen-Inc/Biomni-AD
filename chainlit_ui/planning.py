@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
 from typing import TYPE_CHECKING
 
 import chainlit as cl
@@ -55,11 +56,62 @@ AD1_PLANNING_SYSTEM_PROMPT = (
 )
 
 
+# Heading the planner is told to emit, and that `extract_planned_data_files`
+# parses back out. Kept as one constant so the two can never drift.
+DATA_FILES_HEADING = "Data files this plan will read"
+
+_DATA_FILES_HEADING_RE = re.compile(rf"^\W*{re.escape(DATA_FILES_HEADING)}\W*$", re.IGNORECASE)
+_BULLET_RE = re.compile(r"^\s*(?:[-*+]|\d+[.)])\s+(.*\S)\s*$")
+
+
+def extract_planned_data_files(plan_text: str) -> list[str]:
+    """Pull the declared input files out of a generated plan.
+
+    Returns an empty list when the planner declared none, omitted the section,
+    or wrote the literal "none" - all of which mean "no files to confirm", so
+    the caller shows nothing rather than an empty box.
+
+    Tolerant of the formatting the model actually produces: the heading may be
+    bolded or numbered, and entries may use any bullet character. Paths wrapped
+    in backticks are unwrapped.
+    """
+    if not plan_text:
+        return []
+
+    lines = plan_text.splitlines()
+    start = next((i for i, line in enumerate(lines) if _DATA_FILES_HEADING_RE.match(line.strip())), None)
+    if start is None:
+        return []
+
+    files: list[str] = []
+    for line in lines[start + 1 :]:
+        stripped = line.strip()
+        if not stripped:
+            # Blank lines inside the block are fine; stop only once something
+            # has been collected, so a blank line right after the heading does
+            # not truncate the section.
+            if files:
+                break
+            continue
+        match = _BULLET_RE.match(stripped)
+        if match is None:
+            break
+        entry = match.group(1).strip().strip("`").strip()
+        if entry.lower() in {"none", "n/a", "(none)"}:
+            return []
+        if entry:
+            files.append(entry)
+
+    # De-duplicate while preserving the planner's order.
+    seen: set[str] = set()
+    return [f for f in files if not (f in seen or seen.add(f))]
+
+
 def build_planning_system_prompt(agent: A1, agent_type: str) -> str:
     """Compose the planning system prompt for `agent_type`, appending any
     locally-discovered user data inventory the agent has already snapshotted.
 
-    Pure function — no I/O, no Chainlit calls — so it's directly testable.
+    Pure function - no I/O, no Chainlit calls - so it's directly testable.
     """
     base = AD1_PLANNING_SYSTEM_PROMPT if agent_type == "ad1" else PLANNING_SYSTEM_PROMPT
 
@@ -71,6 +123,18 @@ def build_planning_system_prompt(agent: A1, agent_type: str) -> str:
             f"({data_root}). Reference specific datasets from this listing when relevant "
             f"to the user's question:\n{inventory}"
         )
+
+    # Reviewers asked that a plan commit to the data it will read, so the user
+    # can correct the file choice before any code runs rather than discovering
+    # the wrong input in the results. Asking for a fixed trailing section (and
+    # for an explicit "none" rather than silence) makes the answer checkable.
+    base += (
+        f"\n\n{DATA_FILES_HEADING} requirement: after the numbered steps, end your reply with a "
+        f"section titled exactly '{DATA_FILES_HEADING}' listing, one per line as `- <path>`, the "
+        "specific data files the plan will read. Use paths exactly as they appear in the listing "
+        "above. If the plan reads no local files, write '- none' instead. Do not list files you "
+        "have not been shown; if you need to discover them first, say so as a step."
+    )
     return base
 
 
@@ -110,8 +174,22 @@ async def interactive_planning(agent: A1, prompt: str, agent_type: str = "a1") -
                 step.output = f"⚠️ Could not generate plan ({exc}). Proceeding without a plan."
                 return prompt
 
+        # Surface the declared inputs separately from the prose so the file
+        # choice is reviewable at a glance instead of buried in the plan text.
+        planned_files = extract_planned_data_files(plan_text)
+        question = "Here is the research plan. Would you like to proceed?"
+        if planned_files:
+            listed = "\n".join(f"- `{path}`" for path in planned_files[:20])
+            if len(planned_files) > 20:
+                listed += f"\n- _... and {len(planned_files) - 20} more_"
+            question = (
+                f"**{DATA_FILES_HEADING}:**\n{listed}\n\n"
+                "If that is not the right data, choose **Revise Plan** and say which files to use.\n\n"
+                f"{question}"
+            )
+
         res = await cl.AskActionMessage(
-            content="Here is the research plan. Would you like to proceed?",
+            content=question,
             actions=[
                 cl.Action(name="approve", label="✅ Approve & Execute", payload={"value": "approve"}),
                 cl.Action(name="revise", label="✏️ Revise Plan", payload={"value": "revise"}),
