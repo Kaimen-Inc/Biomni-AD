@@ -36,11 +36,9 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 # How many files of a selected folder to show in the agent-facing inventory.
+# The human-facing panel has no equivalent: it reports counts, never listings.
 _INVENTORY_PREVIEW_FILES = 500
 _INVENTORY_TREE_LINES = 300
-# ... and in the human-facing sidebar, which needs to stay skimmable.
-_PANEL_PREVIEW_FILES = 200
-_PANEL_TREE_LINES = 60
 
 _STATUS_ICONS = {
     "running": "🔄",
