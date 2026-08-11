@@ -56,7 +56,12 @@ _STATUS_ICONS = {
 # --------------------------------------------------------------------------- #
 
 
-def list_top_level_dirs(workspace_root: str | None, *, limit: int = 200) -> list[str]:
+def list_top_level_dirs(
+    workspace_root: str | None,
+    *,
+    limit: int = 200,
+    exclude_paths: Sequence[str] = (),
+) -> list[str]:
     """Names of the immediate subdirectories of the workspace.
 
     One ``scandir`` call, no recursion: this runs on every session start and
@@ -64,14 +69,22 @@ def list_top_level_dirs(workspace_root: str | None, *, limit: int = 200) -> list
     Deliberately returns names without file counts - counting means walking, and
     walking every folder just to label a picker is the cost this whole change
     exists to remove.
+
+    ``exclude_paths`` drops directories by absolute path. The caller passes the
+    resolved output directory: when it lives inside the workspace (the default),
+    offering it as an *input* folder is wrong, and it grows a run directory every
+    query, so it would otherwise become the largest thing in the picker.
     """
     if not workspace_root or not os.path.isdir(workspace_root):
         return []
+    excluded = {os.path.abspath(p) for p in exclude_paths if p}
     names: list[str] = []
     try:
         with os.scandir(workspace_root) as entries:
             for entry in entries:
                 if entry.name.startswith(".") or entry.name in EXCLUDED_DIRS:
+                    continue
+                if os.path.abspath(entry.path) in excluded:
                     continue
                 try:
                     if entry.is_dir(follow_symlinks=False):

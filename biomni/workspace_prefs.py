@@ -59,6 +59,19 @@ def _utc_now_iso() -> str:
     return datetime.now(UTC).isoformat(timespec="seconds")
 
 
+def env_flag(name: str, default: bool = False) -> bool:
+    """Read a boolean env var. Anything but a recognised true/false is ignored."""
+    raw = os.getenv(name, "").strip().lower()
+    if not raw:
+        return default
+    if raw in {"1", "true", "yes", "on"}:
+        return True
+    if raw in {"0", "false", "no", "off"}:
+        return False
+    logger.warning("invalid %s=%r; using default %s", name, raw, default)
+    return default
+
+
 def _split_paths(raw: str) -> list[str]:
     """Split a delimited path list. Accepts commas and the OS path separator."""
     parts: list[str] = []
@@ -163,7 +176,15 @@ class PrefsStore(Protocol):
 
 
 class NullPrefsStore:
-    """No persistence. Used when no writable location could be determined."""
+    """No persistence. Settings apply to the current session only.
+
+    ``reason`` is surfaced in the UI, because "your settings will not be
+    remembered" is only actionable if the user is told why (no writable volume
+    is an operator problem; no signed-in user is not).
+    """
+
+    def __init__(self, reason: str | None = None) -> None:
+        self.reason = reason or "no writable preferences location configured"
 
     def load(self, key: str) -> WorkspacePrefs | None:
         return None
@@ -173,7 +194,7 @@ class NullPrefsStore:
 
     @property
     def describe(self) -> str:
-        return "disabled (no writable preferences location configured)"
+        return f"this session only ({self.reason})"
 
 
 def atomic_write_json(path: str, payload: dict[str, Any]) -> bool:

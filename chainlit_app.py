@@ -14,6 +14,7 @@ Environment variables:
 """
 
 import asyncio
+import hashlib
 import logging
 import os
 import re
@@ -93,6 +94,7 @@ from biomni.workspace_prefs import (
     ScopeResolution,
     WorkspacePrefs,
     build_prefs_store,
+    env_flag,
     load_prefs,
     normalize_scope_entries,
     resolve_output_dir,
@@ -731,7 +733,10 @@ def _refresh_workspace_view(ws: WorkspaceSession) -> WorkspaceSession:
     """
     ws.scope = resolve_scope(ws.prefs, ws.workspace_root)
     ws.output = resolve_output_dir(ws.prefs, workspace_root=ws.workspace_root)
-    ws.top_level_dirs = list_top_level_dirs(ws.workspace_root)
+    # The output directory usually sits inside the workspace and gains a run
+    # folder per query; it is a destination, never an input, so keep it out of
+    # the picker and out of what the agent is told it can read.
+    ws.top_level_dirs = list_top_level_dirs(ws.workspace_root, exclude_paths=[ws.output.path])
     ws.inventory = build_scope_inventory(ws.scope, ws.workspace_root, top_level_dirs=ws.top_level_dirs)
     return ws
 
@@ -745,10 +750,21 @@ def _build_workspace_session(session_id: str, header_source: object) -> Workspac
     """
     identity = resolve_identity(header_source, session_id=session_id)
     workspace_root = _resolve_workspace_root()
-    store = build_prefs_store(workspace_root)
     prefs_key = identity.scoped_key()
+
+    # An anonymous key is per-connection, so anything stored under it can never
+    # be read back - it would just accumulate orphaned directories on the state
+    # volume, one per page load. Persist only for an identified user, unless a
+    # deployment opts in (useful for local development, where there is no
+    # gateway but you still want to exercise the feature).
+    if identity.is_authenticated or env_flag("BIOMNI_ALLOW_ANONYMOUS_PERSISTENCE"):
+        store = build_prefs_store(workspace_root)
+        registry = build_run_registry(workspace_root)
+    else:
+        store = NullPrefsStore("no authenticated user; set BIOMNI_ALLOW_ANONYMOUS_PERSISTENCE=true to override")
+        registry = RunRegistry(None)
+
     prefs = load_prefs(store, prefs_key)
-    registry = build_run_registry(workspace_root)
 
     ws = WorkspaceSession(
         identity=identity,
@@ -884,6 +900,25 @@ def _build_workspace_sidebar_elements(ws: WorkspaceSession) -> list[cl.Text]:
     ]
     elements.extend(_build_builtin_datalake_elements())
     return elements
+
+
+async def _render_workspace_sidebar(ws: WorkspaceSession) -> None:
+    """Rebuild and push the sidebar. Element building is blocking, so off-loop."""
+    elements = await run_in_executor(_build_workspace_sidebar_elements, ws)
+    await cl.ElementSidebar.set_elements(elements, key=_sidebar_key(elements))
+
+
+def _sidebar_key(elements: list[cl.Text]) -> str:
+    """Content-derived key for ``ElementSidebar.set_elements``.
+
+    Chainlit skips replacing the sidebar when it is already open with the same
+    key, and the default key is ``None`` - so a second call with fresh content
+    is silently ignored and the panel keeps showing the old scope. Keying on a
+    digest of the rendered content makes an update land exactly when something
+    actually changed, and costs nothing when it has not.
+    """
+    payload = "\x00".join(f"{el.name}:{getattr(el, 'content', '')}" for el in elements)
+    return "workspace-" + hashlib.sha256(payload.encode("utf-8")).hexdigest()[:12]
 
 
 def _build_builtin_datalake_elements() -> list[cl.Text]:
@@ -1157,7 +1192,7 @@ async def on_chat_start():
             sidebar_content = cl.user_session.get("dataset_listing") or _build_dataset_listing(agent)
             sidebar_elements = [cl.Text(name="Local Datasets", content=sidebar_content)]
         await cl.ElementSidebar.set_title("Workspace")
-        await cl.ElementSidebar.set_elements(sidebar_elements)
+        await cl.ElementSidebar.set_elements(sidebar_elements, key=_sidebar_key(sidebar_elements))
         cl.user_session.set("dataset_panel_shown", True)
     except Exception:
         logger.exception("Failed to render local-data sidebar (session remains usable)")
@@ -1222,8 +1257,7 @@ async def on_settings_update(settings: dict):
         _apply_scope_to_agent(agent, ws)
 
     try:
-        sidebar_elements = await run_in_executor(_build_workspace_sidebar_elements, ws)
-        await cl.ElementSidebar.set_elements(sidebar_elements)
+        await _render_workspace_sidebar(ws)
     except Exception:
         logger.exception("Failed to refresh sidebar after settings update")
 
@@ -1462,6 +1496,16 @@ async def _process_message(message: cl.Message):
     # ------------------------------------------------------------------
     if final_state and hasattr(agent, "_save_run_artifacts"):
         await _save_run_artifacts_for_agent(agent, final_state, initial_files, topic=prompt)
+
+    # Refresh the run history so the run that just finished appears there. The
+    # panel is otherwise only built at session start, which would leave it
+    # claiming "no runs recorded yet" immediately after completing one.
+    if ws is not None and ws.registry.enabled:
+        try:
+            ws.runs = await run_in_executor(ws.registry.list_for_user, ws.prefs_key)
+            await _render_workspace_sidebar(ws)
+        except Exception:
+            logger.warning("Could not refresh run history panel", exc_info=True)
 
 
 # ---------------------------------------------------------------------------

@@ -55,6 +55,18 @@ def test_list_top_level_dirs_handles_missing_root(tmp_path):
     assert panel.list_top_level_dirs(str(tmp_path / "nope")) == []
 
 
+def test_list_top_level_dirs_excludes_the_output_directory(workspace):
+    """The output folder lives in the workspace but is a destination, not input."""
+    (workspace / "biomni-outputs").mkdir()
+    names = panel.list_top_level_dirs(str(workspace), exclude_paths=[str(workspace / "biomni-outputs")])
+    assert names == ["studyA", "studyB"]
+
+
+def test_list_top_level_dirs_ignores_exclusions_outside_the_workspace(workspace):
+    names = panel.list_top_level_dirs(str(workspace), exclude_paths=["/somewhere/else", ""])
+    assert names == ["studyA", "studyB"]
+
+
 def test_list_top_level_dirs_respects_limit(workspace):
     for i in range(5):
         (workspace / f"extra{i}").mkdir()

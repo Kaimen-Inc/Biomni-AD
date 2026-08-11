@@ -317,3 +317,30 @@ def test_saved_prefs_survive_a_reload_cycle(tmp_path):
 
     on_disk = json.loads((tmp_path / wp.WORKSPACE_STATE_DIRNAME / "prefs" / "user-1.json").read_text())
     assert on_disk["scope_paths"] == ["studies"]
+
+
+# --------------------------------------------------------------------------- #
+# env_flag / NullPrefsStore reason
+# --------------------------------------------------------------------------- #
+
+
+def test_env_flag_recognises_true_and_false_spellings(monkeypatch):
+    for raw in ("1", "true", "TRUE", "yes", "on"):
+        monkeypatch.setenv("BIOMNI_TEST_FLAG", raw)
+        assert wp.env_flag("BIOMNI_TEST_FLAG") is True
+    for raw in ("0", "false", "no", "off"):
+        monkeypatch.setenv("BIOMNI_TEST_FLAG", raw)
+        assert wp.env_flag("BIOMNI_TEST_FLAG") is False
+
+
+def test_env_flag_falls_back_on_unset_or_garbage(monkeypatch):
+    monkeypatch.delenv("BIOMNI_TEST_FLAG", raising=False)
+    assert wp.env_flag("BIOMNI_TEST_FLAG") is False
+    assert wp.env_flag("BIOMNI_TEST_FLAG", default=True) is True
+    monkeypatch.setenv("BIOMNI_TEST_FLAG", "maybe")
+    assert wp.env_flag("BIOMNI_TEST_FLAG", default=True) is True
+
+
+def test_null_store_explains_why_nothing_persists():
+    assert "no writable" in wp.NullPrefsStore().describe
+    assert "no authenticated user" in wp.NullPrefsStore("no authenticated user").describe
