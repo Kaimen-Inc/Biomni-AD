@@ -30,6 +30,7 @@ from __future__ import annotations
 
 import logging
 import os
+import threading
 from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
@@ -177,6 +178,12 @@ class RunRegistry:
 
     def __init__(self, root: str | None) -> None:
         self.root = os.path.abspath(root) if root else None
+        # Serialises heartbeat and finish. The heartbeat fires from a separate
+        # thread (RunHeartbeat), so without this a beat can read a non-terminal
+        # status, get descheduled while finish() writes, and then overwrite the
+        # completed record with "running" - which a later session would report
+        # as interrupted once the heartbeat went stale.
+        self._write_lock = threading.Lock()
 
     @property
     def enabled(self) -> bool:
@@ -221,11 +228,14 @@ class RunRegistry:
 
     def heartbeat(self, user_key: str, record: RunRecord) -> None:
         """Advance the liveness stamp of a still-running record."""
-        if record.is_terminal:
-            return
-        record.heartbeat_at = _utc_now_iso()
-        record.updated_at = record.heartbeat_at
-        self._write(user_key, record)
+        with self._write_lock:
+            # Re-checked under the lock: finish() may have landed since the
+            # caller decided to beat.
+            if record.is_terminal:
+                return
+            record.heartbeat_at = _utc_now_iso()
+            record.updated_at = record.heartbeat_at
+            self._write(user_key, record)
 
     def finish(
         self,
@@ -237,15 +247,16 @@ class RunRegistry:
         output_dir: str | None = None,
     ) -> RunRecord:
         """Close a record out in a terminal state."""
-        record.status = status
-        record.error = error
-        if output_dir:
-            record.output_dir = output_dir
-        now = _utc_now_iso()
-        record.updated_at = now
-        record.heartbeat_at = now
-        record.finished_at = now
-        self._write(user_key, record)
+        with self._write_lock:
+            record.status = status
+            record.error = error
+            if output_dir:
+                record.output_dir = output_dir
+            now = _utc_now_iso()
+            record.updated_at = now
+            record.heartbeat_at = now
+            record.finished_at = now
+            self._write(user_key, record)
         return record
 
     def _write(self, user_key: str, record: RunRecord) -> bool:
@@ -257,7 +268,16 @@ class RunRegistry:
     # -- reads ------------------------------------------------------------- #
 
     def list_for_user(self, user_key: str, *, limit: int = 20) -> list[RunRecord]:
-        """Most recent runs first. Empty when disabled or the user is new."""
+        """Most recent runs first. Empty when disabled or the user is new.
+
+        Only the newest few files are opened. Run ids are
+        ``run_<YYYYMMDD>_<HHMMSS>[_topic]`` so a reverse lexical sort of the
+        filenames is chronological, and this runs at every session start on a
+        directory that grows by one file per query - parsing all of them would
+        put unbounded I/O back on the exact mount this module set out to
+        protect. A margin above ``limit`` absorbs unparseable files without a
+        second pass.
+        """
         user_dir = self._user_dir(user_key)
         if user_dir is None or not os.path.isdir(user_dir):
             return []
@@ -267,12 +287,15 @@ class RunRegistry:
             logger.warning("could not list run records in %s", user_dir, exc_info=True)
             return []
 
+        names.sort(reverse=True)
         records: list[RunRecord] = []
-        for name in names:
+        for name in names[: max(limit * 2, limit + 5)]:
             record = RunRecord.from_dict(read_json(os.path.join(user_dir, name)))
             if record is not None:
                 records.append(record)
 
+        # Re-sort on the stored timestamp: filenames only approximate order (a
+        # custom run id, or two runs in the same second, can tie).
         records.sort(key=lambda r: r.created_at, reverse=True)
         return records[:limit]
 

@@ -268,3 +268,39 @@ def test_run_ids_cannot_escape_the_user_directory(tmp_path):
     registry.start("user-1", "../escape")
     assert not (tmp_path / "escape.json").exists()
     assert list((tmp_path / "user-1").glob("*.json"))
+
+
+def test_list_only_opens_the_newest_records(tmp_path, monkeypatch):
+    """Parsing every record on session start would be unbounded I/O on the mount."""
+    registry = rr.RunRegistry(str(tmp_path))
+    for index in range(40):
+        registry.start("user-1", f"run_202601{index:02d}_120000_job")
+
+    opened: list[str] = []
+    real_read = rr.read_json
+
+    def _counting_read(path):
+        opened.append(path)
+        return real_read(path)
+
+    monkeypatch.setattr(rr, "read_json", _counting_read)
+    listed = registry.list_for_user("user-1", limit=5)
+
+    assert len(listed) == 5
+    assert len(opened) <= 12  # a small margin above the limit, not all 40
+    # Still the newest ones, despite not reading everything.
+    assert listed[0].run_id == "run_20260139_120000_job"
+
+
+def test_heartbeat_and_finish_are_serialised(tmp_path):
+    """A beat racing finish must not resurrect a completed run as running."""
+    registry = rr.RunRegistry(str(tmp_path))
+    record = registry.start("user-1", "run_1")
+    registry.finish("user-1", record, status="completed")
+
+    # Simulates the heartbeat thread waking after finish() has landed.
+    registry.heartbeat("user-1", record)
+
+    reloaded = rr.RunRegistry(str(tmp_path)).list_for_user("user-1")[0]
+    assert reloaded.status == "completed"
+    assert reloaded.finished_at

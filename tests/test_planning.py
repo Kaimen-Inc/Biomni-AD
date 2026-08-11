@@ -173,3 +173,14 @@ def test_planning_prompt_requests_the_file_section():
     prompt = planning.build_planning_system_prompt(_Agent(), "a1")
     assert planning.DATA_FILES_HEADING in prompt
     assert "'- none'" in prompt
+
+
+def test_extract_matches_a_numbered_heading():
+    """The docstring promises numbered headings work; \\W* would not match digits."""
+    plan = f"4. {_heading()}\n- a.csv\n"
+    assert _extract(plan) == ["a.csv"]
+
+
+def test_extract_matches_a_markdown_heading():
+    plan = f"### {_heading()}\n- a.csv\n"
+    assert _extract(plan) == ["a.csv"]

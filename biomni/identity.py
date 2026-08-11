@@ -240,6 +240,23 @@ def identity_from_headers(source: Any) -> UserIdentity | None:
     return UserIdentity(user_id=user_id, email=email, workspace_id=workspace_id, source="headers")
 
 
+def trust_auth_headers() -> bool:
+    """Whether identity headers may be believed (env ``BIOMNI_TRUST_AUTH_HEADERS``).
+
+    Fails closed, and that is the whole point. These headers are an assertion
+    that only an authentication gateway is entitled to make: if the app is
+    reachable without one in front - which is true of the shipped manifest, of
+    local development, and of any misrouted ingress - then anyone can send
+    ``x-user-id: <someone else>`` and read or overwrite that person's stored
+    preferences and run history.
+
+    So a deployment must state explicitly that it sits behind a gateway which
+    strips client-supplied copies of these headers. Until it does, headers are
+    ignored and every session is anonymous.
+    """
+    return os.getenv("BIOMNI_TRUST_AUTH_HEADERS", "").strip().lower() in {"1", "true", "yes", "on"}
+
+
 def anonymous_identity(session_id: str | None = None) -> UserIdentity:
     """Identity for a session with no gateway in front of it.
 
@@ -251,7 +268,22 @@ def anonymous_identity(session_id: str | None = None) -> UserIdentity:
 
 
 def resolve_identity(header_source: Any = None, *, session_id: str | None = None) -> UserIdentity:
-    """Best-effort identity: gateway headers when present, else anonymous."""
+    """Identity for a session: gateway headers when trusted, else anonymous.
+
+    Headers are only consulted when :func:`trust_auth_headers` is on, so an
+    unprotected deployment cannot be impersonated by a hand-crafted request.
+    """
+    if not trust_auth_headers():
+        if identity_from_headers(header_source) is not None:
+            # Someone is sending identity headers at an app that has not been
+            # told it sits behind a gateway. That is either a misconfiguration
+            # or an impersonation attempt; both are worth a log line.
+            logger.warning(
+                "ignoring identity headers: BIOMNI_TRUST_AUTH_HEADERS is not enabled. "
+                "Set it only when an authentication gateway strips client-supplied copies of these headers."
+            )
+        return anonymous_identity(session_id)
+
     identity = identity_from_headers(header_source)
     if identity is not None:
         return identity

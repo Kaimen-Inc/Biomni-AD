@@ -22,7 +22,7 @@ import sys
 import time
 import uuid
 from concurrent.futures import ThreadPoolExecutor
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
@@ -857,10 +857,14 @@ def _apply_workspace_settings(ws: WorkspaceSession, settings: dict) -> tuple[Wor
     ws.prefs.scope_paths = normalize_scope_entries([*folders, *extra], ws.workspace_root)
 
     submitted_output = (settings.get("output_dir") or "").strip()
-    # The field is pre-filled with the *resolved* path, so an untouched form must
+    # The field is pre-filled with the resolved path, so an untouched form must
     # not turn today's default into a pinned preference that would survive a
-    # deployment moving its volumes.
-    if not submitted_output or submitted_output == ws.output.path:
+    # deployment moving its volumes. Compare against what the deployment would
+    # resolve to with NO preference set - comparing against the currently
+    # resolved path would also match an already-pinned directory, silently
+    # unpinning it every time the user re-saved any other setting.
+    deployment_default = resolve_output_dir(replace(ws.prefs, output_dir=None), workspace_root=ws.workspace_root).path
+    if not submitted_output or submitted_output == deployment_default:
         ws.prefs.output_dir = None
     else:
         ws.prefs.output_dir = submitted_output
@@ -871,6 +875,10 @@ def _apply_workspace_settings(ws: WorkspaceSession, settings: dict) -> tuple[Wor
     persisted = False
     if ws.prefs.remember:
         persisted = ws.store.save(ws.prefs_key, ws.prefs)
+    else:
+        # Opting out must forget what was already stored, otherwise the old
+        # scope silently returns on the next visit and the toggle looks broken.
+        ws.store.delete(ws.prefs_key)
 
     _refresh_workspace_view(ws)
     return ws, persisted
@@ -1461,7 +1469,13 @@ async def _process_message(message: cl.Message):
     if _data_root and os.path.isdir(_data_root):
         initial_files |= get_all_files(_data_root)
 
-    run_status, run_error = "completed", None
+    # Default to the pessimistic outcome and upgrade only on success. Closing
+    # the tab or a SIGTERM raises asyncio.CancelledError, which is NOT an
+    # Exception subclass, so it bypasses the handler below and lands straight in
+    # the finally block - starting from "completed" would durably record an
+    # abandoned run as finished, the exact false positive the registry exists to
+    # prevent, and reconcile() would never correct a terminal record.
+    run_status, run_error = "interrupted", "the run was cancelled before it finished"
     try:
         final_state = await _stream_execution(
             agent,
@@ -1470,6 +1484,7 @@ async def _process_message(message: cl.Message):
             thread_id,
             on_heartbeat=(lambda: ws.registry.heartbeat(ws.prefs_key, record)) if record is not None else None,
         )
+        run_status, run_error = "completed", None
     except Exception as exc:
         # Close the record out before the exception propagates, otherwise the
         # run stays "running" until a later session reconciles it as stale.

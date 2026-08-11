@@ -24,7 +24,15 @@ except Exception:  # pragma: no cover - depends on the installed extras
 
 pytestmark = pytest.mark.skipif(not HAS_AGENT, reason="agent stack (pandas/langchain/langgraph) not installed")
 
-_ENV_TO_CLEAR = ("BIOMNI_OUTPUT_ROOT", "BIOMNI_DEFAULT_SCOPE_PATHS")
+# BIOMNI_USER_DATA_PATH / BIOMNI_DATA_PATH matter here: biomni.agent.a1 calls
+# load_dotenv() at import, so a developer's .env would otherwise leak in and these
+# tests would assert different things locally than in CI.
+_ENV_TO_CLEAR = (
+    "BIOMNI_OUTPUT_ROOT",
+    "BIOMNI_DEFAULT_SCOPE_PATHS",
+    "BIOMNI_USER_DATA_PATH",
+    "BIOMNI_DATA_PATH",
+)
 
 
 @pytest.fixture(autouse=True)
@@ -71,11 +79,6 @@ def test_runs_root_falls_back_to_env_output_root(tmp_path, monkeypatch):
     monkeypatch.setenv("BIOMNI_OUTPUT_ROOT", str(tmp_path / "volume"))
     agent = _StubAgent(data_root_dir=str(tmp_path))
     assert agent._resolve_runs_root() == str(tmp_path / "volume")
-
-
-def test_runs_root_uses_the_writable_workspace(tmp_path):
-    agent = _StubAgent(data_root_dir=str(tmp_path))
-    assert agent._resolve_runs_root() == str(tmp_path / "biomni-outputs")
 
 
 def test_runs_root_falls_back_to_cwd_without_a_data_root():
@@ -128,3 +131,36 @@ def test_retriever_splits_its_budget_across_selected_folders(workspace):
 
 def test_retriever_is_empty_without_a_data_root():
     assert _StubAgent(data_root_dir=None)._get_user_data_resources() == []
+
+
+def test_runs_root_ignores_the_bundled_data_dir_when_no_workspace_is_configured(tmp_path, monkeypatch):
+    """data_root_dir defaults to ./data; that is not a user workspace.
+
+    Treating it as one would silently relocate a notebook user's output from
+    ./runs into ./data/biomni-outputs.
+    """
+    monkeypatch.delenv("BIOMNI_USER_DATA_PATH", raising=False)
+    monkeypatch.delenv("BIOMNI_DATA_PATH", raising=False)
+    agent = _StubAgent(data_root_dir=str(tmp_path))
+    assert agent._resolve_runs_root() == os.path.abspath(os.path.join(os.getcwd(), "runs"))
+
+
+def test_runs_root_uses_the_workspace_once_one_is_configured(tmp_path, monkeypatch):
+    monkeypatch.setenv("BIOMNI_USER_DATA_PATH", str(tmp_path))
+    agent = _StubAgent(data_root_dir=str(tmp_path))
+    assert agent._resolve_runs_root() == str(tmp_path / "biomni-outputs")
+
+
+def test_retriever_names_files_outside_the_data_root_by_absolute_path(tmp_path):
+    """BIOMNI_USER_DATA_PATH and BIOMNI_DATA_PATH can differ; relpath would
+    produce meaningless "../../" names in that normal case."""
+    data_root = tmp_path / "data-root"
+    data_root.mkdir()
+    elsewhere = tmp_path / "mounted-study"
+    elsewhere.mkdir()
+    (elsewhere / "a.csv").write_text("x")
+
+    agent = _StubAgent(data_root_dir=str(data_root), scope_roots=[str(elsewhere)])
+    names = [r["name"] for r in agent._get_user_data_resources()]
+    assert names == [f"user-data:{elsewhere / 'a.csv'}"]
+    assert ".." not in names[0]

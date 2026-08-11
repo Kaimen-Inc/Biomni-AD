@@ -60,7 +60,9 @@ AD1_PLANNING_SYSTEM_PROMPT = (
 # parses back out. Kept as one constant so the two can never drift.
 DATA_FILES_HEADING = "Data files this plan will read"
 
-_DATA_FILES_HEADING_RE = re.compile(rf"^\W*{re.escape(DATA_FILES_HEADING)}\W*$", re.IGNORECASE)
+# Leading junk is anything that is not a letter: "**", "3.", "### ", "- ". Using
+# \W* would not match a numbered heading, because digits are word characters.
+_DATA_FILES_HEADING_RE = re.compile(rf"^[^A-Za-z]*{re.escape(DATA_FILES_HEADING)}\W*$", re.IGNORECASE)
 _BULLET_RE = re.compile(r"^\s*(?:[-*+]|\d+[.)])\s+(.*\S)\s*$")
 
 

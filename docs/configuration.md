@@ -156,8 +156,13 @@ BIOMNI_ALLOW_ANONYMOUS_PERSISTENCE=true      # Default: false (with no auth gate
                                              #          read back; off by default to avoid orphaned
                                              #          directories. Enable for local development.)
 
-# Authentication gateway headers (identity is asserted by the gateway, never by
-# the app; each accepts a comma-separated list and is additive to the defaults)
+# Authentication gateway. Identity headers are IGNORED unless this is enabled:
+# without a gateway stripping client-supplied copies, anyone could send
+# `x-user-id: <someone else>` and read or overwrite that person's settings and
+# run history. Enable it only when a gateway is actually in front.
+BIOMNI_TRUST_AUTH_HEADERS=true                # Default: false (fails closed)
+
+# Header names (each accepts a comma-separated list, additive to the defaults)
 BIOMNI_AUTH_USER_ID_HEADER=x-auth-request-user-id
 BIOMNI_AUTH_EMAIL_HEADER=x-auth-request-email
 BIOMNI_AUTH_WORKSPACE_HEADER=x-workspace-id
@@ -192,7 +197,10 @@ application being deprovisioned without extra infrastructure, since it is the
 user's own storage.
 
 Preferences are keyed by the user id the authentication gateway asserts, scoped
-by workspace id when one is supplied. Keys are slugged and hashed, so a header
+by workspace id when one is supplied. Those headers are only believed when
+`BIOMNI_TRUST_AUTH_HEADERS` is enabled - the app cannot tell a gateway-forwarded
+header from a hand-crafted one, so it fails closed and treats every session as
+anonymous until a deployment declares that a gateway is in front. Keys are slugged and hashed, so a header
 value can never escape its directory, and an e-mail-only identity hashes to an
 opaque key rather than writing the address into a filename. With no gateway in
 front, the key is per-session and nothing persists across sessions.

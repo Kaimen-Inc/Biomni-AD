@@ -661,6 +661,7 @@ For all analyses in this run:
         per_root = max(1, max_items // len(search_roots))
 
         resources: list[dict[str, str]] = []
+        abs_root = os.path.abspath(root_dir)
         for search_root in search_roots:
             result = scan_directory(
                 search_root,
@@ -668,13 +669,23 @@ For all analyses in this run:
                 prune_subtrees=prune,
                 max_files_override=per_root,
             )
-            resources.extend(
-                {
-                    "name": f"user-data:{os.path.relpath(os.path.join(search_root, rel), root_dir)}",
-                    "description": f"User dataset file at {os.path.join(search_root, rel)}",
-                }
-                for rel in result.files
-            )
+            for rel in result.files:
+                absolute = os.path.abspath(os.path.join(search_root, rel))
+                # Name files relative to the data root when they live under it,
+                # else by absolute path. A scope root outside the data root is
+                # normal (BIOMNI_USER_DATA_PATH and BIOMNI_DATA_PATH can differ),
+                # and relpath would then produce "../../mnt/..." names that are
+                # meaningless to the retriever and unresolvable downstream.
+                if absolute == abs_root or absolute.startswith(abs_root + os.sep):
+                    label = os.path.relpath(absolute, abs_root)
+                else:
+                    label = absolute
+                resources.append(
+                    {
+                        "name": f"user-data:{label}",
+                        "description": f"User dataset file at {absolute}",
+                    }
+                )
         return resources
 
     def _resolve_data_path(self, data_path: str) -> str:
@@ -2599,8 +2610,16 @@ Each library is listed with its description to help you understand its functiona
         configured = getattr(self, "runs_root", None)
         if configured:
             return str(configured)
-        target = resolve_output_dir(default_prefs(), workspace_root=getattr(self, "data_root_dir", None))
-        return target.path
+
+        # Only treat the data root as a workspace when the deployment actually
+        # configured one. `data_root_dir` defaults to ./data (the bundled data
+        # directory), and using that as a workspace would silently relocate a
+        # notebook user's output from ./runs to ./data/biomni-outputs.
+        workspace_root = None
+        if os.getenv("BIOMNI_USER_DATA_PATH", "").strip() or os.getenv("BIOMNI_DATA_PATH", "").strip():
+            workspace_root = getattr(self, "data_root_dir", None)
+
+        return resolve_output_dir(default_prefs(), workspace_root=workspace_root).path
 
     def _summarize_topic_with_llm(self, topic: str) -> str:
         """Use configured LLM to generate a short, descriptive directory slug."""

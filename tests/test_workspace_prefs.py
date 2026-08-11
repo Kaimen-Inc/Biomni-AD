@@ -344,3 +344,16 @@ def test_env_flag_falls_back_on_unset_or_garbage(monkeypatch):
 def test_null_store_explains_why_nothing_persists():
     assert "no writable" in wp.NullPrefsStore().describe
     assert "no authenticated user" in wp.NullPrefsStore("no authenticated user").describe
+
+
+def test_delete_forgets_stored_preferences(tmp_path):
+    store = wp.JsonFilePrefsStore(str(tmp_path))
+    store.save("k", wp.WorkspacePrefs(scope_paths=["chosen"]))
+    assert store.delete("k") is True
+    assert store.load("k") is None
+    # Deleting what is not there is success: the desired state is "forgotten".
+    assert store.delete("k") is True
+
+
+def test_null_store_delete_is_a_no_op():
+    assert wp.NullPrefsStore().delete("k") is False

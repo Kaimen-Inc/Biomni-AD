@@ -171,6 +171,8 @@ class PrefsStore(Protocol):
 
     def save(self, key: str, prefs: WorkspacePrefs) -> bool: ...
 
+    def delete(self, key: str) -> bool: ...
+
     @property
     def describe(self) -> str: ...
 
@@ -190,6 +192,9 @@ class NullPrefsStore:
         return None
 
     def save(self, key: str, prefs: WorkspacePrefs) -> bool:
+        return False
+
+    def delete(self, key: str) -> bool:
         return False
 
     @property
@@ -254,6 +259,17 @@ class JsonFilePrefsStore:
     def save(self, key: str, prefs: WorkspacePrefs) -> bool:
         prefs.touch()
         return atomic_write_json(self._path(key), prefs.to_dict())
+
+    def delete(self, key: str) -> bool:
+        """Forget a user's stored preferences. Missing is success, not failure."""
+        try:
+            os.unlink(self._path(key))
+        except FileNotFoundError:
+            return True
+        except OSError:
+            logger.warning("could not delete preferences for %s", key, exc_info=True)
+            return False
+        return True
 
     @property
     def describe(self) -> str:

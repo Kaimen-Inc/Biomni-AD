@@ -15,6 +15,7 @@ _ENV_TO_CLEAR = (
     "BIOMNI_AUTH_USER_ID_HEADER",
     "BIOMNI_AUTH_EMAIL_HEADER",
     "BIOMNI_AUTH_WORKSPACE_HEADER",
+    "BIOMNI_TRUST_AUTH_HEADERS",
 )
 
 
@@ -118,7 +119,8 @@ def test_anonymous_identity_is_keyed_by_session():
     assert who.storage_key() != "anonymous"  # distinct per session
 
 
-def test_resolve_identity_prefers_headers_then_falls_back():
+def test_resolve_identity_prefers_headers_then_falls_back(monkeypatch):
+    monkeypatch.setenv("BIOMNI_TRUST_AUTH_HEADERS", "true")
     assert identity.resolve_identity({"x-user-id": "u9"}, session_id="s1").user_id == "u9"
     assert identity.resolve_identity({}, session_id="s1").source == "anonymous"
 
@@ -174,3 +176,37 @@ def test_scoped_key_sanitizes_workspace_id():
     who = identity.UserIdentity(user_id="u1", workspace_id="../evil", source="headers")
     key = who.scoped_key()
     assert "/" not in key and ".." not in key
+
+
+# --------------------------------------------------------------------------- #
+# Header trust gate
+# --------------------------------------------------------------------------- #
+
+
+def test_headers_are_ignored_unless_the_deployment_opts_in(monkeypatch):
+    """Fail closed: without a declared gateway, headers are an impersonation vector."""
+    monkeypatch.delenv("BIOMNI_TRUST_AUTH_HEADERS", raising=False)
+    who = identity.resolve_identity({"x-user-id": "victim"}, session_id="s1")
+    assert who.source == "anonymous"
+    assert who.user_id != "victim"
+
+
+def test_headers_are_used_once_trusted(monkeypatch):
+    monkeypatch.setenv("BIOMNI_TRUST_AUTH_HEADERS", "true")
+    who = identity.resolve_identity({"x-user-id": "u1"}, session_id="s1")
+    assert who.source == "headers"
+    assert who.user_id == "u1"
+
+
+def test_trust_flag_spellings(monkeypatch):
+    for raw in ("1", "true", "TRUE", "yes", "on"):
+        monkeypatch.setenv("BIOMNI_TRUST_AUTH_HEADERS", raw)
+        assert identity.trust_auth_headers() is True
+    for raw in ("0", "false", "no", "off", "", "maybe"):
+        monkeypatch.setenv("BIOMNI_TRUST_AUTH_HEADERS", raw)
+        assert identity.trust_auth_headers() is False
+
+
+def test_trusted_but_headerless_session_is_still_anonymous(monkeypatch):
+    monkeypatch.setenv("BIOMNI_TRUST_AUTH_HEADERS", "true")
+    assert identity.resolve_identity({}, session_id="s1").source == "anonymous"

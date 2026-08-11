@@ -66,6 +66,15 @@ spec:
       labels:
         app: biomni-ad
     spec:
+      # The image runs as the non-root mambauser (UID 57439). A freshly
+      # provisioned block PVC mounts as root:root 0755, so without fsGroup the
+      # container cannot write /data - and because every write path here
+      # degrades gracefully, the failure is silent: outputs fall back to the
+      # ephemeral ./runs and preferences stop persisting, making the volume a
+      # no-op. fsGroup makes the kubelet chgrp the volume to that GID.
+      securityContext:
+        fsGroup: 57439
+        fsGroupChangePolicy: OnRootMismatch
       containers:
         - name: biomni-ad
           image: ghcr.io/kaimen-inc/biomni-ad:latest # pin to a sha- tag in prod
@@ -102,10 +111,18 @@ spec:
             - name: BIOMNI_STATE_DIR
               value: "/data/state"
 
-            # Header names asserted by the authentication gateway. The defaults
-            # already cover the common conventions; set these only when the
-            # gateway uses different names. Identity is trusted from these
-            # headers, so the gateway MUST strip client-supplied copies.
+            # Identity from the authentication gateway. Left OFF here on
+            # purpose: this manifest exposes the app through a plain Service
+            # with no gateway, and with the flag on anyone able to reach the
+            # pod could send `x-user-id: <someone else>` and read or overwrite
+            # that person's settings and run history. Turn it on in the same
+            # change that puts a gateway in front - and make sure that gateway
+            # strips client-supplied copies of these headers.
+            # - name: BIOMNI_TRUST_AUTH_HEADERS
+            #   value: "true"
+            #
+            # Header names. The defaults cover the common conventions; set
+            # these only when the gateway uses different ones.
             # - name: BIOMNI_AUTH_USER_ID_HEADER
             #   value: "x-auth-request-user-id"
             # - name: BIOMNI_AUTH_EMAIL_HEADER

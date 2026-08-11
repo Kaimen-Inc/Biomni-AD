@@ -37,7 +37,7 @@ RUN --mount=type=cache,target=/opt/conda/pkgs,sharing=locked \
     --mount=type=cache,target=/root/.cache/pip,sharing=locked \
     micromamba create -y -n biomni_e1 -f /tmp/biomni_env.yml && \
     micromamba run -n biomni_e1 pip install --upgrade pip && \
-    micromamba run -n biomni_e1 pip install "chainlit>=1.0" --index-url https://pypi.org/simple/
+    micromamba run -n biomni_e1 pip install "chainlit>=2.8" --index-url https://pypi.org/simple/
 
 # Editable install of the biomni package. Stage 2 copies the same source
 # tree to the same /app path so the .pth pointer resolves at runtime.
