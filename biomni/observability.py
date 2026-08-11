@@ -548,6 +548,7 @@ class RunHeartbeat:
         event: str = "run_heartbeat",
         logger: logging.Logger | None = None,
         status: Callable[[], Mapping[str, Any]] | None = None,
+        on_tick: Callable[[], None] | None = None,
     ) -> None:
         # Small positive floor guards against a 0/negative interval busy-looping
         # the thread; callers pick a sane cadence (Chainlit defaults to ~15s).
@@ -555,6 +556,11 @@ class RunHeartbeat:
         self._event = event
         self._logger = logger
         self._status = status
+        # Side-effecting per-tick hook, kept separate from `status` so that
+        # callback stays a pure "describe the run" function. Used to advance the
+        # durable run record's liveness stamp (see biomni.run_registry), which is
+        # what lets a later session tell a slow run from an abandoned one.
+        self._on_tick = on_tick
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
         self._ctx: contextvars.Context | None = None
@@ -588,6 +594,12 @@ class RunHeartbeat:
                 logging.getLogger("biomni.events").debug("heartbeat emit failed", exc_info=True)
 
     def _emit(self) -> None:
+        if self._on_tick is not None:
+            try:
+                self._on_tick()
+            except Exception:  # tick hook must never break the heartbeat
+                logging.getLogger("biomni.events").debug("heartbeat tick hook failed", exc_info=True)
+
         fields: dict[str, Any] = {"elapsed_ms": round((time.monotonic() - self._start) * 1000, 1)}
         if self._status is not None:
             try:
