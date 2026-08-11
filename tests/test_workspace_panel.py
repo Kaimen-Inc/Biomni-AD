@@ -161,8 +161,11 @@ def test_panel_without_selection_invites_a_choice(workspace):
     scope = resolve_scope(WorkspacePrefs(), str(workspace))
     text = panel.build_scope_panel(scope, str(workspace), None)
     assert "Nothing selected yet" in text
-    assert "studyA" in text
     assert "Settings" in text
+    # The panel must not enumerate the workspace: an un-actionable folder list
+    # is exactly the noise reviewers asked to have removed from the right-hand
+    # side. The names belong in the Settings picker, where they can be chosen.
+    assert "studyA" not in text
 
 
 def test_panel_with_selection_shows_counts(workspace):

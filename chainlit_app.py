@@ -162,9 +162,6 @@ from chainlit_ui.workspace_panel import (
     scope_choice_items,
     summarize_scope,
 )
-from chainlit_ui.workspace_panel import (
-    build_tree_preview_lines as _build_tree_preview_lines,
-)
 
 DEFAULT_LLM = resolve_default_llm()
 DEFAULT_PATH = os.getenv("BIOMNI_PATH", "./data")
@@ -257,149 +254,6 @@ def _display_data_root_label(env_name: str) -> str:
     if env_name == "BIOMNI_USER_DATA_HOST_PATH":
         return "AD_WORKBENCH_DATASETS"
     return env_name
-
-
-def _list_path_entries_recursive(
-    path: str, max_items: int = 80, max_depth: int = 10, exclude_top_subdirs: set[str] | None = None
-) -> tuple[list[str], int]:
-    """Recursively list non-hidden files under a directory.
-
-    Returns a (preview_items, total_file_count) tuple. Preview items are
-    relative POSIX-style paths suitable for UI display.
-
-    Thin adapter over :func:`biomni.fs_scan.scan_directory` — the scan is
-    bounded (file cap + wall-clock deadline) and cached, so this never hangs on
-    a large or network-backed workspace. ``total_file_count`` is a lower bound
-    when the underlying scan was truncated; callers that display it should treat
-    it as approximate (see ``_build_user_data_tree_content``).
-    """
-    result = scan_directory(path, max_depth=max_depth, exclude_top_subdirs=exclude_top_subdirs)
-    return result.files[:max_items], result.file_count
-
-
-def _collect_path_stats(path: str, max_depth: int = 10, exclude_top_subdirs: set[str] | None = None) -> dict:
-    """Collect compact stats for a directory tree for sidebar summaries.
-
-    ``exclude_top_subdirs`` names top-level subdirectories to skip entirely
-    (useful for counting the datalake root without the biomniAD subfolder).
-
-    Backed by the bounded/cached scanner; ``truncated`` is True when the counts
-    are a floor (workspace larger than the scan budget).
-    """
-    result = scan_directory(path, max_depth=max_depth, exclude_top_subdirs=exclude_top_subdirs)
-    return {
-        "total_files": result.file_count,
-        "total_dirs": result.dir_count,
-        "top_level_counts": dict(result.top_level_counts),
-        "extension_counts": dict(result.extension_counts),
-        "truncated": result.bounded,
-    }
-
-
-def _format_compact_counts(counts: dict[str, int], max_items: int = 8) -> str:
-    """Format a frequency map as a compact markdown bullet list."""
-    if not counts:
-        return "- *(none)*"
-    top_items = sorted(counts.items(), key=lambda kv: (-kv[1], kv[0]))[:max_items]
-    return "\n".join(f"- `{name}`: {value}" for name, value in top_items)
-
-
-def _build_user_data_tree_content(root_path: str, preview_files: int = 300) -> tuple[str, int]:
-    """Build concise per-root content for sidebar readability."""
-    result = scan_directory(root_path, max_depth=10)
-    if result.file_count == 0:
-        # Distinguish a genuinely empty root from a scan that hit the
-        # time/size budget before reading any file (slow network mount) — the
-        # latter must not masquerade as "no files".
-        if result.bounded:
-            return (
-                "(listing unavailable — the workspace scan hit its time/size budget before any file "
-                "was read; the folder is likely very large or on a slow mount. Open it directly to browse.)",
-                0,
-            )
-        return "(no files found)", 0
-
-    preview = result.files[:preview_files]
-    tree_lines = _build_tree_preview_lines(preview, max_lines=70, max_depth=3)
-    lines: list[str] = [
-        f"Directory structure preview (showing first {len(preview)} files)",
-        "",
-        *tree_lines,
-    ]
-    if result.bounded:
-        # Workspace exceeded the scan budget: the tree is a partial sample.
-        lines.append(
-            f"... workspace is large — listing capped at {result.count_label()} files "
-            "(not fully indexed; scan bounded for responsiveness)"
-        )
-    elif result.file_count > len(preview):
-        lines.append(f"... and {result.file_count - len(preview)} more files")
-
-    return "\n".join(lines), result.file_count
-
-
-def _root_count_label(root_path: str, exclude_top_subdirs: set[str] | None = None) -> str:
-    """Cached file count for a root, with a trailing ``+`` when the scan was
-    bounded (a floor, not an exact total). Reuses the cached scan so calling it
-    for a tab label right after building the tree is free."""
-    return scan_directory(root_path, max_depth=10, exclude_top_subdirs=exclude_top_subdirs).count_label()
-
-
-def _build_sidebar_overview_content() -> str:
-    """At-a-glance counts for the built-in data lakes. Empty string when absent.
-
-    Sections (only shown when they have files):
-    1. Biomni-AD Datalake - data_lake/biomniAD/ subfolder.
-    2. Biomni Datalake    - root of data_lake/ excluding biomniAD.
-    """
-    lines: list[str] = ["At-a-glance overview", ""]
-    grand_files = 0
-    grand_dirs = 0
-    grand_truncated = False
-
-    def _add(label: str, stats: dict) -> None:
-        # Render one section line and fold its counts into the grand totals. A
-        # trailing "+" signals the scan was bounded (workspace larger than the
-        # scan budget), so the number is a floor, not an exact count.
-        nonlocal grand_files, grand_dirs, grand_truncated
-        if stats["total_files"] <= 0:
-            return
-        grand_files += stats["total_files"]
-        grand_dirs += stats["total_dirs"]
-        grand_truncated = grand_truncated or stats.get("truncated", False)
-        plus = "+" if stats.get("truncated") else ""
-        lines.append(f"{label}: {stats['total_files']}{plus} files, {stats['total_dirs']}{plus} folders")
-        lines.append("")
-
-    # The user's own workspace is deliberately absent from this overview. Its
-    # totals used to be computed with a full recursive walk on every session
-    # start, which is the cost this change removes; the Workspace panel reports
-    # counts for the folders the user actually selected instead.
-
-    # --- 1. Biomni-AD Datalake ----------------------------------------------
-    builtin_root = _resolve_builtin_data_lake_root()
-    biomni_ad_root = os.path.join(builtin_root, "biomniAD")
-    if os.path.isdir(biomni_ad_root):
-        _add("Biomni-AD Datalake", _collect_path_stats(biomni_ad_root))
-
-    # --- 2. Biomni Datalake (root of data_lake, excluding biomniAD) ----------
-    if os.path.isdir(builtin_root):
-        _add("Biomni Datalake", _collect_path_stats(builtin_root, exclude_top_subdirs={"biomniAD"}))
-
-    if grand_files == 0 and grand_dirs == 0:
-        return ""
-
-    plus = "+" if grand_truncated else ""
-    lines.extend(
-        [
-            "Combined totals",
-            f"Files: {grand_files}{plus}",
-            f"Folders: {grand_dirs}{plus}",
-        ]
-    )
-    if grand_truncated:
-        lines.append("(partial — workspace exceeded the scan budget; counts are a lower bound)")
-    return "\n".join(lines)
 
 
 def _resolve_builtin_data_lake_root() -> str:
@@ -669,16 +523,6 @@ _DATALAKE_CATEGORIES: list[tuple[str, list[str]]] = [
 ]
 
 
-def _build_dataset_listing(agent) -> str:
-    """Return a compact sidebar summary (tree details are in separate elements)."""
-    _ = agent
-    user_roots = _resolve_user_data_roots()
-    builtin_root = _resolve_builtin_data_lake_root()
-    if not user_roots and not os.path.isdir(builtin_root):
-        return "No local data tree available"
-    return "Open a Tree item below"
-
-
 # ---------------------------------------------------------------------------
 # Workspace session: identity, preferences, scope, outputs, run history
 # ---------------------------------------------------------------------------
@@ -885,13 +729,17 @@ def _apply_workspace_settings(ws: WorkspaceSession, settings: dict) -> tuple[Wor
 
 
 def _build_workspace_sidebar_elements(ws: WorkspaceSession) -> list[cl.Text]:
-    """Sidebar pages: the active scope, run history, then the built-in lakes.
+    """Sidebar pages: the active data scope, and this user's recent runs.
 
-    Replaces the old flat dump of every workspace file, which reviewers
-    correctly called out as unusable: it could not be acted on, and producing
-    it required the full traversal this change exists to avoid.
+    Nothing else. Earlier versions also dumped the built-in data lakes here -
+    an at-a-glance file/folder census plus a full directory tree of ~290 curated
+    files - and reviewers rejected it twice, for the same reason each time: it
+    is an inventory nobody asked for, it cannot be acted on from the panel, and
+    it buries the two facts that do matter (what the agent may read, and where
+    results went). The data lakes are still fully available to the agent through
+    the retriever and the system prompt; they are simply not wallpaper.
     """
-    elements: list[cl.Text] = [
+    return [
         cl.Text(
             name="Workspace",
             content=build_scope_panel(
@@ -899,15 +747,12 @@ def _build_workspace_sidebar_elements(ws: WorkspaceSession) -> list[cl.Text]:
                 ws.workspace_root,
                 ws.output,
                 summaries=summarize_scope(ws.scope, ws.workspace_root),
-                top_level_dirs=ws.top_level_dirs,
                 persistence=ws.persistence_label,
             ),
             display="page",
         ),
         cl.Text(name="Recent runs", content=build_runs_panel(ws.runs), display="page"),
     ]
-    elements.extend(_build_builtin_datalake_elements())
-    return elements
 
 
 async def _render_workspace_sidebar(ws: WorkspaceSession) -> None:
@@ -927,57 +772,6 @@ def _sidebar_key(elements: list[cl.Text]) -> str:
     """
     payload = "\x00".join(f"{el.name}:{getattr(el, 'content', '')}" for el in elements)
     return "workspace-" + hashlib.sha256(payload.encode("utf-8")).hexdigest()[:12]
-
-
-def _build_builtin_datalake_elements() -> list[cl.Text]:
-    """Sidebar trees for the repo-local data lakes.
-
-    These stay a full listing: they are curated, bounded and identical for every
-    user, so none of the large-workspace concerns apply.
-    """
-    elements: list[cl.Text] = []
-    summary = _build_sidebar_overview_content()
-    if summary:
-        elements.append(cl.Text(name="Data lake summary", content=summary, display="page"))
-
-    # --- Built-in datalake trees ---------------------------------------------
-    builtin_root = _resolve_builtin_data_lake_root()
-
-    # Biomni-AD Datalake
-    biomni_ad_root = os.path.join(builtin_root, "biomniAD")
-    if os.path.isdir(biomni_ad_root):
-        tree_content, total_files = _build_user_data_tree_content(biomni_ad_root)
-        if total_files > 0:
-            content = f"Path: {biomni_ad_root}\n\n{tree_content}"
-            elements.append(
-                cl.Text(
-                    name=f"Tree [Biomni-AD Datalake] ({_root_count_label(biomni_ad_root)})",
-                    content=content,
-                    display="page",
-                )
-            )
-
-    # Biomni Datalake (root, excluding biomniAD)
-    if os.path.isdir(builtin_root):
-        lake = scan_directory(builtin_root, max_depth=10, exclude_top_subdirs={"biomniAD"})
-        if lake.file_count > 0:
-            preview = lake.files[:300]
-            tree_lines = _build_tree_preview_lines(preview, max_lines=70, max_depth=3)
-            lake_lines: list[str] = [
-                f"Directory structure preview (showing first {len(preview)} files)",
-                "",
-                *tree_lines,
-            ]
-            if lake.bounded:
-                lake_lines.append(f"... listing capped at {lake.count_label()} files (scan bounded for responsiveness)")
-            elif lake.file_count > len(preview):
-                lake_lines.append(f"... and {lake.file_count - len(preview)} more files")
-            content = f"Path: {builtin_root}\n\n" + "\n".join(lake_lines)
-            elements.append(
-                cl.Text(name=f"Tree [Biomni Datalake] ({lake.count_label()})", content=content, display="page")
-            )
-
-    return elements
 
 
 # ---------------------------------------------------------------------------
@@ -1152,8 +946,6 @@ async def on_chat_start():
         cl.user_session.set("agent_type", agent_type)
         cl.user_session.set("history", [])
         cl.user_session.set("thread_id", thread_id)
-        cl.user_session.set("dataset_listing", _build_dataset_listing(agent))
-        cl.user_session.set("dataset_panel_shown", False)
     except Exception as exc:
         logger.exception("Failed to initialize %s agent", label)
         await cl.Message(content=f"Failed to initialize {label}: {exc}").send()
@@ -1190,20 +982,13 @@ async def on_chat_start():
         except Exception:
             logger.exception("Failed to render workspace settings (session remains usable)")
 
-    # Render the sidebar: active scope, run history, then the built-in lakes.
-    try:
-        if ws is not None:
-            sidebar_elements = await run_in_executor(_build_workspace_sidebar_elements, ws)
-        else:
-            sidebar_elements = await run_in_executor(_build_builtin_datalake_elements)
-        if not sidebar_elements:
-            sidebar_content = cl.user_session.get("dataset_listing") or _build_dataset_listing(agent)
-            sidebar_elements = [cl.Text(name="Local Datasets", content=sidebar_content)]
-        await cl.ElementSidebar.set_title("Workspace")
-        await cl.ElementSidebar.set_elements(sidebar_elements, key=_sidebar_key(sidebar_elements))
-        cl.user_session.set("dataset_panel_shown", True)
-    except Exception:
-        logger.exception("Failed to render local-data sidebar (session remains usable)")
+    # Render the sidebar: the active data scope and this user's recent runs.
+    if ws is not None:
+        try:
+            await cl.ElementSidebar.set_title("Workspace")
+            await _render_workspace_sidebar(ws)
+        except Exception:
+            logger.exception("Failed to render the workspace sidebar (session remains usable)")
 
     # Tell the user about work that did not finish while they were away. Only
     # unfinished runs interrupt them; completed ones wait in the sidebar.

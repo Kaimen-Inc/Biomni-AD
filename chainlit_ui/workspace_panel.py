@@ -307,7 +307,6 @@ def build_scope_panel(
     output: OutputTarget | None,
     *,
     summaries: Sequence[ScopeEntrySummary] | None = None,
-    top_level_dirs: Sequence[str] | None = None,
     persistence: str | None = None,
 ) -> str:
     """The sidebar page: what the agent can read, and where results will go."""
@@ -326,15 +325,14 @@ def build_scope_panel(
                 suffix = "file" if (entry.file_count == 1 and not entry.bounded) else "files"
                 lines.append(f"- 📁 `{entry.label}/` - {entry.count_label()} {suffix}")
         else:
-            names = list(top_level_dirs if top_level_dirs is not None else list_top_level_dirs(workspace_root))
+            # Deliberately no folder listing here. Reviewers asked twice for the
+            # right-hand panel to stop being an inventory: a list of names the
+            # user cannot click, filter or act on is noise, and the same names
+            # are already in the ⚙️ Settings picker, where they *are* actionable.
+            # This panel answers one question - what is the agent allowed to
+            # read right now - and says nothing when the answer is "nothing".
             lines.append("")
             lines.append("_Nothing selected yet - the agent will look only where a task points it._")
-            if names:
-                lines.append("")
-                lines.append(f"Top-level folders ({len(names)}):")
-                lines.extend(f"- 📁 `{name}/`" for name in names[:40])
-                if len(names) > 40:
-                    lines.append(f"- _... and {len(names) - 40} more_")
             lines.append("")
             lines.append("Use ⚙️ **Settings** to pick the folders you are working with.")
 
