@@ -186,8 +186,11 @@ def build_planning_system_prompt(agent: A1, agent_type: str) -> str:
     base += (
         f"\n\n{DATA_FILES_HEADING} requirement: if - and only if - the listing above named concrete "
         f"data files that this plan will read, end your reply with a section titled exactly "
-        f"'{DATA_FILES_HEADING}' listing them one per line as `- <path>`, copied exactly from that "
-        "listing. Every entry must be a real file. Never list a directory, a glob, or a placeholder "
+        f"'{DATA_FILES_HEADING}' listing them one per line as `- <path>`, with each name copied "
+        "exactly from that listing and written relative to the folder it was listed under "
+        "(`studyA/results.tsv`, never the full absolute path - the user knows where their own "
+        "workspace is, and five absolute paths are a wall of text). "
+        "Every entry must be a real file. Never list a directory, a glob, or a placeholder "
         "such as 'to be discovered' or 'if available'. If you have not been shown concrete files, omit "
         "the section entirely — do not replace it with a directory listing or a file-discovery step."
     )

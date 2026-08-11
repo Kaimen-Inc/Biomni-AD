@@ -171,11 +171,17 @@ class UserIdentity:
     user_id: str | None = None
     email: str | None = None
     workspace_id: str | None = None
-    source: str = "anonymous"  # "headers" | "chainlit-user" | "anonymous"
+    source: str = "anonymous"  # "headers" | "local" | "anonymous"
 
     @property
     def is_authenticated(self) -> bool:
-        return self.source != "anonymous" and bool(self.user_id or self.email)
+        """Whether somebody actually proved who they are.
+
+        The ``local`` source is deliberately excluded: it is a stable key for an
+        un-gated deployment, not a claim about identity, and callers use this
+        property to decide how much to trust the session.
+        """
+        return self.source not in {"anonymous", "local"} and bool(self.user_id or self.email)
 
     @property
     def display_name(self) -> str:
@@ -267,6 +273,35 @@ def anonymous_identity(session_id: str | None = None) -> UserIdentity:
     return UserIdentity(user_id=f"session-{session_id}" if session_id else None, source="anonymous")
 
 
+LOCAL_USER_ID = "local"
+
+
+def single_user_mode() -> bool:
+    """Whether an un-gated deployment should behave as one persistent user.
+
+    With no gateway, :func:`anonymous_identity` keys everything by connection,
+    so nothing written can ever be read back - settings reset on reload and no
+    chat history accumulates. That is the safe default for a deployment reachable
+    by more than one person, but it makes the app untestable locally and hides
+    the persistence features entirely.
+
+    ``BIOMNI_ALLOW_ANONYMOUS_PERSISTENCE`` opts into a single shared local user.
+    Everyone who reaches the app then shares one set of preferences, one run
+    history and one list of chat threads, so it is for development and
+    single-user deployments only - which is why it is off by default.
+    """
+    return os.getenv("BIOMNI_ALLOW_ANONYMOUS_PERSISTENCE", "").strip().lower() in {"1", "true", "yes", "on"}
+
+
+def local_identity() -> UserIdentity:
+    """The single shared identity used in :func:`single_user_mode`.
+
+    Not ``is_authenticated``: nobody proved anything. It is merely *stable*,
+    which is all persistence needs.
+    """
+    return UserIdentity(user_id=LOCAL_USER_ID, source="local")
+
+
 def resolve_identity(header_source: Any = None, *, session_id: str | None = None) -> UserIdentity:
     """Identity for a session: gateway headers when trusted, else anonymous.
 
@@ -282,7 +317,7 @@ def resolve_identity(header_source: Any = None, *, session_id: str | None = None
                 "ignoring identity headers: BIOMNI_TRUST_AUTH_HEADERS is not enabled. "
                 "Set it only when an authentication gateway strips client-supplied copies of these headers."
             )
-        return anonymous_identity(session_id)
+        return local_identity() if single_user_mode() else anonymous_identity(session_id)
 
     identity = identity_from_headers(header_source)
     if identity is not None:

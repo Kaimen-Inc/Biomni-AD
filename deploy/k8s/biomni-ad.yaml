@@ -28,6 +28,14 @@ stringData:
   ANTHROPIC_API_KEY: "replace-me"
   # OPENAI_API_KEY: "replace-me"
   # AZURE_OPENAI_API_KEY: "replace-me"
+  #
+  # Signing key for the session cookie. Chainlit requires one as soon as
+  # authentication is enabled, which it always is here. Left unset the app
+  # generates one and stores it on the state volume, which is fine for a single
+  # replica; set it explicitly before scaling out, or each pod signs with a
+  # different key and users are logged out at random.
+  #   openssl rand -base64 48
+  # CHAINLIT_AUTH_SECRET: "replace-me"
 ---
 # Persistent storage for run outputs, user preferences and run records.
 #
@@ -106,10 +114,19 @@ spec:
             - name: BIOMNI_OUTPUT_ROOT
               value: "/data/outputs"
 
-            # Per-user preferences (data scope, output directory) and durable
-            # run records, so a user who closes the tab still finds their jobs.
+            # Per-user preferences (data scope, output directory), durable run
+            # records and the chat-history database, so a user who closes the
+            # tab still finds their jobs and their conversations.
             - name: BIOMNI_STATE_DIR
               value: "/data/state"
+
+            # Chat history is stored in SQLite under $BIOMNI_STATE_DIR by
+            # default, which assumes one replica - the same assumption the
+            # file-backed preferences already make. Point this at a shared
+            # database before scaling out (and migrate its schema; only the
+            # SQLite one is created automatically).
+            # - name: BIOMNI_THREADS_DB_URL
+            #   value: "postgresql+asyncpg://user:pass@host:5432/biomni"
 
             # Identity from the authentication gateway. Left OFF here on
             # purpose: this manifest exposes the app through a plain Service

@@ -16,6 +16,7 @@ _ENV_TO_CLEAR = (
     "BIOMNI_AUTH_EMAIL_HEADER",
     "BIOMNI_AUTH_WORKSPACE_HEADER",
     "BIOMNI_TRUST_AUTH_HEADERS",
+    "BIOMNI_ALLOW_ANONYMOUS_PERSISTENCE",
 )
 
 
@@ -210,3 +211,42 @@ def test_trust_flag_spellings(monkeypatch):
 def test_trusted_but_headerless_session_is_still_anonymous(monkeypatch):
     monkeypatch.setenv("BIOMNI_TRUST_AUTH_HEADERS", "true")
     assert identity.resolve_identity({}, session_id="s1").source == "anonymous"
+
+
+# --------------------------------------------------------------------------- #
+# Single-user mode
+# --------------------------------------------------------------------------- #
+
+
+def test_single_user_mode_is_off_by_default():
+    assert identity.single_user_mode() is False
+
+
+def test_single_user_mode_gives_everyone_one_stable_key(monkeypatch):
+    """The point of the flag: a key that can actually be read back.
+
+    Under the anonymous default the key changes every page load, so settings and
+    chat history are written somewhere nobody will ever look again.
+    """
+    monkeypatch.setenv("BIOMNI_ALLOW_ANONYMOUS_PERSISTENCE", "true")
+    first = identity.resolve_identity({}, session_id="connection-a")
+    second = identity.resolve_identity({}, session_id="connection-b")
+    assert first.source == "local"
+    assert first.storage_key() == second.storage_key()
+    # Stable, but still not a claim that anyone authenticated.
+    assert not first.is_authenticated
+
+
+def test_single_user_mode_does_not_make_headers_trusted(monkeypatch):
+    monkeypatch.setenv("BIOMNI_ALLOW_ANONYMOUS_PERSISTENCE", "true")
+    who = identity.resolve_identity({"x-user-id": "victim"}, session_id="s1")
+    assert who.source == "local"
+    assert who.user_id == identity.LOCAL_USER_ID
+
+
+def test_a_real_gateway_identity_still_wins_over_single_user_mode(monkeypatch):
+    monkeypatch.setenv("BIOMNI_ALLOW_ANONYMOUS_PERSISTENCE", "true")
+    monkeypatch.setenv("BIOMNI_TRUST_AUTH_HEADERS", "true")
+    who = identity.resolve_identity({"x-user-id": "u1"}, session_id="s1")
+    assert who.source == "headers"
+    assert who.user_id == "u1"

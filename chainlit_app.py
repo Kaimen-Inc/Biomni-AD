@@ -75,7 +75,7 @@ from biomni.artifact import build_run_id, get_all_files
 from biomni.config import default_config, resolve_default_llm
 from biomni.fs_scan import scan_directory
 from biomni.health import register_health_routes
-from biomni.identity import UserIdentity, resolve_identity
+from biomni.identity import UserIdentity, resolve_identity, single_user_mode, trust_auth_headers
 from biomni.observability import (
     RunHeartbeat,
     bind_run,
@@ -150,6 +150,7 @@ def _extract_final_answer(state: dict) -> str:
 # intentionally not re-exported — anything that needs them should
 # `from chainlit_ui.planning import PLANNING_SYSTEM_PROMPT, AD1_PLANNING_SYSTEM_PROMPT`.
 from chainlit_ui.datasets import build_suggested_prompts_markdown
+from chainlit_ui.persistence import build_data_layer, ensure_auth_secret
 from chainlit_ui.planning import (
     interactive_planning as _interactive_planning,
 )
@@ -775,6 +776,76 @@ def _sidebar_key(elements: list[cl.Text]) -> str:
 
 
 # ---------------------------------------------------------------------------
+# Authentication and durable chat threads
+# ---------------------------------------------------------------------------
+#
+# Chainlit shows the conversation list on the left, and lets a user reopen an
+# old conversation, only when it has BOTH an authenticated user and a data
+# layer. Registering `header_auth_callback` is what turns the first one on; it
+# also makes Chainlit's notion of who is calling agree with the one the
+# preferences and run registry already use, so all three key off the same
+# string.
+#
+# Chainlit refuses to start with an auth callback and no CHAINLIT_AUTH_SECRET,
+# so the secret is resolved (and persisted) at import, before uvicorn boots.
+os.environ.setdefault("CHAINLIT_AUTH_SECRET", ensure_auth_secret(_resolve_workspace_root()))
+
+
+@cl.header_auth_callback
+def header_auth_callback(headers) -> cl.User | None:
+    """Identify the caller from the authentication gateway's headers.
+
+    Three outcomes, and the middle one is the reason this is not just a
+    passthrough:
+
+    * Gateway trusted and it named someone -> that person.
+    * Gateway trusted and it named nobody -> refuse. A deployment that declared
+      a gateway is in front and then received a request without identity headers
+      has a routing hole, and serving it anyway would hand the un-authenticated
+      caller whichever account the fallback picks.
+    * No gateway configured -> a single shared local user, matching how the rest
+      of the app already behaves when `BIOMNI_TRUST_AUTH_HEADERS` is off. This
+      grants no access that was not already open: with no gateway the app has no
+      front door at all. What it does mean is that everyone reaching it shares
+      one history, which is why persistence stays off unless a deployment opts
+      in with `BIOMNI_ALLOW_ANONYMOUS_PERSISTENCE`.
+    """
+    identity = resolve_identity(headers)
+    if not identity.is_authenticated and trust_auth_headers():
+        logger.warning("rejecting a session with no gateway identity headers (BIOMNI_TRUST_AUTH_HEADERS is on)")
+        return None
+    return cl.User(
+        identifier=identity.scoped_key(),
+        display_name=identity.display_name,
+        metadata={
+            "source": identity.source,
+            "email": identity.email or "",
+            "workspace_id": identity.workspace_id or "",
+        },
+    )
+
+
+@cl.data_layer
+def data_layer():
+    """Durable storage for conversations, or ``None`` to keep them in memory.
+
+    Enabled only where the storage key is stable enough for a user to find their
+    own threads again: behind a gateway, or in the explicitly opted-in
+    single-user mode. Under a per-connection anonymous key every page load would
+    start a fresh identity, so the sidebar would fill with orphaned threads that
+    nobody could ever reopen.
+    """
+    if not (trust_auth_headers() or single_user_mode()):
+        logger.info(
+            "chat history is disabled: no authentication gateway is configured. "
+            "Set BIOMNI_TRUST_AUTH_HEADERS (behind a gateway) or "
+            "BIOMNI_ALLOW_ANONYMOUS_PERSISTENCE (single-user deployments) to enable it."
+        )
+        return None
+    return build_data_layer(_resolve_workspace_root())
+
+
+# ---------------------------------------------------------------------------
 # Async helpers
 # ---------------------------------------------------------------------------
 
@@ -919,9 +990,49 @@ async def set_starters():
 @cl.on_chat_start
 async def on_chat_start():
     """Initialize the selected agent and greet the user."""
+    await _start_session()
+
+
+@cl.on_chat_resume
+async def on_chat_resume(thread: dict):
+    """Reopen a stored conversation and make it live again.
+
+    Chainlit replays the persisted messages into the UI by itself; what it
+    cannot do is rebuild the *server* side, so without this handler an old
+    thread is read-only. Everything a session needs - the agent, the workspace
+    scope, the settings panel - is constructed here exactly as on a fresh start,
+    plus the conversation history so the agent knows what was already said.
+    """
+    history = _history_from_thread(thread)
+    emit_event("chat_resume", steps=len(thread.get("steps") or []), history_turns=len(history))
+    await _start_session(resumed_history=history)
+
+
+def _history_from_thread(thread: dict) -> list[dict]:
+    """Reconstruct the agent-facing conversation from a persisted thread.
+
+    Only the user's questions and the assistant's answers: the intermediate
+    tool/code steps are in the transcript for the human to read, but replaying
+    them into the model's context would cost a fortune and teach it nothing it
+    cannot see in the answer.
+    """
+    role_by_type = {"user_message": "user", "assistant_message": "assistant"}
+    history: list[dict] = []
+    for step in thread.get("steps") or []:
+        role = role_by_type.get(step.get("type") or "")
+        content = step.get("output") or ""
+        if role and content:
+            history.append({"role": role, "content": content})
+    return history
+
+
+async def _start_session(resumed_history: list[dict] | None = None) -> None:
+    """Build everything one chat session needs. Shared by start and resume."""
     # One correlation id per chat session, bound for the lifetime of this
     # handler so agent-init logs carry it. on_message rebinds it per message.
-    thread_id = uuid.uuid4().hex
+    # Chainlit's own thread id is preferred when threads are being persisted, so
+    # a log line can be traced back to the conversation the user can reopen.
+    thread_id = _chainlit_thread_id() or uuid.uuid4().hex
     set_session_id(thread_id)
 
     # Determine agent type: CLI env var > chat profile selection > default AD1
@@ -932,7 +1043,7 @@ async def on_chat_start():
         agent_type = "a1" if str(profile).upper() == "A1" else "ad1"
 
     label = "AD1" if agent_type == "ad1" else "A1"
-    emit_event("chat_start", agent_type=agent_type, llm=DEFAULT_LLM)
+    emit_event("chat_start", agent_type=agent_type, llm=DEFAULT_LLM, resumed=resumed_history is not None)
     try:
         if agent_type == "ad1":
             from biomni.agent.ad1 import AD1
@@ -944,7 +1055,7 @@ async def on_chat_start():
             agent = await run_in_executor(lambda: A1(llm=DEFAULT_LLM))
         cl.user_session.set("agent", agent)
         cl.user_session.set("agent_type", agent_type)
-        cl.user_session.set("history", [])
+        cl.user_session.set("history", resumed_history or [])
         cl.user_session.set("thread_id", thread_id)
     except Exception as exc:
         logger.exception("Failed to initialize %s agent", label)
@@ -991,14 +1102,24 @@ async def on_chat_start():
             logger.exception("Failed to render the workspace sidebar (session remains usable)")
 
     # Tell the user about work that did not finish while they were away. Only
-    # unfinished runs interrupt them; completed ones wait in the sidebar.
-    if ws is not None:
+    # unfinished runs interrupt them; completed ones wait in the sidebar. Not on
+    # a resume: the user is reopening one specific conversation, and a banner
+    # about unrelated runs would be an interruption they did not ask for.
+    if ws is not None and resumed_history is None:
         try:
             notice = build_previous_runs_notice(ws.runs)
             if notice:
                 await cl.Message(content=notice).send()
         except Exception:
             logger.exception("Failed to render previous-runs notice")
+
+
+def _chainlit_thread_id() -> str | None:
+    """Chainlit's id for the conversation, when there is a session to ask."""
+    try:
+        return getattr(cl.context.session, "thread_id", None)
+    except Exception:
+        return None
 
 
 def _session_header_source() -> object:

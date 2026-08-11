@@ -145,16 +145,31 @@ BIOMNI_WORKSPACE_SCAN_TTL_S=60               # Default: 60    (how long a scan r
 BIOMNI_OUTPUT_ROOT=/data/outputs             # Default: unset (else <workspace>/biomni-outputs, else ./runs)
 BIOMNI_DEFAULT_SCOPE_PATHS=studyA,studyB     # Default: unset (seed a starting data scope for new users)
 
-# Per-user state: preferences and run records
+# Per-user state: preferences, run records and chat history
 BIOMNI_STATE_DIR=/data/state                 # Default: unset (else <workspace>/.biomni, else no persistence)
 BIOMNI_PREFS_DIR=/data/state/prefs           # Default: $BIOMNI_STATE_DIR/prefs
 BIOMNI_RUNS_STATE_DIR=/data/state/runs       # Default: $BIOMNI_STATE_DIR/runs
 BIOMNI_RUN_STALE_AFTER_S=180                 # Default: 180   (heartbeat age after which a run is
                                              #          reported as interrupted, not running)
-BIOMNI_ALLOW_ANONYMOUS_PERSISTENCE=true      # Default: false (with no auth gateway the storage key is
-                                             #          per-connection, so anything saved can never be
-                                             #          read back; off by default to avoid orphaned
-                                             #          directories. Enable for local development.)
+BIOMNI_ALLOW_ANONYMOUS_PERSISTENCE=true      # Default: false (single-user mode: with no auth gateway
+                                             #          every session is a separate anonymous user, so
+                                             #          nothing saved can ever be read back. This makes
+                                             #          all sessions one shared local user instead -
+                                             #          for development and single-user deployments.)
+
+# Chat history (the conversation list in the left sidebar)
+BIOMNI_THREADS_DB_URL=postgresql+asyncpg://… # Default: sqlite at $BIOMNI_STATE_DIR/threads/threads.db
+                                             #          (else <workspace>/.biomni/threads). Set this to
+                                             #          share history across replicas. The SQLite schema
+                                             #          is created automatically; any other database is
+                                             #          expected to be migrated by an operator.
+BIOMNI_THREAD_ELEMENT_MAX_BYTES=2097152      # Default: 2 MiB (per-attachment cap for archiving into the
+                                             #          history database; larger files stay only in the
+                                             #          run output directory)
+CHAINLIT_AUTH_SECRET=…                       # Default: generated once and stored next to the thread
+                                             #          database. Set explicitly for multi-replica
+                                             #          deployments, or browser sessions break on
+                                             #          rollout.
 
 # Authentication gateway. Identity headers are IGNORED unless this is enabled:
 # without a gateway stripping client-supplied copies, anyone could send
@@ -195,6 +210,25 @@ the session only).
 Storing them under the workspace is the only option that survives the
 application being deprovisioned without extra infrastructure, since it is the
 user's own storage.
+
+**Chat history** is stored the same way, in a database rather than files:
+`BIOMNI_THREADS_DB_URL`, else `BIOMNI_STATE_DIR/threads/threads.db`, else
+`<workspace>/.biomni/threads/threads.db`, else disabled.
+Every conversation - the questions, the plans, the code steps and the answers -
+is written as it happens, so a user who closes the tab finds the conversation
+again in the left sidebar and can carry on in it.
+Attachments up to `BIOMNI_THREAD_ELEMENT_MAX_BYTES` are archived with the
+conversation; anything larger is left in the run's output directory only.
+
+History is enabled only when the storage key is stable enough for a user to find
+their own conversations again: behind a gateway (`BIOMNI_TRUST_AUTH_HEADERS`),
+or in single-user mode (`BIOMNI_ALLOW_ANONYMOUS_PERSISTENCE`).
+Otherwise each page load is a new anonymous user, and the sidebar would fill
+with threads nobody could reopen.
+
+Note that this is conversation persistence, not job persistence: reopening a
+thread restores what was said and produced, but a run that was still executing
+when the process stopped is reported as interrupted rather than resumed.
 
 Preferences are keyed by the user id the authentication gateway asserts, scoped
 by workspace id when one is supplied. Those headers are only believed when

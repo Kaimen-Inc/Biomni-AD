@@ -42,14 +42,17 @@ bedrock = ["langchain-aws>=0.2,<0.4"]
 ollama = ["langchain-ollama>=0.2,<0.4"]
 # UI extras
 gradio = ["gradio>=5.0,<6.0"]
-chainlit = ["chainlit>=2.8,<3"]
+# The UI persists chat threads through Chainlit's SQLAlchemy data layer:
+# "custom-data" pulls in SQLAlchemy, aiosqlite drives the default SQLite store.
+chainlit = ["chainlit[custom-data]>=2.8,<3", "aiosqlite>=0.20,<1.0"]
 # Convenience meta-extra
 all = [
     "langchain-anthropic>=0.2,<0.4",
     "langchain-aws>=0.2,<0.4",
     "langchain-ollama>=0.2,<0.4",
     "gradio>=5.0,<6.0",
-    "chainlit>=2.8,<3",
+    "chainlit[custom-data]>=2.8,<3",
+    "aiosqlite>=0.20,<1.0",
 ]
 
 [tool.setuptools]

@@ -367,11 +367,20 @@ def build_scope_panel(
 
 
 def build_runs_panel(records: Sequence[RunRecord], *, limit: int = 10) -> str:
-    """The sidebar page listing this user's recent runs across sessions."""
-    if not records:
-        return "No runs recorded yet.\n\nCompleted runs will be listed here, including ones from earlier sessions."
+    """The sidebar page listing this user's recent runs across sessions.
 
-    lines: list[str] = []
+    Carries its own heading because Chainlit stacks sidebar pages in one
+    scrolling column: without it the first run reads as part of the workspace
+    panel above.
+    """
+    heading = "---\n\n**Recent runs**\n\n"
+    if not records:
+        return (
+            heading
+            + "No runs recorded yet.\n\nCompleted runs will be listed here, including ones from earlier sessions."
+        )
+
+    lines: list[str] = [heading.rstrip("\n"), ""]
     for record in list(records)[:limit]:
         icon = _STATUS_ICONS.get(record.status, "•")
         lines.append(f"{icon} **{record.label}**")
