@@ -156,6 +156,7 @@ from chainlit_ui.planning import (
 from chainlit_ui.planning import (
     quick_answer as _quick_answer,
 )
+from chainlit_ui.uploads import store_uploads, uploads_dir
 from chainlit_ui.workspace_panel import (
     build_previous_runs_notice,
     build_scope_inventory,
@@ -1122,6 +1123,38 @@ async def on_settings_update(settings: dict):
 # ---------------------------------------------------------------------------
 
 
+async def _persist_message_uploads(message: cl.Message) -> list[str]:
+    """Copy a message's attachments into the user's output directory.
+
+    Returns the path to hand the agent for each one - the durable copy where
+    that could be made, Chainlit's temporary one otherwise.
+
+    Chainlit keeps uploads in a scratch tree it deletes when the session ends
+    (and wipes entirely on shutdown), under a UUID filename. Left alone, an
+    attachment is unreachable by the user's next visit and the agent never even
+    learns what the file was called. Copying is blocking, so it runs off the
+    event loop.
+    """
+    elements = [e for e in (message.elements or []) if getattr(e, "path", None)]
+    if not elements:
+        return []
+
+    sources: list[tuple[str, str | None]] = [(str(e.path), getattr(e, "name", None)) for e in elements]
+    ws = cl.user_session.get("workspace")
+    if ws is None or not ws.output.writable:
+        return [path for path, _ in sources]
+
+    try:
+        destination = uploads_dir(ws.output.path)
+        stored = await run_in_executor(store_uploads, sources, destination)
+    except Exception:
+        logger.warning("Could not store uploads; using the temporary copies", exc_info=True)
+        return [path for path, _ in sources]
+
+    emit_event("uploads_stored", count=len(stored), durable=sum(1 for p in stored if p.startswith(destination)))
+    return stored
+
+
 def _usage_snapshot(agent) -> dict | None:
     """Best-effort snapshot of an agent's cumulative LLM usage."""
     try:
@@ -1183,10 +1216,9 @@ async def _process_message(message: cl.Message):
         return
 
     prompt = message.content
-    if message.elements:
-        file_paths = [e.path for e in message.elements if hasattr(e, "path") and e.path]
-        if file_paths:
-            prompt += "\n\nUser uploaded these files:\n" + "\n".join(f"- {p}" for p in file_paths)
+    file_paths = await _persist_message_uploads(message)
+    if file_paths:
+        prompt += "\n\nUser uploaded these files:\n" + "\n".join(f"- {p}" for p in file_paths)
 
     history = cl.user_session.get("history", [])
 

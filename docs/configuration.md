@@ -203,6 +203,15 @@ Only the last is container-local: results written there are lost when the pod
 restarts, and the UI says so. Set `BIOMNI_OUTPUT_ROOT` to a mounted volume, or
 make the workspace mount read-write, to keep results.
 
+Files attached to a message with 📎 are copied into `<output dir>/uploads/`
+under their original names, and it is that path the agent is given.
+Chainlit's own copy stays where it puts it - a scratch tree it deletes when the
+session ends and wipes on shutdown, with a UUID for a filename - so without this
+an attachment would be unreachable by the user's next visit, and the agent would
+never learn what the file was called.
+An attachment keeps working when the output directory is not writable; it just
+does not outlive the session.
+
 **Preferences and run records** follow the same shape:
 `BIOMNI_PREFS_DIR` / `BIOMNI_RUNS_STATE_DIR`, else `BIOMNI_STATE_DIR/{prefs,runs}`,
 else `<workspace>/.biomni/` when writable, else no persistence (settings apply to
