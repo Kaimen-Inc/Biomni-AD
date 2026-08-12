@@ -7,6 +7,23 @@ Maintains full backward compatibility with existing code.
 
 import os
 from dataclasses import dataclass
+from pathlib import Path
+
+
+def resolve_data_lake_root() -> str:
+    """Where the built-in data lake (including the AD-specific ``biomniAD`` subtree) lives on disk.
+
+    Defaults to the ``data/biomni_data/data_lake`` folder shipped inside the repo, so a
+    fresh checkout works with no configuration. Override with ``BIOMNI_DATA_LAKE_PATH``
+    when the data lake is mounted somewhere else on the server (a dedicated volume, a
+    different disk) — every caller resolves the location through this one function, so
+    moving it later means setting one env var rather than hunting down hardcoded paths.
+    """
+    override = os.getenv("BIOMNI_DATA_LAKE_PATH", "").strip()
+    if override:
+        return os.path.abspath(override)
+    repo_root = Path(__file__).resolve().parent.parent
+    return str((repo_root / "data" / "biomni_data" / "data_lake").resolve())
 
 
 def resolve_default_llm(fallback: str = "claude-sonnet-4-5") -> str:

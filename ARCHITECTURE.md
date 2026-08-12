@@ -236,7 +236,9 @@ Each tool has a corresponding schema in `biomni/tool/tool_description/`:
 
 ### Overview
 
-The data lake contains **77 curated datasets** (~11GB) automatically downloaded on first run:
+The data lake contains **77 curated datasets** (~11GB), catalogued in `biomni/env_desc.py` regardless of what's on disk.
+Individual files are fetched lazily from S3, the first time a query actually selects them (`A1._ensure_data_lake_files`) — not downloaded in bulk on agent construction.
+Layout once files are present:
 
 ```
 ./data/

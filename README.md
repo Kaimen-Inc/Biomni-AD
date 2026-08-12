@@ -216,28 +216,28 @@ Biomni-AD ships three JSON catalogs — **NIAGADS**, **SinaiADRD**, and **Biomni
 | BiomniAD Discovery | SEA-AD, ssREAD, OASIS-4, HCP, ABC Atlas | Open |
 | CRISPRbrain | CRISPR screens in neurons and microglia | Open API |
 
-Downloaded files are cached in `<data_lake>/biomniAD/<dataset_id>/` and skipped on re-runs. Set `BIOMNI_DATA_PATH` to control the storage root (defaults to `~/.biomni/data`).
+Downloaded files are cached in `<data_lake>/biomniAD/<dataset_id>/` and skipped on re-runs. Set `BIOMNI_DATA_LAKE_PATH` to control where that `<data_lake>` root lives (defaults to the repo-local `data/biomni_data/data_lake` folder).
 
-**Option A — Automatic on AD1 init (default)**
+**Option A — Skip local download, use catalog URIs and internet (default)**
 
 ```python
 from biomni import AD1   # short top-level import; equivalent to `from biomni.agent.ad1 import AD1`
 
-agent = AD1(download_ad_data=True)   # downloads files ≤ 100 MB on first run
+agent = AD1()   # download_ad_data defaults to False; datasets are fetched on demand as queries need them
 ```
 
-**Option B — Bulk download without starting an agent**
+**Option B — Bulk download on AD1 init**
+
+```python
+agent = AD1(download_ad_data=True)   # downloads files ≤ 100 MB up front, before the first query
+```
+
+**Option C — Bulk download without starting an agent**
 
 ```python
 from biomni.agent.ad_data_downloader import download_ad_catalog_data
 
 download_ad_catalog_data("/path/to/your/data_lake")
-```
-
-**Option C — Skip local download, use catalog URIs and internet**
-
-```python
-agent = AD1(download_ad_data=False)
 ```
 
 The agent still references catalog URIs in its system prompt and can fetch data on demand or direct you to the relevant portal (e.g., NIAGADS DAC for controlled-access datasets).
@@ -334,17 +334,18 @@ For full VM deployment instructions (firewall/security group, operations, and ha
 
 #### Controlling Datalake Loading
 
-By default, Biomni automatically downloads the datalake files (~11GB) when you create an agent. You can control this behavior:
+Biomni does not download the full datalake (~11GB) when you create an agent.
+Individual files are fetched lazily, the first time a query actually needs them — a session that never touches DepMap never pays to fetch it.
+Set `BIOMNI_DATA_LAKE_PATH` if the datalake should live somewhere other than the repo-local `data/` folder, e.g. a dedicated volume or a different disk on the server.
 
 ```python
-# Skip automatic datalake download (faster initialization)
-agent = A1(path='./data', llm='claude-sonnet-4-20250514', expected_data_lake_files = [])
+# Pre-fetch specific files now instead of waiting for a query that needs them
+agent = A1(path='./data', llm='claude-sonnet-4-20250514', expected_data_lake_files=['gene_info.parquet'])
 ```
 
 This is useful for:
-- Faster testing and development
-- Environments with limited storage or bandwidth
-- Cases where you only need specific tools that don't require datalake files
+- Warming the cache before a demo, so the first query isn't slowed down by a download
+- Environments with limited or metered bandwidth, where you want to control exactly what gets fetched and when
 If you plan on using Azure for your model, always prefix the model name with azure- (e.g. llm='azure-gpt-4o').
 
 

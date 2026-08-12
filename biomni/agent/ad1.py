@@ -11,6 +11,7 @@ from langchain_core.messages import HumanMessage
 
 from biomni.agent.a1 import A1
 from biomni.agent.ad_data_downloader import download_ad_catalog_data
+from biomni.fs_scan import scan_directory
 
 try:
     from rich.console import Console
@@ -39,9 +40,14 @@ class AD1(A1):
         self.ad_keywords = ["Alzheimer", "AD", "dementia", "MCI", "amyloid", "tau", "neurodegeneration", "cognition"]
 
         if download_ad_data:
+            # super().__init__() already built the local-data-priority block once
+            # (via the configure() -> _enforce_local_data_priority() dispatch), but
+            # the bulk download just changed what's actually on disk, so it needs
+            # rebuilding here. Without download_ad_data (the default), nothing
+            # changed since then and a second rebuild would just repeat the same
+            # catalog parse + AD-lake scan for no reason.
             self._bulk_download_ad_data()
-
-        self._enforce_local_data_priority()
+            self._enforce_local_data_priority()
 
     def _bulk_download_ad_data(self):
         """Perform bulk download of BiomniAD catalog data (<100MB)."""
@@ -165,7 +171,18 @@ class AD1(A1):
 """.strip()
 
     def _load_catalog_datasets(self) -> dict[str, dict]:
-        """Load all BiomniAD catalog JSONs and return a dict keyed by dataset id."""
+        """Load all BiomniAD catalog JSONs and return a dict keyed by dataset id.
+
+        Catalog files are static repo content, so the parse is cached on the
+        instance after the first call. Without this, every call to
+        ``_enforce_local_data_priority`` (agent construction, every query once
+        the tool retriever updates the system prompt, and any AD-keyword
+        message) re-globbed and re-parsed the same ~100KB of JSON from scratch.
+        """
+        cached = getattr(self, "_ad_catalog_datasets_cache", None)
+        if cached is not None:
+            return cached
+
         current_dir = os.path.dirname(os.path.abspath(__file__))
         resource_dir = os.path.join(current_dir, "..", "know_how", "resource")
         datasets: dict[str, dict] = {}
@@ -180,26 +197,38 @@ class AD1(A1):
                             datasets[ds_id] = ds
                 except Exception:
                     pass
+        self._ad_catalog_datasets_cache = datasets
         return datasets
 
     def _build_local_ad_dataset_inventory(self, ad_data_lake: str, catalog_datasets: dict) -> list[dict]:
-        """Return a list of biomniAD datasets that have local files, enriched with catalog descriptions."""
+        """Return a list of biomniAD datasets that have local files, enriched with catalog descriptions.
+
+        Backed by the bounded/cached scanner (``biomni.fs_scan``) instead of a raw
+        ``os.listdir`` per dataset directory: the AD lake is exactly the kind of
+        tree that can end up relocated onto a slower or network-backed disk
+        (``BIOMNI_DATA_LAKE_PATH``), and an unbounded per-directory walk is the
+        same failure mode ``fs_scan`` exists to prevent for the user's workspace.
+        """
         if not os.path.isdir(ad_data_lake):
             return []
-        entries = []
-        for ds_id in sorted(os.listdir(ad_data_lake)):
-            ds_dir = os.path.join(ad_data_lake, ds_id)
-            if not os.path.isdir(ds_dir):
+
+        scan = scan_directory(ad_data_lake, max_depth=1)
+        files_by_dataset: dict[str, list[str]] = {}
+        for rel_path in scan.files:
+            ds_id, sep, fname = rel_path.partition("/")
+            if not sep:
+                continue  # a loose file directly under ad_data_lake, not inside a dataset dir
+            base = os.path.basename(fname)
+            if base.startswith(".") or any(base.lower().startswith(p) for p in ("readme", "read_me")):
                 continue
-            local_files = sorted(
-                f
-                for f in os.listdir(ds_dir)
-                if not f.startswith(".")
-                and os.path.isfile(os.path.join(ds_dir, f))
-                and not any(f.lower().startswith(p) for p in ("readme", "read_me"))
-            )
+            files_by_dataset.setdefault(ds_id, []).append(base)
+
+        entries = []
+        for ds_id in sorted(files_by_dataset):
+            local_files = sorted(files_by_dataset[ds_id])
             if not local_files:
                 continue
+            ds_dir = os.path.join(ad_data_lake, ds_id)
             cat = catalog_datasets.get(ds_id, {})
             title = cat.get("title") or ds_id
             # Truncate long description to 1 sentence

@@ -73,7 +73,7 @@ except ModuleNotFoundError:
 
 import chainlit as cl
 from biomni.artifact import build_run_id, get_all_files
-from biomni.config import default_config, resolve_default_llm
+from biomni.config import default_config, resolve_data_lake_root, resolve_default_llm
 from biomni.health import register_health_routes
 from biomni.identity import UserIdentity, resolve_identity, single_user_mode, trust_auth_headers
 from biomni.observability import (
@@ -187,8 +187,8 @@ _SUGGESTED_PROMPTS_BLOCK_END = "<!-- BIOMNI_SUGGESTED_PROMPTS_END -->"
 
 
 def _build_ad_suggested_prompts() -> str:
-    """Thin shim over chainlit_ui.datasets — resolves the repo-local AD lake path."""
-    ad_lake = Path(__file__).resolve().parent / "data" / "biomni_data" / "data_lake" / "biomniAD"
+    """Thin shim over chainlit_ui.datasets — resolves the AD lake path."""
+    ad_lake = Path(_resolve_builtin_data_lake_root()) / "biomniAD"
     return build_suggested_prompts_markdown(ad_lake)
 
 
@@ -243,9 +243,14 @@ def _resolve_user_data_roots() -> list[tuple[str, str]]:
 
 
 def _resolve_builtin_data_lake_root() -> str:
-    """Return the default repo-local data lake directory path."""
-    repo_root = Path(__file__).resolve().parent
-    return str((repo_root / "data" / "biomni_data" / "data_lake").resolve())
+    """Return the data lake directory path (same resolution A1 uses).
+
+    Defaults to the repo-local folder; set ``BIOMNI_DATA_LAKE_PATH`` when the
+    data lake is mounted elsewhere on the server. Delegates to
+    ``biomni.config.resolve_data_lake_root`` so this file and the agent never
+    disagree about where the data lake lives.
+    """
+    return resolve_data_lake_root()
 
 
 def _refresh_chainlit_welcome_markdown() -> None:
