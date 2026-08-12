@@ -63,7 +63,14 @@ reaction_on_message_received = false
     # 3. For specific file extensions:
     #    accept = { "application/octet-stream" = [".xyz", ".pdb"] }
     # Note: Using "*/*" is not recommended as it may cause browser warnings
-    accept = ["*/*"]
+    #
+    # It did more than warn. With accept = ["*/*"] the frontend logged
+    # 'Skipped "*/*" because it is not a valid MIME type' on every render and
+    # the 📎 button stopped opening a file picker at all - clicking it never
+    # reached the hidden input. Listed explicitly instead, by the formats a
+    # user actually hands this agent; the octet-stream entry carries the
+    # extensions that have no registered MIME type of their own.
+    accept = { "text/csv" = [".csv"], "text/tab-separated-values" = [".tsv", ".tab"], "text/plain" = [".txt", ".md", ".log"], "application/json" = [".json"], "application/pdf" = [".pdf"], "application/vnd.ms-excel" = [".xls"], "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" = [".xlsx"], "application/vnd.openxmlformats-officedocument.wordprocessingml.document" = [".docx"], "application/gzip" = [".gz", ".tgz"], "application/zip" = [".zip"], "image/png" = [".png"], "image/jpeg" = [".jpg", ".jpeg"], "application/octet-stream" = [".parquet", ".h5", ".h5ad", ".rds", ".vcf", ".bed", ".bam", ".bai", ".mtx", ".npy", ".pkl"] }
     max_files = 20
     max_size_mb = 500
 
