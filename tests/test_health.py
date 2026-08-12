@@ -1,4 +1,4 @@
-"""Tests for biomni.health — readiness logic and probe-route registration.
+"""Tests for biomni.health - readiness logic and probe-route registration.
 
 The route-precedence tests matter most: Chainlit registers a catch-all
 ``GET /{full_path:path}`` last, so health routes must be inserted ahead of it
@@ -12,7 +12,7 @@ from biomni import health
 
 # readiness_report() / build_info() are pure (os.getenv only) and run everywhere.
 # The route-registration tests need fastapi/starlette, which are OPTIONAL deps
-# (the `chainlit` extra) — absent in the minimal CI test job. Guard those tests
+# (the `chainlit` extra) - absent in the minimal CI test job. Guard those tests
 # so they skip there instead of erroring at collection, while the
 # dependency-free readiness tests still run.
 try:
@@ -27,7 +27,7 @@ except ImportError:
 
 requires_fastapi = pytest.mark.skipif(not HAS_FASTAPI, reason="fastapi/starlette not installed (chainlit extra)")
 
-# Every credential / path env that readiness inspects — cleared per test so the
+# Every credential / path env that readiness inspects - cleared per test so the
 # host's real keys don't leak into assertions.
 _ENV_TO_CLEAR = (
     *health._PROVIDER_KEY_ENVS,

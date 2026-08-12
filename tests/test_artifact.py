@@ -1,4 +1,4 @@
-"""Unit tests for biomni.artifact — the shared run-id / file-snapshot helpers."""
+"""Unit tests for biomni.artifact - the shared run-id / file-snapshot helpers."""
 
 from __future__ import annotations
 

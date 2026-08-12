@@ -7,6 +7,23 @@ Maintains full backward compatibility with existing code.
 
 import os
 from dataclasses import dataclass
+from pathlib import Path
+
+
+def resolve_data_lake_root() -> str:
+    """Where the built-in data lake (including the AD-specific ``biomniAD`` subtree) lives on disk.
+
+    Defaults to the ``data/biomni_data/data_lake`` folder shipped inside the repo, so a
+    fresh checkout works with no configuration. Override with ``BIOMNI_DATA_LAKE_PATH``
+    when the data lake is mounted somewhere else on the server (a dedicated volume, a
+    different disk) - every caller resolves the location through this one function, so
+    moving it later means setting one env var rather than hunting down hardcoded paths.
+    """
+    override = os.getenv("BIOMNI_DATA_LAKE_PATH", "").strip()
+    if override:
+        return os.path.abspath(override)
+    repo_root = Path(__file__).resolve().parent.parent
+    return str((repo_root / "data" / "biomni_data" / "data_lake").resolve())
 
 
 def resolve_default_llm(fallback: str = "claude-sonnet-4-5") -> str:
@@ -63,7 +80,7 @@ class BiomniConfig:
 
     # LLM resilience settings
     # Provider SDKs (anthropic, openai, etc.) implement their own exponential
-    # backoff on 429 / 5xx — we forward these knobs to the SDK constructor.
+    # backoff on 429 / 5xx - we forward these knobs to the SDK constructor.
     llm_max_retries: int = 3
     # Per-call request timeout (seconds). None disables. Distinct from
     # `timeout_seconds`, which gates code/tool execution, not LLM HTTP calls.
@@ -71,7 +88,7 @@ class BiomniConfig:
 
     # Total wall-clock budget for one agent run (seconds). None disables (default,
     # preserving existing behavior). When set, the agent stops cleanly between
-    # ReAct turns once the budget is exceeded — bounding the *number* of turns,
+    # ReAct turns once the budget is exceeded - bounding the *number* of turns,
     # complementing `timeout_seconds` (which bounds a single code/tool step) and
     # the recursion limit. Recommended for interactive/demo deployments so a
     # long-running query fails fast and visibly instead of spinning.

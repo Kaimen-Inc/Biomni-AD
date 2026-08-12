@@ -29,7 +29,7 @@ from biomni.artifact import (
 from biomni.artifact import (
     summarize_topic_for_run_id as _shared_summarize_topic_for_run_id,
 )
-from biomni.config import default_config
+from biomni.config import default_config, resolve_data_lake_root
 from biomni.fs_scan import scan_directory
 from biomni.know_how import KnowHowLoader
 from biomni.llm import SourceType, get_llm, resolve_source
@@ -60,10 +60,16 @@ from biomni.utils import (
     should_skip_message,
     textify_api_dict,
 )
+from biomni.workspace_prefs import default_prefs, resolve_output_dir
 
 if os.path.exists(".env"):
     load_dotenv(".env", override=True)
     print("Loaded environment variables from .env")
+
+
+# The only place the bucket name is spelled out - reused by the eager opt-in
+# prefetch below and by the lazy per-query fetch in _ensure_data_lake_files.
+_DATA_LAKE_S3_BUCKET_URL = "https://biomni-release.s3.amazonaws.com"
 
 
 class AgentState(TypedDict):
@@ -173,57 +179,37 @@ class A1:
             os.makedirs(path)
             print(f"Created directory: {path}")
 
-        # --- Locate the built-in data lake shipped with the repo ---
-        # The repo-local data/ folder is the PRIMARY source for data lake and benchmark
-        # files — they are already present and should NOT be re-downloaded on every start.
+        # --- Locate the built-in data lake ---
+        # Resolved through one function (biomni.config.resolve_data_lake_root) so a
+        # deployment that mounts the data lake somewhere other than the repo-local
+        # data/ folder only has to set BIOMNI_DATA_LAKE_PATH, not patch this file.
         # BIOMNI_DATA_PATH (the `path` argument) is for user-supplied additional data only.
-        _repo_root = Path(__file__).resolve().parents[2]  # biomni/agent/a1.py → repo root
-        _builtin_data_dir = _repo_root / "data" / "biomni_data"
-        builtin_data_lake_dir = str(_builtin_data_dir / "data_lake")
-        builtin_benchmark_dir = str(_builtin_data_dir / "benchmark")
+        builtin_data_lake_dir = resolve_data_lake_root()
+        _builtin_data_dir = str(Path(builtin_data_lake_dir).parent)
 
-        # Ensure the built-in directories exist (no-op if already present)
+        # Ensure the built-in directory exists (no-op if already present)
         os.makedirs(builtin_data_lake_dir, exist_ok=True)
-        os.makedirs(builtin_benchmark_dir, exist_ok=True)
 
-        if expected_data_lake_files is None:
-            expected_data_lake_files = list(self.data_lake_dict.keys())
-
-            # Check and download ONLY missing files into the repo-local data lake.
-            # check_and_download_s3_files skips any file that already exists locally,
-            # so if the full data lake is already present this becomes a no-op.
-            print(f"Checking data lake at: {builtin_data_lake_dir}")
+        # No bulk download here. Every dataset file is fetched lazily, per query,
+        # once the retriever has decided which of them that specific query needs
+        # (see _ensure_data_lake_files, called from _prepare_resources_for_retrieval) -
+        # a chat session that never touches DepMap should never pay to fetch it.
+        # `expected_data_lake_files` remains as an explicit opt-in: pass a list to
+        # pre-fetch those specific files right now instead of waiting for a query.
+        if expected_data_lake_files:
+            print(f"Pre-fetching {len(expected_data_lake_files)} requested data lake file(s)...")
             check_and_download_s3_files(
-                s3_bucket_url="https://biomni-release.s3.amazonaws.com",
+                s3_bucket_url=_DATA_LAKE_S3_BUCKET_URL,
                 local_data_lake_path=builtin_data_lake_dir,
                 expected_files=expected_data_lake_files,
                 folder="data_lake",
             )
 
-            # Check if benchmark directory structure is complete
-            benchmark_ok = False
-            if os.path.isdir(builtin_benchmark_dir):
-                patient_gene_detection_dir = os.path.join(builtin_benchmark_dir, "hle")
-                if os.path.isdir(patient_gene_detection_dir):
-                    benchmark_ok = True
-
-            if not benchmark_ok:
-                print("Checking and downloading benchmark files...")
-                check_and_download_s3_files(
-                    s3_bucket_url="https://biomni-release.s3.amazonaws.com",
-                    local_data_lake_path=builtin_benchmark_dir,
-                    expected_files=[],  # Empty list - will download entire folder
-                    folder="benchmark",
-                )
-        else:
-            print("Skipping datalake download (load_datalake=False)")
-            print("Note: Some tools may require datalake files to function properly.")
-
         # data_root_dir = user data directory (BIOMNI_DATA_PATH) for additional user datasets
         self.data_root_dir = os.path.abspath(path)
-        self.user_data_dir = self.data_root_dir  # alias — clearly user-supplied data
-        # data_lake_dir = repo-local built-in data lake (primary, read from repo)
-        self.path = str(_builtin_data_dir)
+        self.user_data_dir = self.data_root_dir  # alias - clearly user-supplied data
+        # data_lake_dir = built-in data lake (primary; location resolved above)
+        self.path = _builtin_data_dir
         self.data_lake_dir = builtin_data_lake_dir
         self.custom_data_index_path = os.path.join(self.data_lake_dir, "_custom_data_index.json")
         self.auto_network_limited_mode = auto_network_limited_mode
@@ -300,7 +286,7 @@ class A1:
         * Record token usage on every response into ``self.usage_tracker``.
         * Emit a per-call ``llm_call`` telemetry event (latency, outcome,
           finish reason, token usage) so a slow or failing provider call can be
-          attributed mid-run — the aggregate ``llm_usage`` event only fires once
+          attributed mid-run - the aggregate ``llm_usage`` event only fires once
           a run completes, which is useless when a run hangs.
 
         ``cache_system=False`` opts out for one-shot calls with unique
@@ -324,7 +310,7 @@ class A1:
         try:
             usage = self.usage_tracker.record(response)
         except Exception:
-            # Telemetry is best-effort — never let it break a run.
+            # Telemetry is best-effort - never let it break a run.
             logger.debug("usage tracking failed", exc_info=True)
         self._emit_llm_call(response, time.monotonic() - started, status="ok", usage=usage)
         return response
@@ -389,7 +375,7 @@ class A1:
     def _enforce_run_deadline(self, state: "AgentState") -> bool:
         """If the run's wall-clock budget is exhausted, stop the graph cleanly.
 
-        Returns True when the deadline has passed — the caller (the ``generate``
+        Returns True when the deadline has passed - the caller (the ``generate``
         node) then short-circuits to ``end`` with a user-facing message instead
         of starting another LLM turn. Bounds the number of ReAct turns; a single
         in-flight code/LLM step is still bounded by ``timeout_seconds`` /
@@ -446,7 +432,7 @@ class A1:
         """Emit a structured audit event for one code execution.
 
         Logs *what ran* (language, content hash, size) and *what happened*
-        (status, duration, output size) — never the raw source or output, which
+        (status, duration, output size) - never the raw source or output, which
         can contain user/biomedical data. Best-effort: never raises.
         """
         try:
@@ -638,6 +624,12 @@ For all analyses in this run:
 
         Bounded by the shared scanner (file cap + wall-clock deadline); the
         built-in data-lake subtree is pruned so its files are not double-listed.
+
+        When the UI has set ``scope_roots`` (the folders the user selected in the
+        workspace settings), only those are indexed. Without that, indexing the
+        whole root would let the retriever keep surfacing files the user
+        explicitly excluded, and would re-introduce the full traversal that the
+        scope selection exists to avoid.
         """
         root_dir = getattr(self, "data_root_dir", None)
         if not root_dir or not os.path.isdir(root_dir):
@@ -647,19 +639,39 @@ For all analyses in this run:
         # nested beneath the user root).
         prune = [self.data_lake_dir] if getattr(self, "data_lake_dir", "") else None
 
-        result = scan_directory(
-            root_dir,
-            max_depth=max_depth,
-            prune_subtrees=prune,
-            max_files_override=max_items,
-        )
-        return [
-            {
-                "name": f"user-data:{rel}",
-                "description": f"User dataset file at {root_dir}/{rel}",
-            }
-            for rel in result.files
-        ]
+        scope_roots = [r for r in getattr(self, "scope_roots", None) or [] if os.path.isdir(r)]
+        search_roots = scope_roots or [root_dir]
+        # Split the item budget across selected folders so one large folder
+        # cannot crowd the others out of the index entirely.
+        per_root = max(1, max_items // len(search_roots))
+
+        resources: list[dict[str, str]] = []
+        abs_root = os.path.abspath(root_dir)
+        for search_root in search_roots:
+            result = scan_directory(
+                search_root,
+                max_depth=max_depth,
+                prune_subtrees=prune,
+                max_files_override=per_root,
+            )
+            for rel in result.files:
+                absolute = os.path.abspath(os.path.join(search_root, rel))
+                # Name files relative to the data root when they live under it,
+                # else by absolute path. A scope root outside the data root is
+                # normal (BIOMNI_USER_DATA_PATH and BIOMNI_DATA_PATH can differ),
+                # and relpath would then produce "../../mnt/..." names that are
+                # meaningless to the retriever and unresolvable downstream.
+                if absolute == abs_root or absolute.startswith(abs_root + os.sep):
+                    label = os.path.relpath(absolute, abs_root)
+                else:
+                    label = absolute
+                resources.append(
+                    {
+                        "name": f"user-data:{label}",
+                        "description": f"User dataset file at {absolute}",
+                    }
+                )
+        return resources
 
     def _resolve_data_path(self, data_path: str) -> str:
         """Resolve a data path to an absolute path with data-lake-first semantics.
@@ -796,20 +808,75 @@ For all analyses in this run:
                         pass
 
     def _get_data_lake_resources(self) -> list[dict[str, str]]:
-        """Build data-lake resources with descriptions for prompts and retrieval."""
+        """Build data-lake resources with descriptions for prompts and retrieval.
+
+        Every dataset the catalog knows about is offered as a candidate, not just
+        the ones already sitting on disk: nothing is downloaded at construction
+        anymore, so a fresh deployment starts with an empty data lake, and hiding
+        the catalog until files happen to be present would leave the retriever
+        nothing to choose from. Each description is tagged with whether the file
+        is already local (free to read) or still needs a one-time fetch, so the
+        retriever/planner can tell the two apart - and ``_ensure_data_lake_files``
+        (called once a query has actually selected some of these) is what turns
+        a "needs a fetch" item into a "local" one for the next query.
+        """
         self._sync_data_lake_descriptions()
+        present = set(self._get_data_lake_items())
+
         resources: list[dict[str, str]] = []
-
-        for item in self._get_data_lake_items():
-            resources.append({"name": item, "description": self.data_lake_dict.get(item, f"Data lake item: {item}")})
-
-        if hasattr(self, "_custom_data") and self._custom_data:
-            existing_names = {resource["name"] for resource in resources}
-            for name, info in self._custom_data.items():
-                if name not in existing_names:
-                    resources.append({"name": name, "description": info.get("description", f"Data lake item: {name}")})
-
+        for name, description in self.data_lake_dict.items():
+            tag = (
+                "downloaded locally"
+                if name in present
+                else "in the data lake catalog; fetched automatically the first time a query uses it"
+            )
+            resources.append({"name": name, "description": f"{description} ({tag})"})
         return resources
+
+    def _ensure_data_lake_files(self, names: list[str]) -> None:
+        """Fetch the specific data-lake files a query just selected, if not already local.
+
+        This is the lazy-loading half of ``_get_data_lake_resources``: that method
+        lets the retriever pick from the whole catalog regardless of what is on
+        disk, and this fetches exactly the subset one query actually picked -
+        right before the agent's plan can reference them - instead of the old
+        behavior of downloading the entire ~data lake at every agent construction
+        whether or not a session ever touched it.
+
+        Best-effort: a network hiccup here should not fail the chat turn. The
+        tool call that actually needed the file will raise its own clear error
+        (missing file) if the fetch below didn't succeed.
+        """
+        if not names:
+            return
+
+        # Checked directly rather than through the bounded/cached scan_directory
+        # snapshot: that cache is deliberately allowed to be up to
+        # BIOMNI_WORKSPACE_SCAN_TTL_S stale, which would make a file just fetched
+        # by an earlier query this session look "still missing" here. A handful
+        # of stat calls on named files is cheap enough not to need the cache.
+        # Only real data-lake filenames are fetchable this way - this also
+        # filters out "user-data:..." VM-mounted entries the retriever may have
+        # selected alongside data-lake ones, which live outside data_lake_dir
+        # and were never meant to come from S3.
+        missing = [
+            name
+            for name in dict.fromkeys(names)
+            if name in self.data_lake_dict and not os.path.exists(os.path.join(self.data_lake_dir, name))
+        ]
+        if not missing:
+            return
+
+        print(f"📥 Fetching {len(missing)} data lake file(s) needed for this query...")
+        try:
+            check_and_download_s3_files(
+                s3_bucket_url=_DATA_LAKE_S3_BUCKET_URL,
+                local_data_lake_path=self.data_lake_dir,
+                expected_files=missing,
+                folder="data_lake",
+            )
+        except Exception:
+            logger.warning("Could not fetch %d data lake file(s): %s", len(missing), missing, exc_info=True)
 
     def add_tool(self, api):
         """Add a new tool to the agent's tool registry and make it available for retrieval.
@@ -1620,7 +1687,10 @@ For all analyses in this run:
             for item in default_data_lake_content:
                 if isinstance(item, dict):
                     name = item.get("name", "")
-                    description = self.data_lake_dict.get(name, f"Data lake item: {name}")
+                    # Prefer whatever description the caller supplied - it may carry a
+                    # local-vs-catalog-only tag (see _get_data_lake_resources) that a
+                    # blind re-lookup in data_lake_dict would silently discard.
+                    description = item.get("description") or self.data_lake_dict.get(name, f"Data lake item: {name}")
                     data_lake_formatted.append(format_item_with_description(name, description))
                 # Check if the item already has a description (contains a colon)
                 elif isinstance(item, str) and ": " in item:
@@ -1738,7 +1808,7 @@ After that, you have two options:
 2) When you think it is ready, directly provide a solution that adheres to the required format for the given task to the user. Your solution should be enclosed using "<solution>" tag, for example: The answer is <solution> A </solution>. IMPORTANT: You must end the solution block with </solution> tag.
 
 You have many chances to interact with the environment to receive the observation. So you can decompose your code into multiple steps.
-IMPORTANT: Do NOT provide <solution> until ALL steps in your plan are completed and checked off [✓]. After each <observation>, review your checklist — if unchecked steps remain, proceed to the next step with <execute>. Multi-step analyses require multiple rounds of execution.
+IMPORTANT: Do NOT provide <solution> until ALL steps in your plan are completed and checked off [✓]. After each <observation>, review your checklist - if unchecked steps remain, proceed to the next step with <execute>. Multi-step analyses require multiple rounds of execution.
 Don't overcomplicate the code. Keep it simple and easy to understand.
 When writing the code, please print out the steps and results in a clear and concise manner, like a research log.
 When calling the existing python functions in the function dictionary, YOU MUST SAVE THE OUTPUT and PRINT OUT the result.
@@ -1759,7 +1829,7 @@ You may or may not receive feedbacks from human. If so, address the feedbacks by
 
         # Add protocol generation instructions
         prompt_modifier += """
-TOOL PRIORITY — ALWAYS FOLLOW THIS ORDER:
+TOOL PRIORITY - ALWAYS FOLLOW THIS ORDER:
 1. **Web & literature search first**: Before writing any analysis code, use web/literature tools to gather information:
    - `advanced_web_search()` or `advanced_web_search_claude()` for general web searches
    - `search_pubmed()`, `search_biorxiv()` for scientific literature
@@ -1767,7 +1837,7 @@ TOOL PRIORITY — ALWAYS FOLLOW THIS ORDER:
 2. **Local data & built-in tools second**: Use data lake files, database tools, and domain-specific functions that are already available.
 3. **Code generation last**: Only write custom analysis code (Python/R/Bash) when the above tools cannot provide the answer directly. Keep code minimal and focused.
 
-This priority order is especially important — retrieving information is faster and more reliable than generating it from scratch. When in doubt, search first.
+This priority order is especially important - retrieving information is faster and more reliable than generating it from scratch. When in doubt, search first.
 
 PROTOCOL GENERATION:
 If the user requests an experimental protocol, use search_protocols(), advanced_web_search_claude(), list_local_protocols(), and read_local_protocol() to generate an accurate protocol. Include details such as reagents (with catalog numbers if available), equipment specifications, replicate requirements, error handling, and troubleshooting - but ONLY include information found in these resources. Do not make up specifications, catalog numbers, or equipment details. Prioritize accuracy over completeness.
@@ -1925,7 +1995,7 @@ Each library is listed with its description to help you understand its functiona
             "function_intro": function_intro,
             "tool_desc": textify_api_dict(tool_desc) if isinstance(tool_desc, dict) else tool_desc,
             "import_instruction": import_instruction,
-            "data_lake_path": self.path + "/data_lake",
+            "data_lake_path": self.data_lake_dir,
             "data_lake_intro": data_lake_intro,
             "data_lake_content": data_lake_content_formatted,
             "data_root_path": data_root_dir,
@@ -2190,7 +2260,7 @@ Each library is listed with its description to help you understand its functiona
                     # Plots are now captured directly in the execution entry above
 
                 # Audit trail: the agent executes LLM-generated code un-sandboxed,
-                # so record what ran (hash + size, never the raw source/output —
+                # so record what ran (hash + size, never the raw source/output -
                 # those may contain biomedical data) for incident response.
                 self._audit_code_execution(
                     language=language,
@@ -2449,6 +2519,10 @@ Each library is listed with its description to help you understand its functiona
         print(f"  📚 Know-How: {len(selected_resources_names['know_how'])} selected")
         print("=" * 60 + "\n")
 
+        # This query is exactly what determines "needed right now": fetch only
+        # the data-lake files just selected for it, not the whole catalog.
+        self._ensure_data_lake_files(selected_resources_names["data_lake"])
+
         return selected_resources_names
 
     def go(self, prompt):
@@ -2469,7 +2543,7 @@ Each library is listed with its description to help you understand its functiona
         # Create run directory BEFORE execution so OUTPUT_DIR is available during code runs.
         try:
             run_id = self._build_run_id(prompt)
-            runs_root = os.path.abspath(os.path.join(os.getcwd(), "runs"))
+            runs_root = self._resolve_runs_root()
             os.makedirs(runs_root, exist_ok=True)
             current_run_dir = os.path.join(runs_root, run_id)
             os.makedirs(current_run_dir, exist_ok=True)
@@ -2540,7 +2614,7 @@ Each library is listed with its description to help you understand its functiona
         # Pre-create run directory so OUTPUT_DIR is available during code execution.
         try:
             run_id = self._build_run_id(prompt)
-            runs_root = os.path.abspath(os.path.join(os.getcwd(), "runs"))
+            runs_root = self._resolve_runs_root()
             os.makedirs(runs_root, exist_ok=True)
             current_run_dir = os.path.join(runs_root, run_id)
             os.makedirs(current_run_dir, exist_ok=True)
@@ -2571,6 +2645,28 @@ Each library is listed with its description to help you understand its functiona
     def _build_run_id(self, topic: str | None = None) -> str:
         """Build run directory ID as run_YYYYMMDD_HHMMSS_topic1_topic2_topic3."""
         return _shared_build_run_id(topic, llm_summarizer=self._summarize_topic_with_llm)
+
+    def _resolve_runs_root(self) -> str:
+        """Where this agent writes run directories.
+
+        The Chainlit UI sets ``runs_root`` from the signed-in user's resolved
+        output target; when the agent is driven directly (notebook, script) we
+        fall back to the same resolution order the UI uses, so both paths honour
+        BIOMNI_OUTPUT_ROOT and only then land in cwd/runs.
+        """
+        configured = getattr(self, "runs_root", None)
+        if configured:
+            return str(configured)
+
+        # Only treat the data root as a workspace when the deployment actually
+        # configured one. `data_root_dir` defaults to ./data (the bundled data
+        # directory), and using that as a workspace would silently relocate a
+        # notebook user's output from ./runs to ./data/biomni-outputs.
+        workspace_root = None
+        if os.getenv("BIOMNI_USER_DATA_PATH", "").strip() or os.getenv("BIOMNI_DATA_PATH", "").strip():
+            workspace_root = getattr(self, "data_root_dir", None)
+
+        return resolve_output_dir(default_prefs(), workspace_root=workspace_root).path
 
     def _summarize_topic_with_llm(self, topic: str) -> str:
         """Use configured LLM to generate a short, descriptive directory slug."""

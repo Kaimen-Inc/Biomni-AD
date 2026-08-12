@@ -1,4 +1,4 @@
-"""Tests for chainlit_ui.datasets — AD dataset prompt filtering."""
+"""Tests for chainlit_ui.datasets - AD dataset prompt filtering."""
 
 from __future__ import annotations
 
@@ -63,19 +63,32 @@ def test_markdown_is_empty_when_no_datasets_match(tmp_path: Path) -> None:
     assert build_suggested_prompts_markdown(tmp_path) == ""
 
 
-def test_markdown_lists_matched_datasets_grouped_by_category(tmp_path: Path) -> None:
-    # Set up two datasets from different categories
+def test_markdown_shows_one_example_per_category(tmp_path: Path) -> None:
+    """The Readme is a page about how to use the app, not a prompt catalogue.
+
+    Both of these datasets are "Rare variants", so only the first contributes -
+    the section is showing the shape of a good question, not enumerating one
+    per file on disk.
+    """
     for ds_id in ("NG00126", "RADR"):
         (tmp_path / ds_id).mkdir()
         (tmp_path / ds_id / "data.tsv").write_text("x")
 
     md = build_suggested_prompts_markdown(tmp_path)
 
-    assert md.startswith("**Suggested prompts based on your local data:**")
-    assert "*Rare variants*" in md
-    # Both should be present since they share the "Rare variants" category
+    assert md.startswith("**Examples, using data you actually have:**")
     assert "NG00126" in md
-    assert "TREM2 and APOE rare variants in the RADR" in md
+    assert "RADR" not in md
+    assert len([line for line in md.splitlines() if line.startswith("- ")]) == 1
+
+
+def test_markdown_per_category_cap_is_adjustable(tmp_path: Path) -> None:
+    for ds_id in ("NG00126", "RADR"):
+        (tmp_path / ds_id).mkdir()
+        (tmp_path / ds_id / "data.tsv").write_text("x")
+
+    md = build_suggested_prompts_markdown(tmp_path, per_category=2)
+    assert "NG00126" in md and "RADR" in md
 
 
 def test_markdown_only_includes_locally_present_ids(tmp_path: Path) -> None:
@@ -106,3 +119,13 @@ def test_prompt_entries_are_well_formed(entry: tuple[str, str, str]) -> None:
 def test_dataset_ids_are_unique() -> None:
     ids = [e[0] for e in AD_DATASET_PROMPTS]
     assert len(ids) == len(set(ids)), "duplicate dataset id in AD_DATASET_PROMPTS"
+
+
+def test_markdown_caps_the_total_number_of_examples(tmp_path: Path) -> None:
+    """Brevity is the point; a full lake would otherwise contribute a dozen."""
+    for ds_id, _prompt, _cat in AD_DATASET_PROMPTS:
+        (tmp_path / ds_id).mkdir()
+        (tmp_path / ds_id / "data.tsv").write_text("x")
+
+    md = build_suggested_prompts_markdown(tmp_path)
+    assert len([line for line in md.splitlines() if line.startswith("- ")]) == 5

@@ -13,7 +13,7 @@ many pods behind Azure Kubernetes Service:
   trajectory can be reconstructed across pods with a single filter.
 * **The log sink retains and indexes everything.** A redaction chokepoint scrubs
   credentials (and, opt-in, e-mail-shaped PII) out of every line before it is
-  written — important for an app that handles API keys and biomedical data.
+  written - important for an app that handles API keys and biomedical data.
 
 Nothing here touches the root logger on import. Call :func:`setup_logging` once
 at process start (the Chainlit entrypoint does this). Library/test imports stay
@@ -21,14 +21,14 @@ side-effect free.
 
 Public surface:
 
-* :func:`setup_logging` — install the JSON/text handler on the root logger.
-* :func:`emit_event` — log a structured event with arbitrary fields.
-* :func:`log_llm_usage` — convenience wrapper for per-run token/cost telemetry.
+* :func:`setup_logging` - install the JSON/text handler on the root logger.
+* :func:`emit_event` - log a structured event with arbitrary fields.
+* :func:`log_llm_usage` - convenience wrapper for per-run token/cost telemetry.
 * :func:`bind_run`, :func:`set_session_id`, :func:`set_run_id`, :func:`get_context`
-  — manage correlation IDs.
-* :func:`capture_context` — snapshot the caller's context for replay in a worker
+  - manage correlation IDs.
+* :func:`capture_context` - snapshot the caller's context for replay in a worker
   thread (executors do not copy contextvars otherwise).
-* :class:`Redactor` — the secret/PII scrubber (exposed for testing).
+* :class:`Redactor` - the secret/PII scrubber (exposed for testing).
 """
 
 from __future__ import annotations
@@ -55,7 +55,7 @@ if TYPE_CHECKING:
 # ---------------------------------------------------------------------------
 
 # Set at request/run boundaries (e.g. the Chainlit message handler) and read by
-# the formatter so every line — including ones emitted deep in worker threads —
+# the formatter so every line - including ones emitted deep in worker threads -
 # carries the same ids. ``None`` means "not in a run"; such keys are omitted
 # from output rather than logged as null.
 session_id_var: contextvars.ContextVar[str | None] = contextvars.ContextVar("biomni_session_id", default=None)
@@ -151,7 +151,7 @@ _KEY_PATTERNS: tuple[re.Pattern[str], ...] = (
 )
 
 # base64 data URIs (matplotlib plots are embedded as these). Collapse to a short
-# marker — keeps multi-MB image blobs out of the log pipeline.
+# marker - keeps multi-MB image blobs out of the log pipeline.
 _DATA_URI = re.compile(r"data:[\w.+-]+/[\w.+-]+;base64,[A-Za-z0-9+/=\s]+")
 
 # e-mail-shaped strings; redaction is opt-in (PII, but also matches legitimate
@@ -259,7 +259,7 @@ def _record_fields(record: logging.LogRecord) -> dict[str, Any]:
     # Static identity first, so correlation ids and caller-supplied fields below
     # win on any key collision (they never collide in practice).
     fields.update(_SERVICE_FIELDS)
-    # Correlation ids (read live from contextvars — works in worker threads when
+    # Correlation ids (read live from contextvars - works in worker threads when
     # the caller propagated context via capture_context).
     fields.update(get_context())
 
@@ -405,7 +405,7 @@ def setup_logging(
         ``"json"`` (default, for AKS/Container Insights) or ``"text"`` (dev).
         Falls back to ``$BIOMNI_LOG_FORMAT`` then ``"json"``.
     stream:
-        Output stream (default ``sys.stdout`` — container log collectors read
+        Output stream (default ``sys.stdout`` - container log collectors read
         stdout; stderr is reserved for genuine process errors).
     force:
         Re-configure even if already configured (replaces our handler).
@@ -422,7 +422,7 @@ def setup_logging(
 
     # Claim the root logger: drop *every* existing handler, not just a prior
     # managed one. Libraries imported before us install their own root handler
-    # — chainlit's CLI calls logging.basicConfig() at import time, adding a
+    # - chainlit's CLI calls logging.basicConfig() at import time, adding a
     # plain-text StreamHandler. Left in place it double-emits every record
     # (once plain, once JSON), corrupting the structured stream Container
     # Insights parses. Safe because this function is the single source of
@@ -479,7 +479,7 @@ def emit_event(
     """Emit a structured ``event`` with arbitrary fields.
 
     The message text is the event name (greppable) and ``event`` plus every
-    field becomes a top-level key in the JSON output. Never raises — telemetry
+    field becomes a top-level key in the JSON output. Never raises - telemetry
     must not break the path it instruments.
     """
     log = logger or logging.getLogger("biomni.events")
@@ -548,6 +548,7 @@ class RunHeartbeat:
         event: str = "run_heartbeat",
         logger: logging.Logger | None = None,
         status: Callable[[], Mapping[str, Any]] | None = None,
+        on_tick: Callable[[], None] | None = None,
     ) -> None:
         # Small positive floor guards against a 0/negative interval busy-looping
         # the thread; callers pick a sane cadence (Chainlit defaults to ~15s).
@@ -555,6 +556,11 @@ class RunHeartbeat:
         self._event = event
         self._logger = logger
         self._status = status
+        # Side-effecting per-tick hook, kept separate from `status` so that
+        # callback stays a pure "describe the run" function. Used to advance the
+        # durable run record's liveness stamp (see biomni.run_registry), which is
+        # what lets a later session tell a slow run from an abandoned one.
+        self._on_tick = on_tick
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
         self._ctx: contextvars.Context | None = None
@@ -588,6 +594,12 @@ class RunHeartbeat:
                 logging.getLogger("biomni.events").debug("heartbeat emit failed", exc_info=True)
 
     def _emit(self) -> None:
+        if self._on_tick is not None:
+            try:
+                self._on_tick()
+            except Exception:  # tick hook must never break the heartbeat
+                logging.getLogger("biomni.events").debug("heartbeat tick hook failed", exc_info=True)
+
         fields: dict[str, Any] = {"elapsed_ms": round((time.monotonic() - self._start) * 1000, 1)}
         if self._status is not None:
             try:

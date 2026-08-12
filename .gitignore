@@ -51,7 +51,7 @@ runs/
 *sqlite
 
 # =============================================================================
-# Data (large datasets — use DVC or download separately)
+# Data (large datasets - use DVC or download separately)
 # =============================================================================
 data/biomni_data/
 
@@ -105,3 +105,6 @@ docs/source/_autosummary/
 *.bak
 *tar.gz
 *tarscripts/vm_setup.sh
+
+# Local review artifacts (lavish-axi)
+.lavish/

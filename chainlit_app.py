@@ -14,13 +14,16 @@ Environment variables:
 """
 
 import asyncio
+import inspect
 import logging
 import os
 import re
 import sys
+import threading
 import time
 import uuid
 from concurrent.futures import ThreadPoolExecutor
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
@@ -45,7 +48,7 @@ if sys.version_info >= (3, 14):
     sys.exit(1)
 
 # ---------------------------------------------------------------------------
-# Environment guard — all biomni dependencies live in the biomni_e1 conda env.
+# Environment guard - all biomni dependencies live in the biomni_e1 conda env.
 # Catch the most common mistake (running from the bare .venv) early.
 # ---------------------------------------------------------------------------
 try:
@@ -70,9 +73,9 @@ except ModuleNotFoundError:
 
 import chainlit as cl
 from biomni.artifact import build_run_id, get_all_files
-from biomni.config import default_config, resolve_default_llm
-from biomni.fs_scan import scan_directory
+from biomni.config import default_config, resolve_data_lake_root, resolve_default_llm
 from biomni.health import register_health_routes
+from biomni.identity import UserIdentity, resolve_identity, single_user_mode, trust_auth_headers
 from biomni.observability import (
     RunHeartbeat,
     bind_run,
@@ -83,6 +86,21 @@ from biomni.observability import (
     set_session_id,
     setup_logging,
 )
+from biomni.run_registry import RunRecord, RunRegistry, build_run_registry
+from biomni.workspace_prefs import (
+    NullPrefsStore,
+    OutputTarget,
+    PrefsStore,
+    ScopeResolution,
+    WorkspacePrefs,
+    build_prefs_store,
+    env_flag,
+    load_prefs,
+    normalize_scope_entries,
+    resolve_output_dir,
+    resolve_scope,
+)
+from chainlit.input_widget import InputWidget, MultiSelect, Switch, Tags, TextInput
 from langchain_core.messages import AIMessage, HumanMessage
 
 # Configure structured (JSON) logging to stdout before anything else logs, so
@@ -129,11 +147,24 @@ def _extract_final_answer(state: dict) -> str:
 # Sidebar / planning helpers live in chainlit_ui/. `interactive_planning` is
 # aliased to the original private name so the existing call site at the bottom
 # of this file keeps working unchanged. The module-scope prompt constants are
-# intentionally not re-exported — anything that needs them should
+# intentionally not re-exported - anything that needs them should
 # `from chainlit_ui.planning import PLANNING_SYSTEM_PROMPT, AD1_PLANNING_SYSTEM_PROMPT`.
 from chainlit_ui.datasets import build_suggested_prompts_markdown
+from chainlit_ui.live_runs import LIVE_RUNS
+from chainlit_ui.persistence import build_data_layer, ensure_auth_secret
+from chainlit_ui.planning import PLAN_ACTIONS, STALE_PLAN_ACTION_NOTE
 from chainlit_ui.planning import (
     interactive_planning as _interactive_planning,
+)
+from chainlit_ui.planning import (
+    quick_answer as _quick_answer,
+)
+from chainlit_ui.uploads import store_uploads, uploads_dir
+from chainlit_ui.workspace_panel import (
+    build_scope_inventory,
+    list_top_level_dirs,
+    scope_choice_items,
+    summarize_scope,
 )
 
 DEFAULT_LLM = resolve_default_llm()
@@ -144,7 +175,7 @@ FORCE_AGENT = os.getenv("BIOMNI_AGENT", "").lower()  # "a1" | "ad1" | ""
 SUPPORTED_IMAGE_EXTENSIONS = (".png", ".jpg", ".jpeg", ".gif", ".bmp", ".webp")
 
 CHAINLIT_MD_PATH = Path(__file__).with_name("chainlit.md")
-# ``chainlit.md`` itself is gitignored — it's rewritten on every launch with
+# ``chainlit.md`` itself is gitignored - it's rewritten on every launch with
 # the local data inventory, producing a spurious diff on every dev machine.
 # ``chainlit.md.template`` is the source of truth in git: same content with
 # the managed marker blocks empty.
@@ -156,20 +187,9 @@ _SUGGESTED_PROMPTS_BLOCK_END = "<!-- BIOMNI_SUGGESTED_PROMPTS_END -->"
 
 
 def _build_ad_suggested_prompts() -> str:
-    """Thin shim over chainlit_ui.datasets — resolves the repo-local AD lake path."""
-    ad_lake = Path(__file__).resolve().parent / "data" / "biomni_data" / "data_lake" / "biomniAD"
+    """Thin shim over chainlit_ui.datasets - resolves the AD lake path."""
+    ad_lake = Path(_resolve_builtin_data_lake_root()) / "biomniAD"
     return build_suggested_prompts_markdown(ad_lake)
-
-
-def _list_path_entries(path: str, max_items: int = 40) -> list[str]:
-    """List non-hidden entries for a path (brief, non-recursive)."""
-    if not path or not os.path.isdir(path):
-        return []
-    try:
-        entries = sorted(name for name in os.listdir(path) if not name.startswith("."))
-    except OSError:
-        return []
-    return entries[:max_items]
 
 
 def _resolve_user_data_roots() -> list[tuple[str, str]]:
@@ -222,397 +242,54 @@ def _resolve_user_data_roots() -> list[tuple[str, str]]:
     return resolved
 
 
-def _display_data_root_label(env_name: str) -> str:
-    """Map env var names to concise sidebar labels."""
-    if env_name == "BIOMNI_USER_DATA_HOST_PATH":
-        return "AD_WORKBENCH_DATASETS"
-    return env_name
-
-
-def _list_path_entries_recursive(
-    path: str, max_items: int = 80, max_depth: int = 10, exclude_top_subdirs: set[str] | None = None
-) -> tuple[list[str], int]:
-    """Recursively list non-hidden files under a directory.
-
-    Returns a (preview_items, total_file_count) tuple. Preview items are
-    relative POSIX-style paths suitable for UI display.
-
-    Thin adapter over :func:`biomni.fs_scan.scan_directory` — the scan is
-    bounded (file cap + wall-clock deadline) and cached, so this never hangs on
-    a large or network-backed workspace. ``total_file_count`` is a lower bound
-    when the underlying scan was truncated; callers that display it should treat
-    it as approximate (see ``_build_user_data_tree_content``).
-    """
-    result = scan_directory(path, max_depth=max_depth, exclude_top_subdirs=exclude_top_subdirs)
-    return result.files[:max_items], result.file_count
-
-
-def _collect_path_stats(path: str, max_depth: int = 10, exclude_top_subdirs: set[str] | None = None) -> dict:
-    """Collect compact stats for a directory tree for sidebar summaries.
-
-    ``exclude_top_subdirs`` names top-level subdirectories to skip entirely
-    (useful for counting the datalake root without the biomniAD subfolder).
-
-    Backed by the bounded/cached scanner; ``truncated`` is True when the counts
-    are a floor (workspace larger than the scan budget).
-    """
-    result = scan_directory(path, max_depth=max_depth, exclude_top_subdirs=exclude_top_subdirs)
-    return {
-        "total_files": result.file_count,
-        "total_dirs": result.dir_count,
-        "top_level_counts": dict(result.top_level_counts),
-        "extension_counts": dict(result.extension_counts),
-        "truncated": result.bounded,
-    }
-
-
-def _format_compact_counts(counts: dict[str, int], max_items: int = 8) -> str:
-    """Format a frequency map as a compact markdown bullet list."""
-    if not counts:
-        return "- *(none)*"
-    top_items = sorted(counts.items(), key=lambda kv: (-kv[1], kv[0]))[:max_items]
-    return "\n".join(f"- `{name}`: {value}" for name, value in top_items)
-
-
-def _build_tree_preview_lines(paths: list[str], max_lines: int = 60, max_depth: int = 3) -> list[str]:
-    """Render relative file paths as a compact folder tree preview.
-
-    Directory counts are computed from the provided path sample.
-    """
-    # Tree node shape: {"dirs": {name: node}, "files": [name, ...]}
-    tree: dict[str, object] = {"dirs": {}, "files": []}
-
-    for rel_path in sorted(paths):
-        parts = [p for p in rel_path.split("/") if p]
-        if not parts:
-            continue
-
-        node = tree
-        for idx, part in enumerate(parts):
-            is_file = idx == len(parts) - 1
-            if is_file:
-                files = node.setdefault("files", [])
-                if isinstance(files, list):
-                    files.append(part)
-            else:
-                dirs = node.setdefault("dirs", {})
-                if not isinstance(dirs, dict):
-                    break
-                if part not in dirs:
-                    dirs[part] = {"dirs": {}, "files": []}
-                child = dirs.get(part)
-                if not isinstance(child, dict):
-                    break
-                node = child
-
-    lines: list[str] = []
-
-    def _count_files(node: dict[str, object]) -> int:
-        count = 0
-        files = node.get("files", [])
-        dirs = node.get("dirs", {})
-
-        if isinstance(files, list):
-            count += len(files)
-        if isinstance(dirs, dict):
-            for child in dirs.values():
-                if isinstance(child, dict):
-                    count += _count_files(child)
-        return count
-
-    def _render(node: dict[str, object], prefix: str, depth: int) -> bool:
-        if len(lines) >= max_lines:
-            return False
-        dirs = node.get("dirs", {})
-        files = node.get("files", [])
-
-        dir_names = sorted(dirs.keys()) if isinstance(dirs, dict) else []
-        file_names = sorted(str(f) for f in files) if isinstance(files, list) else []
-        entries: list[tuple[str, str, object | None]] = []
-        for dirname in dir_names:
-            child = dirs.get(dirname) if isinstance(dirs, dict) else None
-            entries.append(("dir", dirname, child))
-        for filename in file_names:
-            entries.append(("file", filename, None))
-
-        for idx, (kind, name, child) in enumerate(entries):
-            is_last = idx == len(entries) - 1
-            branch = "└─ " if is_last else "├─ "
-            next_prefix = prefix + ("   " if is_last else "│  ")
-
-            if kind == "dir":
-                child_count = _count_files(child) if isinstance(child, dict) else 0
-                lines.append(f"{prefix}{branch}📁 {name}/ ({child_count})")
-                if len(lines) >= max_lines:
-                    return False
-                if isinstance(child, dict):
-                    if depth + 1 < max_depth:
-                        if not _render(child, next_prefix, depth + 1):
-                            return False
-                    elif child_count > 0:
-                        lines.append(f"{next_prefix}…")
-                        if len(lines) >= max_lines:
-                            return False
-            else:
-                lines.append(f"{prefix}{branch}📄 {name}")
-                if len(lines) >= max_lines:
-                    return False
-
-        return True
-
-    _render(tree, prefix="", depth=0)
-    return lines
-
-
-def _build_user_data_tree_content(root_path: str, preview_files: int = 300) -> tuple[str, int]:
-    """Build concise per-root content for sidebar readability."""
-    result = scan_directory(root_path, max_depth=10)
-    if result.file_count == 0:
-        # Distinguish a genuinely empty root from a scan that hit the
-        # time/size budget before reading any file (slow network mount) — the
-        # latter must not masquerade as "no files".
-        if result.bounded:
-            return (
-                "(listing unavailable — the workspace scan hit its time/size budget before any file "
-                "was read; the folder is likely very large or on a slow mount. Open it directly to browse.)",
-                0,
-            )
-        return "(no files found)", 0
-
-    preview = result.files[:preview_files]
-    tree_lines = _build_tree_preview_lines(preview, max_lines=70, max_depth=3)
-    lines: list[str] = [
-        f"Directory structure preview (showing first {len(preview)} files)",
-        "",
-        *tree_lines,
-    ]
-    if result.bounded:
-        # Workspace exceeded the scan budget: the tree is a partial sample.
-        lines.append(
-            f"... workspace is large — listing capped at {result.count_label()} files "
-            "(not fully indexed; scan bounded for responsiveness)"
-        )
-    elif result.file_count > len(preview):
-        lines.append(f"... and {result.file_count - len(preview)} more files")
-
-    return "\n".join(lines), result.file_count
-
-
-def _root_count_label(root_path: str, exclude_top_subdirs: set[str] | None = None) -> str:
-    """Cached file count for a root, with a trailing ``+`` when the scan was
-    bounded (a floor, not an exact total). Reuses the cached scan so calling it
-    for a tab label right after building the tree is free."""
-    return scan_directory(root_path, max_depth=10, exclude_top_subdirs=exclude_top_subdirs).count_label()
-
-
-def _build_sidebar_overview_content() -> str:
-    """Build an at-a-glance overview across all configured roots.
-
-    Sections (in order, only shown when they have files):
-    1. AD Workbench Datasets  – when BIOMNI_USER_DATA_HOST_PATH is defined,
-       read file counts from the container-side mount (BIOMNI_USER_DATA_PATH).
-    2. Biomni-AD Datalake     – data_lake/biomniAD/ subfolder.
-    3. Biomni Datalake        – root of data_lake/ excluding biomniAD.
-    """
-    user_data_host_path = os.getenv("BIOMNI_USER_DATA_HOST_PATH", "").strip()
-    user_data_path = os.getenv("BIOMNI_USER_DATA_PATH", "").strip()
-
-    lines: list[str] = ["At-a-glance overview", ""]
-    grand_files = 0
-    grand_dirs = 0
-    grand_truncated = False
-
-    def _add(label: str, stats: dict) -> None:
-        # Render one section line and fold its counts into the grand totals. A
-        # trailing "+" signals the scan was bounded (workspace larger than the
-        # scan budget), so the number is a floor, not an exact count.
-        nonlocal grand_files, grand_dirs, grand_truncated
-        if stats["total_files"] <= 0:
-            return
-        grand_files += stats["total_files"]
-        grand_dirs += stats["total_dirs"]
-        grand_truncated = grand_truncated or stats.get("truncated", False)
-        plus = "+" if stats.get("truncated") else ""
-        lines.append(f"{label}: {stats['total_files']}{plus} files, {stats['total_dirs']}{plus} folders")
-        lines.append("")
-
-    # --- 1. AD Workbench Datasets -------------------------------------------
-    # When HOST_PATH is defined this is an AD-Workbench deployment. The host
-    # directory is bind-mounted into the container at BIOMNI_USER_DATA_PATH
-    # (/app/user-data), so count files from the container-side path.
-    if user_data_host_path:
-        # Prefer the container mount; fall back to the host path only if the
-        # mount path is absent or empty.
-        ad_path = ""
-        if user_data_path and os.path.isdir(user_data_path):
-            ad_path = user_data_path
-        elif os.path.isdir(user_data_host_path):
-            ad_path = user_data_host_path
-        if ad_path:
-            _add("AD Workbench Datasets", _collect_path_stats(ad_path))
-    else:
-        # Local / non-AD-Workbench deployment: show regular user data roots.
-        for env_name, root in _resolve_user_data_roots():
-            _add(_display_data_root_label(env_name), _collect_path_stats(root))
-
-    # --- 2. Biomni-AD Datalake ----------------------------------------------
-    builtin_root = _resolve_builtin_data_lake_root()
-    biomni_ad_root = os.path.join(builtin_root, "biomniAD")
-    if os.path.isdir(biomni_ad_root):
-        _add("Biomni-AD Datalake", _collect_path_stats(biomni_ad_root))
-
-    # --- 3. Biomni Datalake (root of data_lake, excluding biomniAD) ----------
-    if os.path.isdir(builtin_root):
-        _add("Biomni Datalake", _collect_path_stats(builtin_root, exclude_top_subdirs={"biomniAD"}))
-
-    if grand_files == 0 and grand_dirs == 0:
-        return "No local data roots found."
-
-    plus = "+" if grand_truncated else ""
-    lines.extend(
-        [
-            "Combined totals",
-            f"Files: {grand_files}{plus}",
-            f"Folders: {grand_dirs}{plus}",
-        ]
-    )
-    if grand_truncated:
-        lines.append("(partial — workspace exceeded the scan budget; counts are a lower bound)")
-    return "\n".join(lines)
-
-
 def _resolve_builtin_data_lake_root() -> str:
-    """Return the default repo-local data lake directory path."""
-    repo_root = Path(__file__).resolve().parent
-    return str((repo_root / "data" / "biomni_data" / "data_lake").resolve())
+    """Return the data lake directory path (same resolution A1 uses).
 
-
-def _list_local_data_lake_files(base_path: str, max_items: int = 30) -> list[str]:
-    """List local data lake files (relative paths) from common Biomni folders."""
-    candidates = [
-        Path(base_path) / "biomni_data" / "data_lake",
-        Path(base_path) / "data_lake",
-    ]
-
-    data_lake_dir = next((c for c in candidates if c.is_dir()), None)
-    if data_lake_dir is None:
-        return []
-
-    # Bounded/cached scan so this can't stall process startup even if the
-    # built-in data lake is pointed at a large volume.
-    result = scan_directory(str(data_lake_dir))
-    items = sorted(f for f in result.files if f != "_custom_data_index.json")
-    return items[:max_items]
-
-
-def _build_welcome_local_dataset_section() -> str:
-    """Build a collapsed markdown block shown at the bottom of the Chainlit welcome page."""
-    # Data lake always sourced from the repo-local built-in location
-    _repo_root = Path(__file__).resolve().parent
-    builtin_data_lake = _repo_root / "data" / "biomni_data" / "data_lake"
-    data_lake_files = _list_local_data_lake_files(str(_repo_root / "data"), max_items=200)
-
-    # User data can come from BIOMNI_USER_DATA_PATH and legacy BIOMNI_DATA_PATH/BIOMNI_PATH.
-    user_roots = _resolve_user_data_roots()
-    user_total_files = 0
-    user_count_label = "0"
-    user_preview: list[str] = []
-    if user_roots:
-        first_root = user_roots[0][1]
-        _user_scan = scan_directory(first_root, max_depth=10)
-        user_preview = _user_scan.files[:20]
-        user_total_files = _user_scan.file_count
-        user_count_label = _user_scan.count_label()
-
-    # One-line summary for the collapsed header
-    summary_parts = [f"{len(data_lake_files)} data lake files"]
-    if user_total_files:
-        summary_parts.append(f"{user_count_label} user data files")
-
-    lines: list[str] = []
-    lines.append(f"<details><summary>📊 {' · '.join(summary_parts)} available — click to expand</summary>")
-    lines.append("")
-    lines.append(f"**Built-in Data Lake** — `{builtin_data_lake}`")
-    lines.append("")
-    if data_lake_files:
-        for name in data_lake_files:
-            lines.append(f"- `{name}`")
-    else:
-        lines.append("- *(none found)*")
-
-    if user_roots:
-        lines.append("")
-        lines.append(
-            "**User Data** — from `BIOMNI_USER_DATA_HOST_PATH` / `BIOMNI_USER_DATA_PATH` / `BIOMNI_DATA_PATH` / `BIOMNI_PATH`"
-        )
-        lines.append("")
-        primary_label = _display_data_root_label(user_roots[0][0])
-        lines.append(f"Primary path ({primary_label}): `{user_roots[0][1]}`")
-        if len(user_roots) > 1:
-            lines.append("Additional configured paths:")
-            for env_name, root in user_roots[1:]:
-                lines.append(f"- `{_display_data_root_label(env_name)}`: `{root}`")
-        lines.append("")
-        if user_preview:
-            lines.append(f"Detected files: {user_count_label}")
-            for name in user_preview:
-                lines.append(f"- `{name}`")
-            if user_total_files > len(user_preview):
-                lines.append(f"- `... and {user_total_files - len(user_preview)} more`")
-        else:
-            lines.append("- *(none found)*")
-
-    lines.append("")
-    lines.append("</details>")
-
-    return "\n".join(lines)
+    Defaults to the repo-local folder; set ``BIOMNI_DATA_LAKE_PATH`` when the
+    data lake is mounted elsewhere on the server. Delegates to
+    ``biomni.config.resolve_data_lake_root`` so this file and the agent never
+    disagree about where the data lake lives.
+    """
+    return resolve_data_lake_root()
 
 
 def _refresh_chainlit_welcome_markdown() -> None:
-    """Append or replace managed sections (suggested prompts + dataset list) in chainlit.md.
+    """Rebuild chainlit.md from its template plus the local-data examples.
 
-    Reads from ``chainlit.md`` if it already exists (preserves any operator
-    edits between launches), else from ``chainlit.md.template`` (the tracked
-    source of truth), else from a hardcoded minimal fallback.
+    ``chainlit.md`` is generated and gitignored; ``chainlit.md.template`` is the
+    tracked source, and the place to edit this page.
+
+    Written whole rather than patched. The previous version preserved whatever
+    was already in chainlit.md and spliced managed sections into it between HTML
+    comment markers - but Chainlit's Readme renderer prints those markers as
+    literal text ("<!-- BIOMNI_SUGGESTED_PROMPTS_START -->" in the middle of the
+    page), so the mechanism that made the file editable also defaced it.
+
+    The page also used to end with an inventory of the data lake and the
+    workspace - 200 file names in a collapsed block. Gone: this is a page about
+    how to use the app, and a file listing is neither instruction nor something
+    the reader can act on from here.
     """
     try:
-        if CHAINLIT_MD_PATH.exists():
-            original = CHAINLIT_MD_PATH.read_text(encoding="utf-8")
-        elif CHAINLIT_MD_TEMPLATE_PATH.exists():
-            original = CHAINLIT_MD_TEMPLATE_PATH.read_text(encoding="utf-8")
+        if CHAINLIT_MD_TEMPLATE_PATH.exists():
+            base = CHAINLIT_MD_TEMPLATE_PATH.read_text(encoding="utf-8")
         else:
-            original = (
-                "## Hi, I'm Biomni-AD 🧠\n"
-                "#### Your AI co-scientist on the journey to conquer Alzheimer's disease.\n\n"
-                "Tell me a research question to get started.\n"
+            base = (
+                "## How to use Biomni-AD\n\n"
+                "Ask a quick question for a straight answer, or ask for an analysis and "
+                "approve the plan before anything runs.\n"
             )
 
-        # Strip both managed blocks
+        # Tolerate a template still carrying the retired marker blocks.
         for start, end in [
             (_SUGGESTED_PROMPTS_BLOCK_START, _SUGGESTED_PROMPTS_BLOCK_END),
             (_WELCOME_DATASET_BLOCK_START, _WELCOME_DATASET_BLOCK_END),
         ]:
-            original = re.sub(
-                rf"\n?{re.escape(start)}.*?{re.escape(end)}\n?",
-                "\n",
-                original,
-                flags=re.DOTALL,
-            )
-        base = original.rstrip()
+            base = re.sub(rf"\n?{re.escape(start)}.*?{re.escape(end)}\n?", "\n", base, flags=re.DOTALL)
 
-        # Build suggested prompts block (only shown when local datasets are present)
         suggested = _build_ad_suggested_prompts()
-        prompts_block = (
-            (f"\n\n{_SUGGESTED_PROMPTS_BLOCK_START}\n{suggested}\n{_SUGGESTED_PROMPTS_BLOCK_END}\n")
-            if suggested
-            else ""
-        )
-
-        # Build dataset inventory block
-        dataset_section = _build_welcome_local_dataset_section()
-        dataset_block = f"\n\n{_WELCOME_DATASET_BLOCK_START}\n{dataset_section}\n{_WELCOME_DATASET_BLOCK_END}\n"
-
-        CHAINLIT_MD_PATH.write_text(base + prompts_block + dataset_block, encoding="utf-8")
+        page = base.rstrip() + (f"\n\n{suggested}\n" if suggested else "\n")
+        CHAINLIT_MD_PATH.write_text(page, encoding="utf-8")
     except Exception:
         logger.warning("Could not refresh chainlit welcome markdown", exc_info=True)
 
@@ -745,150 +422,339 @@ _DATALAKE_CATEGORIES: list[tuple[str, list[str]]] = [
 ]
 
 
-def _build_dataset_listing(agent) -> str:
-    """Return a compact sidebar summary (tree details are in separate elements)."""
-    _ = agent
-    user_roots = _resolve_user_data_roots()
-    builtin_root = _resolve_builtin_data_lake_root()
-    if not user_roots and not os.path.isdir(builtin_root):
-        return "No local data tree available"
-    return "Open a Tree item below"
+# ---------------------------------------------------------------------------
+# Workspace session: identity, preferences, scope, outputs, run history
+# ---------------------------------------------------------------------------
 
 
-def _build_full_user_data_inventory() -> str:
-    """Build a comprehensive file listing of all user-data roots for agent injection.
+@dataclass
+class WorkspaceSession:
+    """Everything one chat session needs to know about the user's workspace.
 
-    This produces the SAME content the sidebar tree shows but as a single text
-    block that can be set on the agent so its system prompt has full visibility
-    into mounted VM datasets.
+    Built once per session (off the event loop - it touches the filesystem) and
+    recomputed whenever the user changes their settings. Holding it in one
+    object keeps the sidebar, the agent's system prompt, the output directory
+    and the run registry from drifting apart, which is how the previous code
+    ended up describing one set of files to the user and another to the agent.
     """
-    sections: list[str] = []
 
-    user_data_host_path = os.getenv("BIOMNI_USER_DATA_HOST_PATH", "").strip()
-    user_data_path = os.getenv("BIOMNI_USER_DATA_PATH", "").strip()
+    identity: UserIdentity
+    prefs: WorkspacePrefs
+    prefs_key: str
+    store: PrefsStore
+    registry: RunRegistry
+    workspace_root: str | None
+    scope: ScopeResolution
+    output: OutputTarget
+    top_level_dirs: list[str] = field(default_factory=list)
+    inventory: str = ""
+    runs: list[RunRecord] = field(default_factory=list)
 
-    def _section(label: str, root: str) -> None:
-        result = scan_directory(root, max_depth=10)
-        if result.file_count == 0:
-            # A timed-out scan (0 files but bounded) must still tell the agent the
-            # path exists but wasn't indexed, so it enumerates on demand rather
-            # than concluding the workspace is empty.
-            if result.bounded:
-                sections.append(
-                    f"{label} ({root}) — listing unavailable (scan hit its time/size budget before "
-                    "any file was read; enumerate with os.listdir()/glob on the path)"
-                )
-            return
-        preview = result.files[:500]
-        tree_lines = _build_tree_preview_lines(preview, max_lines=300, max_depth=6)
-        section = f"{label} ({root}) — {result.count_label()} files:\n" + "\n".join(tree_lines)
-        if result.bounded:
-            # Tell the agent the listing is partial so it enumerates on demand
-            # (os.listdir/glob) rather than trusting this as the full inventory.
-            section += (
-                f"\n  ... workspace is large — only the first {len(preview)} files are listed "
-                "(scan bounded for responsiveness; use os.listdir()/glob on the path for the rest)"
-            )
-        elif result.file_count > len(preview):
-            section += f"\n  ... and {result.file_count - len(preview)} more files"
-        sections.append(section)
-
-    # --- User / AD Workbench data ---
-    if user_data_host_path:
-        ad_path = ""
-        if user_data_path and os.path.isdir(user_data_path):
-            ad_path = user_data_path
-        elif os.path.isdir(user_data_host_path):
-            ad_path = user_data_host_path
-        if ad_path:
-            _section("AD Workbench / User Data", ad_path)
-    else:
-        for env_name, root in _resolve_user_data_roots():
-            _section(_display_data_root_label(env_name), root)
-
-    return "\n\n".join(sections) if sections else ""
+    @property
+    def persistence_label(self) -> str:
+        return self.store.describe
 
 
-def _build_user_data_sidebar_elements() -> list[cl.Text]:
-    """Build tree elements for built-in data lake and configured user data roots.
+def _resolve_workspace_root() -> str | None:
+    """The user's workspace: the first configured user-data root that exists.
 
-    Tree order mirrors the overview:
-    1. AD Workbench Datasets (when BIOMNI_USER_DATA_HOST_PATH is defined)
-       or regular user-data roots otherwise.
-    2. Biomni-AD Datalake  (data_lake/biomniAD/)
-    3. Biomni Datalake     (data_lake/ root, excluding biomniAD)
-    Only entries with files are included.
+    Preferences, outputs and run records all hang off this one path, so it is
+    resolved through the same env precedence the rest of the UI already uses
+    rather than a second, subtly different rule.
     """
-    elements: list[cl.Text] = [cl.Text(name="Summary", content=_build_sidebar_overview_content(), display="page")]
+    for _env_name, root in _resolve_user_data_roots():
+        if os.path.isdir(root):
+            return root
+    return None
 
-    user_data_host_path = os.getenv("BIOMNI_USER_DATA_HOST_PATH", "").strip()
-    user_data_path = os.getenv("BIOMNI_USER_DATA_PATH", "").strip()
 
-    # --- User data / AD Workbench tree ---------------------------------------
-    if user_data_host_path:
-        # Use container-side mount for file counts; host path is the display label.
-        ad_path = ""
-        if user_data_path and os.path.isdir(user_data_path):
-            ad_path = user_data_path
-        elif os.path.isdir(user_data_host_path):
-            ad_path = user_data_host_path
-        if ad_path:
-            tree_content, total_files = _build_user_data_tree_content(ad_path)
-            if total_files > 0:
-                content = f"Path: {ad_path}\n\n{tree_content}"
-                elements.append(
-                    cl.Text(
-                        name=f"Tree [AD Workbench Datasets] ({_root_count_label(ad_path)})",
-                        content=content,
-                        display="page",
-                    )
-                )
+def _refresh_workspace_view(ws: WorkspaceSession) -> WorkspaceSession:
+    """Recompute everything derived from preferences. Blocking; run off-loop.
+
+    Scanning happens here and only here, and only over the folders the user
+    selected. With no selection this costs a single directory listing.
+    """
+    ws.scope = resolve_scope(ws.prefs, ws.workspace_root)
+    ws.output = resolve_output_dir(ws.prefs, workspace_root=ws.workspace_root)
+    # The output directory usually sits inside the workspace and gains a run
+    # folder per query; it is a destination, never an input, so keep it out of
+    # the picker and out of what the agent is told it can read.
+    ws.top_level_dirs = list_top_level_dirs(ws.workspace_root, exclude_paths=[ws.output.path])
+    ws.inventory = build_scope_inventory(ws.scope, ws.workspace_root, top_level_dirs=ws.top_level_dirs)
+    return ws
+
+
+def _build_workspace_session(session_id: str, header_source: object) -> WorkspaceSession:
+    """Resolve identity, load stored preferences and derive the session view.
+
+    Blocking (filesystem + preference load), so callers must run it in an
+    executor. Never raises: any failure degrades to defaults, because a user
+    who cannot load their settings should still get a working session.
+    """
+    identity = resolve_identity(header_source, session_id=session_id)
+    workspace_root = _resolve_workspace_root()
+    prefs_key = identity.scoped_key()
+
+    # An anonymous key is per-connection, so anything stored under it can never
+    # be read back - it would just accumulate orphaned directories on the state
+    # volume, one per page load. Persist only for an identified user, unless a
+    # deployment opts in (useful for local development, where there is no
+    # gateway but you still want to exercise the feature).
+    if identity.is_authenticated or env_flag("BIOMNI_ALLOW_ANONYMOUS_PERSISTENCE"):
+        store = build_prefs_store(workspace_root)
+        registry = build_run_registry(workspace_root)
     else:
-        for env_name, root in _resolve_user_data_roots():
-            tree_content, total_files = _build_user_data_tree_content(root)
-            if total_files > 0:
-                label = f"Tree [{_display_data_root_label(env_name)}] ({_root_count_label(root)})"
-                content = f"Path: {root}\n\n{tree_content}"
-                elements.append(cl.Text(name=label, content=content, display="page"))
+        store = NullPrefsStore("no authenticated user; set BIOMNI_ALLOW_ANONYMOUS_PERSISTENCE=true to override")
+        registry = RunRegistry(None)
 
-    # --- Built-in datalake trees ---------------------------------------------
-    builtin_root = _resolve_builtin_data_lake_root()
+    prefs = load_prefs(store, prefs_key)
 
-    # Biomni-AD Datalake
-    biomni_ad_root = os.path.join(builtin_root, "biomniAD")
-    if os.path.isdir(biomni_ad_root):
-        tree_content, total_files = _build_user_data_tree_content(biomni_ad_root)
-        if total_files > 0:
-            content = f"Path: {biomni_ad_root}\n\n{tree_content}"
-            elements.append(
-                cl.Text(
-                    name=f"Tree [Biomni-AD Datalake] ({_root_count_label(biomni_ad_root)})",
-                    content=content,
-                    display="page",
-                )
+    ws = WorkspaceSession(
+        identity=identity,
+        prefs=prefs,
+        prefs_key=prefs_key,
+        store=store,
+        registry=registry,
+        workspace_root=workspace_root,
+        scope=resolve_scope(prefs, workspace_root),
+        output=resolve_output_dir(prefs, workspace_root=workspace_root),
+    )
+    # Reconciling here (rather than at write time) is what turns a pod restart
+    # into an honest "interrupted" on the user's next visit.
+    ws.runs = registry.reconcile(prefs_key)
+    return _refresh_workspace_view(ws)
+
+
+def _output_dir_description(ws: WorkspaceSession) -> str:
+    """Help text for the output-directory field, including its warnings.
+
+    The two warnings used to live in the sidebar panel, and they are the only
+    part of it that was load-bearing: a user whose results are going somewhere
+    unwritable, or somewhere a restart will erase, has to be told before they
+    start a long run rather than after.
+    """
+    text = (
+        f"Where run results are written. Currently resolved to {ws.output.path} "
+        f"(source: {ws.output.source}). Leave as-is to keep the deployment default."
+    )
+    if not ws.output.writable:
+        text += f"\n\n⚠️ That directory is not writable. {ws.output.reason or ''}".rstrip()
+    elif ws.output.is_ephemeral:
+        text += (
+            "\n\n⚠️ Container-local storage: results are lost when the application restarts. "
+            "Set a path on a mounted volume, or ask an operator to configure BIOMNI_OUTPUT_ROOT."
+        )
+    if ws.persistence_label:
+        text += f"\n\nSettings are stored in {ws.persistence_label}."
+    return text
+
+
+def _workspace_settings_widgets(ws: WorkspaceSession) -> list[InputWidget]:
+    """Chat-settings controls for scope and output directory.
+
+    This dialog is also where the workspace *state* is reported, now that there
+    is no right-hand panel: the descriptions carry the active scope with its
+    file counts, anything selected that has since disappeared, and where outputs
+    resolve to. It is the one place a user opens when they want to know or
+    change any of that.
+
+    The folder multi-select is omitted entirely when the workspace has no
+    subdirectories - Chainlit's MultiSelect rejects an empty item list, and an
+    empty picker would be noise anyway.
+    """
+    widgets: list[InputWidget] = []
+    known = set(ws.top_level_dirs)
+
+    if ws.top_level_dirs:
+        description = (
+            "Only the selected folders are scanned and described to the agent. "
+            "Selecting large folders slows every session and dilutes the agent's attention, "
+            "so prefer the specific studies you are working on. "
+            "With nothing selected, the agent is told which folders exist and looks inside "
+            "them only when a task calls for it."
+        )
+        summaries = summarize_scope(ws.scope, ws.workspace_root)
+        if summaries:
+            active = ", ".join(f"{s.label} ({s.files_label()})" for s in summaries[:8])
+            if len(summaries) > 8:
+                active += f" and {len(summaries) - 8} more"
+            description += f"\n\nCurrently active: {active}."
+        if ws.scope.missing:
+            description += (
+                "\n\n⚠️ Selected but no longer present (deleted or renamed): " + ", ".join(ws.scope.missing) + "."
             )
-
-    # Biomni Datalake (root, excluding biomniAD)
-    if os.path.isdir(builtin_root):
-        lake = scan_directory(builtin_root, max_depth=10, exclude_top_subdirs={"biomniAD"})
-        if lake.file_count > 0:
-            preview = lake.files[:300]
-            tree_lines = _build_tree_preview_lines(preview, max_lines=70, max_depth=3)
-            lake_lines: list[str] = [
-                f"Directory structure preview (showing first {len(preview)} files)",
-                "",
-                *tree_lines,
-            ]
-            if lake.bounded:
-                lake_lines.append(f"... listing capped at {lake.count_label()} files (scan bounded for responsiveness)")
-            elif lake.file_count > len(preview):
-                lake_lines.append(f"... and {lake.file_count - len(preview)} more files")
-            content = f"Path: {builtin_root}\n\n" + "\n".join(lake_lines)
-            elements.append(
-                cl.Text(name=f"Tree [Biomni Datalake] ({lake.count_label()})", content=content, display="page")
+        widgets.append(
+            MultiSelect(
+                id="scope_folders",
+                label="Data folders the agent may use",
+                items=scope_choice_items(ws.top_level_dirs),
+                initial=[p for p in ws.prefs.scope_paths if p in known],
+                description=description,
             )
+        )
 
-    return elements
+    widgets.append(
+        Tags(
+            id="scope_extra_paths",
+            label="Additional paths (workspace-relative)",
+            initial=[p for p in ws.prefs.scope_paths if p not in known],
+            description="Sub-folders deeper than the top level, e.g. studyA/processed",
+        )
+    )
+
+    widgets.append(
+        TextInput(
+            id="output_dir",
+            label="Output directory",
+            initial=ws.prefs.output_dir or ws.output.path,
+            description=_output_dir_description(ws),
+        )
+    )
+
+    widgets.append(
+        Switch(
+            id="remember_settings",
+            label="Remember these settings for my next session",
+            initial=ws.prefs.remember,
+        )
+    )
+    return widgets
+
+
+def _apply_workspace_settings(ws: WorkspaceSession, settings: dict) -> tuple[WorkspaceSession, bool]:
+    """Fold submitted settings into preferences and recompute. Blocking.
+
+    Returns the session and whether the preferences were persisted, so the
+    caller can tell the user the truth about whether their choice will survive
+    the session (it will not when no writable store exists).
+    """
+    folders = settings.get("scope_folders") or []
+    extra = settings.get("scope_extra_paths") or []
+    if isinstance(folders, str):
+        folders = [folders]
+    if isinstance(extra, str):
+        extra = [extra]
+
+    ws.prefs.scope_paths = normalize_scope_entries([*folders, *extra], ws.workspace_root)
+
+    submitted_output = (settings.get("output_dir") or "").strip()
+    # The field is pre-filled with the resolved path, so an untouched form must
+    # not turn today's default into a pinned preference that would survive a
+    # deployment moving its volumes. Compare against what the deployment would
+    # resolve to with NO preference set - comparing against the currently
+    # resolved path would also match an already-pinned directory, silently
+    # unpinning it every time the user re-saved any other setting.
+    deployment_default = resolve_output_dir(replace(ws.prefs, output_dir=None), workspace_root=ws.workspace_root).path
+    if not submitted_output or submitted_output == deployment_default:
+        ws.prefs.output_dir = None
+    else:
+        ws.prefs.output_dir = submitted_output
+
+    ws.prefs.remember = bool(settings.get("remember_settings", True))
+    ws.prefs.email = ws.identity.email
+
+    persisted = False
+    if ws.prefs.remember:
+        persisted = ws.store.save(ws.prefs_key, ws.prefs)
+    else:
+        # Opting out must forget what was already stored, otherwise the old
+        # scope silently returns on the next visit and the toggle looks broken.
+        ws.store.delete(ws.prefs_key)
+
+    _refresh_workspace_view(ws)
+    return ws, persisted
+
+
+# There is deliberately no right-hand panel.
+#
+# Chainlit's element sidebar cannot be filled without being opened -
+# `ElementSidebar.set_elements` opens it on any non-empty list, and `set_title`
+# says so in its own docstring - so "show the workspace state on the right"
+# and "do not take a third of the screen on every session start" cannot both be
+# true. Between the two, the screen wins: reviewers asked three times for the
+# right side to stop appearing.
+#
+# Everything the panel carried now lives where the user is already looking when
+# they care about it:
+#
+#   * active scope and resolved output directory -> the ⚙️ Settings dialog,
+#     which is where they are changed anyway, plus the confirmation message
+#     posted to the chat on save,
+#   * where a finished run wrote its results -> the run's own completion
+#     message,
+#   * work that did not finish while the user was away -> a chat notice at
+#     session start, and only when there is some,
+#   * past conversations -> the thread list Chainlit renders on the left.
+
+
+# ---------------------------------------------------------------------------
+# Authentication and durable chat threads
+# ---------------------------------------------------------------------------
+#
+# Chainlit shows the conversation list on the left, and lets a user reopen an
+# old conversation, only when it has BOTH an authenticated user and a data
+# layer. Registering `header_auth_callback` is what turns the first one on; it
+# also makes Chainlit's notion of who is calling agree with the one the
+# preferences and run registry already use, so all three key off the same
+# string.
+#
+# Chainlit refuses to start with an auth callback and no CHAINLIT_AUTH_SECRET,
+# so the secret is resolved (and persisted) at import, before uvicorn boots.
+os.environ.setdefault("CHAINLIT_AUTH_SECRET", ensure_auth_secret(_resolve_workspace_root()))
+
+
+@cl.header_auth_callback
+def header_auth_callback(headers) -> cl.User | None:
+    """Identify the caller from the authentication gateway's headers.
+
+    Three outcomes, and the middle one is the reason this is not just a
+    passthrough:
+
+    * Gateway trusted and it named someone -> that person.
+    * Gateway trusted and it named nobody -> refuse. A deployment that declared
+      a gateway is in front and then received a request without identity headers
+      has a routing hole, and serving it anyway would hand the un-authenticated
+      caller whichever account the fallback picks.
+    * No gateway configured -> a single shared local user, matching how the rest
+      of the app already behaves when `BIOMNI_TRUST_AUTH_HEADERS` is off. This
+      grants no access that was not already open: with no gateway the app has no
+      front door at all. What it does mean is that everyone reaching it shares
+      one history, which is why persistence stays off unless a deployment opts
+      in with `BIOMNI_ALLOW_ANONYMOUS_PERSISTENCE`.
+    """
+    identity = resolve_identity(headers)
+    if not identity.is_authenticated and trust_auth_headers():
+        logger.warning("rejecting a session with no gateway identity headers (BIOMNI_TRUST_AUTH_HEADERS is on)")
+        return None
+    return cl.User(
+        identifier=identity.scoped_key(),
+        display_name=identity.display_name,
+        metadata={
+            "source": identity.source,
+            "email": identity.email or "",
+            "workspace_id": identity.workspace_id or "",
+        },
+    )
+
+
+@cl.data_layer
+def data_layer():
+    """Durable storage for conversations, or ``None`` to keep them in memory.
+
+    Enabled only where the storage key is stable enough for a user to find their
+    own threads again: behind a gateway, or in the explicitly opted-in
+    single-user mode. Under a per-connection anonymous key every page load would
+    start a fresh identity, so the sidebar would fill with orphaned threads that
+    nobody could ever reopen.
+    """
+    if not (trust_auth_headers() or single_user_mode()):
+        logger.info(
+            "chat history is disabled: no authentication gateway is configured. "
+            "Set BIOMNI_TRUST_AUTH_HEADERS (behind a gateway) or "
+            "BIOMNI_ALLOW_ANONYMOUS_PERSISTENCE (single-user deployments) to enable it."
+        )
+        return None
+    return build_data_layer(_resolve_workspace_root())
 
 
 # ---------------------------------------------------------------------------
@@ -901,7 +767,7 @@ async def run_in_executor(fn, *args):
 
     The caller's context is captured *here* (in the event-loop thread) and
     replayed inside the worker, so correlation ids (session_id / run_id)
-    propagate into agent-side logs — executors do not copy contextvars on their
+    propagate into agent-side logs - executors do not copy contextvars on their
     own. Capturing inside the worker would snapshot its empty context instead.
     """
     ctx = capture_context()
@@ -910,14 +776,26 @@ async def run_in_executor(fn, *args):
 
 
 async def stream_langgraph(agent_app, inputs, config):
-    """Yield LangGraph state dicts asynchronously from a sync stream."""
+    """Yield LangGraph state dicts asynchronously from a sync stream.
+
+    The graph runs in a worker thread, which cancellation cannot reach: an
+    asyncio task that is cancelled stops *reading*, and a thread that nobody
+    reads goes right on calling the model. Stop therefore used to end the
+    conversation while the run it stopped kept working - for as long as the
+    whole plan took. The flag below is the cooperative half of the stop: the
+    producer checks it between graph nodes, so the run ends after the step it
+    was already in.
+    """
     queue: asyncio.Queue = asyncio.Queue()
     loop = asyncio.get_event_loop()
+    stop = threading.Event()
 
     def _producer():
         try:
             for state in agent_app.stream(inputs, stream_mode="values", config=config):
                 asyncio.run_coroutine_threadsafe(queue.put(state), loop)
+                if stop.is_set():
+                    break
         finally:
             asyncio.run_coroutine_threadsafe(queue.put(None), loop)  # sentinel
 
@@ -928,11 +806,17 @@ async def stream_langgraph(agent_app, inputs, config):
     ctx = capture_context()
     executor.submit(ctx.run, _producer)
 
-    while True:
-        state = await queue.get()
-        if state is None:
-            break
-        yield state
+    try:
+        while True:
+            state = await queue.get()
+            if state is None:
+                break
+            yield state
+    finally:
+        stop.set()
+        # Not waited on: the worker may be mid-node, and holding the event loop
+        # for it would freeze the UI. It exits at the next check.
+        executor.shutdown(wait=False)
 
 
 # ---------------------------------------------------------------------------
@@ -949,7 +833,7 @@ async def set_chat_profiles():
         cl.ChatProfile(
             name="AD1",
             markdown_description=(
-                "**Hi, I'm Biomni-AD — Your Alzheimer's Disease Co-Scientist**\n\n"
+                "**Hi, I'm Biomni-AD - Your Alzheimer's Disease Co-Scientist**\n\n"
                 "What would you like to discover about Alzheimer's today?"
             ),
             icon="/public/avatars/ad1.png",
@@ -957,7 +841,7 @@ async def set_chat_profiles():
         cl.ChatProfile(
             name="A1",
             markdown_description=(
-                "**A1 — General-Purpose Biomedical Agent**\n\n"
+                "**A1 - General-Purpose Biomedical Agent**\n\n"
                 "Broad biomedical research across genomics, proteomics, "
                 "single-cell, clinical data, and more."
             ),
@@ -1036,9 +920,107 @@ async def set_starters():
 @cl.on_chat_start
 async def on_chat_start():
     """Initialize the selected agent and greet the user."""
+    await _start_session()
+
+
+@cl.on_chat_resume
+async def on_chat_resume(thread: dict):
+    """Reopen a stored conversation and make it live again.
+
+    Chainlit replays the persisted messages into the UI by itself; what it
+    cannot do is rebuild the *server* side, so without this handler an old
+    thread is read-only. Everything a session needs - the agent, the workspace
+    scope, the settings panel - is constructed here exactly as on a fresh start,
+    plus the conversation history so the agent knows what was already said.
+
+    If the run that filled this conversation is still going - the user closed
+    the tab and came back - it is redirected into this connection, so the rest
+    of it streams in here instead of into a socket nobody is holding.
+    """
+    history = _history_from_thread(thread)
+    reattached = await _follow_live_run(thread.get("id"))
+    emit_event(
+        "chat_resume",
+        steps=len(thread.get("steps") or []),
+        history_turns=len(history),
+        reattached=reattached,
+    )
+    await _start_session(resumed_history=history)
+
+
+async def _follow_live_run(thread_id: str | None) -> bool:
+    """Point a still-running conversation at this connection. True if one was.
+
+    Redirecting the emitter is enough for the work itself: the rest of the run
+    arrives as ordinary streamed steps. Saying so is left to
+    :func:`_announce_live_run`, which cannot run yet - see there.
+    """
+    try:
+        if not LIVE_RUNS.reattach(thread_id, _websocket_session()):
+            return False
+        asyncio.create_task(_announce_live_run())
+        return True
+    except Exception:
+        logger.warning("Could not follow the live run for thread %s", thread_id, exc_info=True)
+        return False
+
+
+# How long to let the browser finish restoring a conversation before telling it
+# the conversation is still busy.
+_RESUME_ANNOUNCE_DELAY_S = 1.0
+
+
+async def _announce_live_run() -> None:
+    """Put a reopened conversation back into its running state.
+
+    Deferred, and that is the whole subtlety: Chainlit sends the stored
+    transcript to the browser *after* the resume handler returns, and the page
+    settles into an idle state as it renders it. Anything said from inside the
+    handler is undone a moment later, which is exactly how this looked - live
+    steps streaming in under an input box that believed nothing was happening,
+    so Stop was not offered.
+
+    ``task_start`` restores the running state and with it the Stop button, which
+    :func:`on_stop` makes good on. Its ``task_end`` comes from the run's own
+    handler when it finishes, through the emitter that was just redirected.
+    """
+    try:
+        await asyncio.sleep(_RESUME_ANNOUNCE_DELAY_S)
+        await cl.context.emitter.task_start()
+        # send_toast is a coroutine on a websocket connection and a no-op stub
+        # off one; only the first is awaitable.
+        toast: object = cl.context.emitter.send_toast("This conversation is still running. Output will continue below.")
+        if inspect.isawaitable(toast):
+            await toast
+    except Exception:
+        logger.warning("Could not announce the live run", exc_info=True)
+
+
+def _history_from_thread(thread: dict) -> list[dict]:
+    """Reconstruct the agent-facing conversation from a persisted thread.
+
+    Only the user's questions and the assistant's answers: the intermediate
+    tool/code steps are in the transcript for the human to read, but replaying
+    them into the model's context would cost a fortune and teach it nothing it
+    cannot see in the answer.
+    """
+    role_by_type = {"user_message": "user", "assistant_message": "assistant"}
+    history: list[dict] = []
+    for step in thread.get("steps") or []:
+        role = role_by_type.get(step.get("type") or "")
+        content = step.get("output") or ""
+        if role and content:
+            history.append({"role": role, "content": content})
+    return history
+
+
+async def _start_session(resumed_history: list[dict] | None = None) -> None:
+    """Build everything one chat session needs. Shared by start and resume."""
     # One correlation id per chat session, bound for the lifetime of this
     # handler so agent-init logs carry it. on_message rebinds it per message.
-    thread_id = uuid.uuid4().hex
+    # Chainlit's own thread id is preferred when threads are being persisted, so
+    # a log line can be traced back to the conversation the user can reopen.
+    thread_id = _chainlit_thread_id() or uuid.uuid4().hex
     set_session_id(thread_id)
 
     # Determine agent type: CLI env var > chat profile selection > default AD1
@@ -1049,7 +1031,7 @@ async def on_chat_start():
         agent_type = "a1" if str(profile).upper() == "A1" else "ad1"
 
     label = "AD1" if agent_type == "ad1" else "A1"
-    emit_event("chat_start", agent_type=agent_type, llm=DEFAULT_LLM)
+    emit_event("chat_start", agent_type=agent_type, llm=DEFAULT_LLM, resumed=resumed_history is not None)
     try:
         if agent_type == "ad1":
             from biomni.agent.ad1 import AD1
@@ -1061,43 +1043,215 @@ async def on_chat_start():
             agent = await run_in_executor(lambda: A1(llm=DEFAULT_LLM))
         cl.user_session.set("agent", agent)
         cl.user_session.set("agent_type", agent_type)
-        cl.user_session.set("history", [])
+        cl.user_session.set("history", resumed_history or [])
         cl.user_session.set("thread_id", thread_id)
-        cl.user_session.set("dataset_listing", _build_dataset_listing(agent))
-        cl.user_session.set("dataset_panel_shown", False)
-
-        # Build full user-data inventory and inject it into the agent so its
-        # system prompt has the same visibility as the sidebar tree.
-        inventory_text = await run_in_executor(_build_full_user_data_inventory)
-        if inventory_text:
-            agent.user_data_inventory = inventory_text
     except Exception as exc:
         logger.exception("Failed to initialize %s agent", label)
         await cl.Message(content=f"Failed to initialize {label}: {exc}").send()
         return
 
-    # Render local-data panel in the native sidebar at startup, keeping the
-    # center welcome/search screen unchanged. The tree build walks the user-data
-    # mount, so it MUST run in a worker thread — running it inline would block
-    # the asyncio event loop for the duration of the walk, starving the /healthz
-    # liveness probe and getting the pod restarted on a large workspace. Guarded
-    # so a scan/sidebar hiccup degrades to no panel rather than failing the
-    # already-usable session.
+    # Resolve identity, preferences, data scope and output directory, then tell
+    # the agent what it may look at. All of it touches the filesystem, so it
+    # MUST run in a worker thread: doing it inline would block the asyncio event
+    # loop, starving the /healthz liveness probe and getting the pod restarted.
+    # Guarded so a settings/scan hiccup degrades to a default session rather
+    # than failing an otherwise usable one.
+    ws = None
     try:
-        sidebar_content = cl.user_session.get("dataset_listing") or _build_dataset_listing(agent)
-        sidebar_elements = await run_in_executor(_build_user_data_sidebar_elements)
-        if not sidebar_elements:
-            sidebar_elements = [cl.Text(name="Local Datasets", content=sidebar_content)]
-        await cl.ElementSidebar.set_title("Local Datasets")
-        await cl.ElementSidebar.set_elements(sidebar_elements)
-        cl.user_session.set("dataset_panel_shown", True)
+        ws = await run_in_executor(_build_workspace_session, thread_id, _session_header_source())
+        cl.user_session.set("workspace", ws)
+        _apply_scope_to_agent(agent, ws)
+        emit_event(
+            "workspace_session",
+            identity_source=ws.identity.source,
+            has_workspace=bool(ws.workspace_root),
+            scope_folders=len(ws.scope.roots),
+            scope_is_default=ws.scope.is_default,
+            output_source=ws.output.source,
+            output_ephemeral=ws.output.is_ephemeral,
+            prefs_persisted=not isinstance(ws.store, NullPrefsStore),
+            # Earlier runs are reported here and nowhere else. Every run has a
+            # conversation in the list on the left holding everything it
+            # produced - including work that carried on after the browser was
+            # closed - so opening a new chat with a summary of a different one
+            # interrupted the user with what a click already shows them. The
+            # count stays as an operational signal.
+            unfinished_runs=len(ws.registry.unfinished(ws.runs)),
+        )
     except Exception:
-        logger.exception("Failed to render local-data sidebar (session remains usable)")
+        logger.exception("Failed to resolve workspace session (continuing with defaults)")
+
+    # Expose the scope / output controls.
+    if ws is not None:
+        try:
+            await cl.ChatSettings(_workspace_settings_widgets(ws)).send()
+        except Exception:
+            logger.exception("Failed to render workspace settings (session remains usable)")
+
+
+def _chainlit_thread_id() -> str | None:
+    """Chainlit's id for the conversation, when there is a session to ask."""
+    try:
+        return getattr(cl.context.session, "thread_id", None)
+    except Exception:
+        return None
+
+
+def _thread_key() -> str:
+    """The conversation id used for run bookkeeping, from either lifecycle path.
+
+    Always set by _start_session; the fallback only matters if a message
+    somehow arrives before one ran, and it keeps register/release agreeing on a
+    key either way.
+    """
+    return cl.user_session.get("thread_id") or "unknown"
+
+
+def _websocket_session():
+    """The connection this handler is running on, or None if there is none.
+
+    The object itself is what a detached run needs: redirecting its ``emit`` is
+    how a reopened tab starts receiving output again (see chainlit_ui.live_runs).
+    """
+    try:
+        return cl.context.session
+    except Exception:
+        return None
+
+
+def _session_header_source() -> object:
+    """The gateway headers for this session, or None outside a request context.
+
+    Chainlit keeps the connection's WSGI/ASGI environ on the session; that is
+    where an authentication gateway's forwarded headers arrive. Best-effort by
+    design - with no gateway (local dev, today's deployment) this yields None
+    and identity falls back to an anonymous, session-scoped key.
+    """
+    try:
+        session = cl.context.session
+    except Exception:
+        return None
+    return getattr(session, "environ", None) or getattr(session, "http_headers", None)
+
+
+def _apply_scope_to_agent(agent, ws: WorkspaceSession) -> None:
+    """Point the agent at the selected scope and output directory.
+
+    ``user_data_inventory`` is what the system prompt renders for the data root
+    (see A1._generate_system_prompt), ``scope_roots`` narrows the retriever's
+    user-data index so it stops surfacing files the user excluded, and
+    ``runs_root`` makes the agent's own run directories land where the session
+    resolved outputs to (A1._resolve_runs_root) instead of the process cwd.
+    """
+    agent.user_data_inventory = ws.inventory or ""
+    agent.scope_roots = list(ws.scope.roots)
+    agent.runs_root = ws.output.path
+
+
+async def _on_stale_plan_action(action: cl.Action) -> None:
+    """Answer a click on a plan button that nothing is waiting for.
+
+    Reached only once the ask behind those buttons is gone - a restart, a
+    rollout, or the 300s timeout - because a live ask is resolved by the browser
+    without consulting this registry. Without a handler Chainlit returns a bare
+    "Not Found: No callback found for action approve", which looks like the app
+    is broken at the exact moment the user is trying to authorise work.
+    """
+    logger.info("stale plan action clicked: %s", getattr(action, "name", "?"))
+    await cl.Message(content=STALE_PLAN_ACTION_NOTE).send()
+
+
+for _plan_action_name, _ in PLAN_ACTIONS:
+    cl.action_callback(_plan_action_name)(_on_stale_plan_action)
+
+
+@cl.on_settings_update
+async def on_settings_update(settings: dict):
+    """Apply a scope / output-directory change and re-render everything from it."""
+    ws = cl.user_session.get("workspace")
+    agent = cl.user_session.get("agent")
+    if ws is None:
+        return
+
+    try:
+        ws, persisted = await run_in_executor(_apply_workspace_settings, ws, settings)
+    except Exception:
+        logger.exception("Failed to apply workspace settings")
+        await cl.Message(content="⚠️ Could not apply those settings; the previous scope is still active.").send()
+        return
+
+    cl.user_session.set("workspace", ws)
+    if agent is not None:
+        _apply_scope_to_agent(agent, ws)
+
+    emit_event(
+        "workspace_settings_updated",
+        scope_folders=len(ws.scope.roots),
+        scope_is_default=ws.scope.is_default,
+        output_source=ws.output.source,
+        persisted=persisted,
+    )
+
+    if ws.scope.roots:
+        # With no panel to consult, this message is the only place the user is
+        # told what their selection actually costs, so it carries the file
+        # counts rather than just the folder names.
+        summaries = await run_in_executor(summarize_scope, ws.scope, ws.workspace_root)
+        shown = summaries[:8]
+        scope_text = ", ".join(f"`{s.label}` ({s.files_label()})" for s in shown)
+        if len(summaries) > len(shown):
+            scope_text += f" and {len(summaries) - len(shown)} more"
+        summary = f"**Data scope updated.** The agent will use {scope_text}."
+    else:
+        summary = "**Data scope cleared.** The agent will only look inside workspace folders a task points it to."
+
+    summary += f"\n\nOutputs: `{ws.output.path}`"
+    if not ws.output.writable:
+        summary += f"\n\n⚠️ That directory is not writable. {ws.output.reason or ''}".rstrip()
+    elif ws.output.is_ephemeral:
+        summary += "\n\n⚠️ Container-local storage: results are lost when the application restarts."
+
+    if ws.prefs.remember and not persisted:
+        summary += "\n\n_Note: settings could not be saved, so they apply to this session only._"
+
+    await cl.Message(content=summary).send()
 
 
 # ---------------------------------------------------------------------------
 # Message handler
 # ---------------------------------------------------------------------------
+
+
+async def _persist_message_uploads(message: cl.Message) -> list[str]:
+    """Copy a message's attachments into the user's output directory.
+
+    Returns the path to hand the agent for each one - the durable copy where
+    that could be made, Chainlit's temporary one otherwise.
+
+    Chainlit keeps uploads in a scratch tree it deletes when the session ends
+    (and wipes entirely on shutdown), under a UUID filename. Left alone, an
+    attachment is unreachable by the user's next visit and the agent never even
+    learns what the file was called. Copying is blocking, so it runs off the
+    event loop.
+    """
+    elements = [e for e in (message.elements or []) if getattr(e, "path", None)]
+    if not elements:
+        return []
+
+    sources: list[tuple[str, str | None]] = [(str(e.path), getattr(e, "name", None)) for e in elements]
+    ws = cl.user_session.get("workspace")
+    if ws is None or not ws.output.writable:
+        return [path for path, _ in sources]
+
+    try:
+        destination = uploads_dir(ws.output.path)
+        stored = await run_in_executor(store_uploads, sources, destination)
+    except Exception:
+        logger.warning("Could not store uploads; using the temporary copies", exc_info=True)
+        return [path for path, _ in sources]
+
+    emit_event("uploads_stored", count=len(stored), durable=sum(1 for p in stored if p.startswith(destination)))
+    return stored
 
 
 def _usage_snapshot(agent) -> dict | None:
@@ -1149,7 +1303,25 @@ async def on_message(message: cl.Message):
         try:
             await _process_message(message)
         finally:
+            # Unconditional: the handler may have been cancelled or raised, and
+            # a conversation left registered as live would have the next tab
+            # that opens it wait on a run that is not there.
+            LIVE_RUNS.release(_thread_key(), _websocket_session())
             _emit_run_telemetry(agent, usage_before, started)
+
+
+@cl.on_stop
+async def on_stop():
+    """Make Stop work from a tab that did not start the run.
+
+    Chainlit cancels the clicking session's own task before calling this. For a
+    conversation reopened while its run continued in the background that task is
+    not the run, so without this the button would report a stop that never
+    happened. Cancelling the run makes its handler unwind normally: the record
+    closes out and the page is told the task ended.
+    """
+    if LIVE_RUNS.cancel(_thread_key()):
+        emit_event("run_stopped_by_user")
 
 
 async def _process_message(message: cl.Message):
@@ -1161,10 +1333,28 @@ async def _process_message(message: cl.Message):
         return
 
     prompt = message.content
-    if message.elements:
-        file_paths = [e.path for e in message.elements if hasattr(e, "path") and e.path]
-        if file_paths:
-            prompt += "\n\nUser uploaded these files:\n" + "\n".join(f"- {p}" for p in file_paths)
+    file_paths = await _persist_message_uploads(message)
+    if file_paths:
+        prompt += "\n\nUser uploaded these files:\n" + "\n".join(f"- {p}" for p in file_paths)
+
+    history = cl.user_session.get("history", [])
+
+    # ------------------------------------------------------------------
+    # Phase 0: Triage - can this be answered without the pipeline?
+    # ------------------------------------------------------------------
+    # "Which GWAS files do I have?" should not cost a resource-retrieval pass,
+    # a generated plan and an approval click. Runs before the phases below
+    # precisely so a direct answer skips them: they exist to set up an analysis
+    # that is not going to happen. The model makes the call, biased towards
+    # planning, and any failure falls through to the plan path.
+    answer = await _quick_answer(agent, prompt, history)
+    if answer:
+        await cl.Message(content=answer).send()
+        cl.user_session.set(
+            "history",
+            [*history, {"role": "user", "content": prompt}, {"role": "assistant", "content": answer}],
+        )
+        return
 
     # ------------------------------------------------------------------
     # Phase 1: AD context injection (AD1 only)
@@ -1179,26 +1369,32 @@ async def _process_message(message: cl.Message):
     # ------------------------------------------------------------------
     # Phase 2: Tool retrieval
     # ------------------------------------------------------------------
+    selected_data_lake: list[str] = []
     if getattr(agent, "use_tool_retriever", False):
         async with cl.Step(name="🔍 Selecting Resources", type="retrieval", show_input=False) as step:
             try:
                 resources = await run_in_executor(agent._prepare_resources_for_retrieval, prompt)
                 if resources:
+                    selected_data_lake = resources.get("data_lake", [])
                     await run_in_executor(agent.update_system_prompt_with_selected_resources, resources)
-                    tools_n = len(resources.get("tools", []))
-                    data_n = len(resources.get("data_lake", []))
-                    libs_n = len(resources.get("libraries", []))
-                    knowhow_n = len(resources.get("know_how", []))
-                    total = tools_n + data_n + libs_n + knowhow_n
-                    step.output = (
-                        f"Selected {total} resources: "
-                        f"🔧 {tools_n} tools, "
-                        f"📊 {data_n} datasets, "
-                        f"⚙️ {libs_n} libraries, "
-                        f"📚 {knowhow_n} know-how documents."
+                    # Counts go to the log, not the transcript. This step used to
+                    # announce things like "91 datasets", which reads as though
+                    # the agent had loaded 91 datasets for the question. It had
+                    # not: these are candidate references made available to the
+                    # model, and the number is an artefact of how many entries
+                    # the retriever considered relevant. The data that actually
+                    # matters is the data the plan commits to, which the plan
+                    # itself now states.
+                    emit_event(
+                        "resources_selected",
+                        tools=len(resources.get("tools", [])),
+                        datasets=len(resources.get("data_lake", [])),
+                        libraries=len(resources.get("libraries", [])),
+                        know_how=len(resources.get("know_how", [])),
                     )
+                    step.output = "Matched the available tools and data references to your question."
                 else:
-                    step.output = "No resources selected; proceeding with full tool set."
+                    step.output = "Using the full tool set."
             except Exception as exc:
                 logger.warning("Tool retrieval failed; falling back to full tool set", exc_info=True)
                 step.output = f"⚠️ Tool retrieval failed ({exc}); proceeding with all tools."
@@ -1206,7 +1402,7 @@ async def _process_message(message: cl.Message):
     # ------------------------------------------------------------------
     # Phase 3: Interactive planning
     # ------------------------------------------------------------------
-    prompt = await _interactive_planning(agent, prompt, agent_type=agent_type)
+    prompt = await _interactive_planning(agent, prompt, agent_type=agent_type, selected_data_lake=selected_data_lake)
     if prompt is None:
         # User cancelled
         await cl.Message(content="Execution cancelled.").send()
@@ -1215,21 +1411,63 @@ async def _process_message(message: cl.Message):
     # ------------------------------------------------------------------
     # Phase 4: Stream agent execution
     # ------------------------------------------------------------------
-    history = cl.user_session.get("history", [])
     thread_id = cl.user_session.get("thread_id", "42")
 
-    # Pre-create run directory so OUTPUT_DIR is available during code execution.
+    # From here on the work is detachable: Chainlit keeps the task alive when
+    # the websocket drops, and every step is persisted as it happens, so
+    # closing the browser costs nothing. Claiming the conversation lets a tab
+    # that reopens it pick the output back up live (on_chat_resume). Deliberately
+    # after the plan gate: an unanswered approval is not work in progress.
+    LIVE_RUNS.register(_thread_key(), _websocket_session(), asyncio.current_task())
+
+    # Pre-create the run directory so OUTPUT_DIR is available during code
+    # execution. The root comes from the session's resolved output target
+    # (user preference -> BIOMNI_OUTPUT_ROOT -> workspace -> cwd/runs) rather
+    # than being hardcoded to the working directory, so results land somewhere
+    # the user can reach after the pod restarts.
+    ws = cl.user_session.get("workspace")
+    _run_id = build_run_id(prompt)
+    _current_run_dir = None
     try:
-        _run_id = build_run_id(prompt)
-        _runs_root = os.path.abspath(os.path.join(os.getcwd(), "runs"))
+        _runs_root = ws.output.path if ws is not None else os.path.abspath(os.path.join(os.getcwd(), "runs"))
         os.makedirs(_runs_root, exist_ok=True)
         _current_run_dir = os.path.join(_runs_root, _run_id)
         os.makedirs(_current_run_dir, exist_ok=True)
         agent._current_run_dir = _current_run_dir
         os.environ["BIOMNI_OUTPUT_PATH"] = _current_run_dir
-    except Exception:
-        logger.warning("Could not pre-create run directory", exc_info=True)
+    except OSError:
+        # Reset rather than leave it pointing at a path that was never created
+        # (e.g. the outer makedirs succeeds but the run-id subdirectory fails -
+        # a stale same-named file, a quota limit) - otherwise that phantom path
+        # is what gets persisted as this run's output_dir below.
         _current_run_dir = None
+        logger.warning("Could not pre-create run directory under %s", _runs_root, exc_info=True)
+        await cl.Message(
+            content=(
+                f"⚠️ Could not write to the output directory `{_runs_root}`. "
+                "Results may not be saved - set a writable path in ⚙️ Settings."
+            )
+        ).send()
+    except Exception:
+        _current_run_dir = None
+        logger.warning("Could not pre-create run directory", exc_info=True)
+
+    # Record the run durably before it starts, so a user who closes the tab (or
+    # a pod that restarts mid-run) still has a trace of it next session.
+    record = None
+    if ws is not None and ws.registry.enabled:
+        try:
+            record = ws.registry.start(
+                ws.prefs_key,
+                _run_id,
+                prompt=prompt,
+                agent_type=agent_type,
+                output_dir=_current_run_dir,
+                session_id=thread_id,
+                workspace_id=ws.identity.workspace_id,
+            )
+        except Exception:
+            logger.warning("Could not record run start", exc_info=True)
 
     # Snapshot files before execution (cwd + data root) to detect new outputs.
     initial_files = get_all_files(os.getcwd())
@@ -1237,7 +1475,33 @@ async def _process_message(message: cl.Message):
     if _data_root and os.path.isdir(_data_root):
         initial_files |= get_all_files(_data_root)
 
-    final_state = await _stream_execution(agent, prompt, history, thread_id)
+    # Default to the pessimistic outcome and upgrade only on success. Closing
+    # the tab or a SIGTERM raises asyncio.CancelledError, which is NOT an
+    # Exception subclass, so it bypasses the handler below and lands straight in
+    # the finally block - starting from "completed" would durably record an
+    # abandoned run as finished, the exact false positive the registry exists to
+    # prevent, and reconcile() would never correct a terminal record.
+    run_status, run_error = "interrupted", "the run was cancelled before it finished"
+    try:
+        final_state = await _stream_execution(
+            agent,
+            prompt,
+            history,
+            thread_id,
+            on_heartbeat=(lambda: ws.registry.heartbeat(ws.prefs_key, record)) if record is not None else None,
+        )
+        run_status, run_error = "completed", None
+    except Exception as exc:
+        # Close the record out before the exception propagates, otherwise the
+        # run stays "running" until a later session reconciles it as stale.
+        run_status, run_error = "failed", str(exc)
+        raise
+    finally:
+        if record is not None:
+            try:
+                ws.registry.finish(ws.prefs_key, record, status=run_status, error=run_error)
+            except Exception:
+                logger.warning("Could not record run completion", exc_info=True)
 
     # Update conversation history with the user prompt and agent response
     if final_state:
@@ -1270,7 +1534,7 @@ async def _tick_step_timer(step: cl.Step, language: str, code: str, started: flo
 
     A single code execution can block for up to ``timeout_seconds`` with no
     streamed output; without this the step appears hung. Cancelled when the
-    observation arrives. Best-effort — any UI error just stops the timer.
+    observation arrives. Best-effort - any UI error just stops the timer.
     """
     try:
         while True:
@@ -1287,7 +1551,11 @@ async def _tick_step_timer(step: cl.Step, language: str, code: str, started: flo
 
 
 async def _stream_execution(
-    agent, prompt: str, history: list[dict] | None = None, thread_id: str = "42"
+    agent,
+    prompt: str,
+    history: list[dict] | None = None,
+    thread_id: str = "42",
+    on_heartbeat=None,
 ) -> dict | None:
     """Stream the LangGraph ReAct loop and display steps in Chainlit."""
     # Build full message list from conversation history so the agent has context
@@ -1318,6 +1586,9 @@ async def _stream_execution(
         interval=_HEARTBEAT_SECONDS,
         logger=logger,
         status=lambda: {"step": getattr(agent, "_react_step", None)},
+        # Advance the durable run record on the same cadence, so a later session
+        # can tell a slow-but-alive run from one whose process died.
+        on_tick=on_heartbeat,
     ):
         async for state in stream_langgraph(agent.app, inputs, config):
             final_state = state
@@ -1428,14 +1699,27 @@ async def _cancel_task(task: asyncio.Task) -> None:
 
 
 async def _display_images(observation: str):
-    """Scan observation text for image file paths and display them."""
+    """Scan observation text for image file paths and display them.
+
+    One plot is usually named more than once in a single observation - the
+    script prints the absolute path it saved to, and then the file turns up
+    again in a listing or a summary line - so the same figure was posted twice,
+    and twice again in the stored transcript. Matches are resolved and
+    de-duplicated within the observation; a genuinely regenerated file in a
+    later step is a later observation and still shown.
+    """
     pattern = r"(\S+?(?:" + "|".join(re.escape(e) for e in SUPPORTED_IMAGE_EXTENSIONS) + r"))"
+    shown: set[str] = set()
     for match in re.findall(pattern, observation, re.IGNORECASE):
         fp = match.strip("\"'")
         # Resolve relative or absolute path
         candidates = [fp, os.path.join(os.getcwd(), fp)]
         for candidate in candidates:
             if os.path.isfile(candidate):
+                resolved = os.path.realpath(candidate)
+                if resolved in shown:
+                    break
+                shown.add(resolved)
                 try:
                     image = cl.Image(path=candidate, name=os.path.basename(candidate), display="inline")
                     await cl.Message(content="", elements=[image]).send()
@@ -1460,15 +1744,16 @@ async def _save_run_artifacts_for_agent(
     initial_files: set,
     topic: str | None = None,
 ):
-    """Save run artifacts to ./runs/ for any agent and notify the user."""
+    """Save run artifacts to the session's output directory and notify the user."""
     # Reuse the pre-created run directory if the agent already has one set
     # (created before streaming so OUTPUT_DIR was available during execution).
     if hasattr(agent, "_current_run_dir") and agent._current_run_dir:
         current_run_dir = agent._current_run_dir
         run_id = os.path.basename(current_run_dir)
     else:
+        ws = cl.user_session.get("workspace")
         run_id = build_run_id(topic)
-        runs_root = os.path.abspath(os.path.join(os.getcwd(), "runs"))
+        runs_root = ws.output.path if ws is not None else os.path.abspath(os.path.join(os.getcwd(), "runs"))
         os.makedirs(runs_root, exist_ok=True)
         current_run_dir = os.path.join(runs_root, run_id)
         os.makedirs(current_run_dir, exist_ok=True)
@@ -1494,4 +1779,4 @@ async def _save_run_artifacts_for_agent(
 # ---------------------------------------------------------------------------
 
 # Run-id / file-snapshot helpers now live in biomni.artifact so that the agent
-# and the UI use the same exclude list — see the imports at the top of the file.
+# and the UI use the same exclude list - see the imports at the top of the file.

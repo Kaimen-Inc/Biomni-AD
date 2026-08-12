@@ -1,8 +1,8 @@
 """Bounded, cached filesystem scanning for workspace inventories.
 
 Agent bootstrap and the Chainlit sidebar need a picture of the user's workspace
-(file tree, counts, extensions). The naive approach — ``os.walk`` the whole tree
-on every chat start — is fine for a handful of files but catastrophic for a
+(file tree, counts, extensions). The naive approach - ``os.walk`` the whole tree
+on every chat start - is fine for a handful of files but catastrophic for a
 large workspace on a network-backed mount (Azure Files / blobfuse), where every
 ``readdir``/``stat`` is a round-trip. A multi-minute walk on the asyncio event
 loop wedges the whole server: the ``/healthz`` liveness probe cannot be served,
@@ -22,7 +22,7 @@ tree at most once instead of ~4 times.
 When either bound trips, the scan sets ``truncated`` / ``timed_out`` and reports
 counts as a *floor* (``file_count`` means "at least this many"). Callers should
 render such totals with a trailing ``+`` and a note rather than as exact figures
-— see :meth:`ScanResult.count_label`.
+- see :meth:`ScanResult.count_label`.
 """
 
 from __future__ import annotations
@@ -75,7 +75,7 @@ def _int_env(name: str, default: int) -> int:
         logger.warning("invalid %s=%r; using default %d", name, raw, default)
         return default
     # <=0 is rejected on purpose: the bounds exist to keep scans finite, so
-    # "0"/"unlimited" must not silently disable the guard — fall back to default.
+    # "0"/"unlimited" must not silently disable the guard - fall back to default.
     if value <= 0:
         logger.warning("%s=%r is <=0; ignoring (guard cannot be disabled), using default %d", name, raw, default)
         return default
@@ -123,7 +123,7 @@ class ScanResult:
 
     READ-ONLY: instances are cached and handed to multiple threads by reference
     (see :func:`scan_directory`). Never mutate ``files`` / ``top_level_counts`` /
-    ``extension_counts`` in place — copy first (``list(...)`` / ``dict(...)``).
+    ``extension_counts`` in place - copy first (``list(...)`` / ``dict(...)``).
     """
 
     root: str
@@ -169,7 +169,7 @@ def _walk(
             break
 
         # Skip entire nested subtrees (e.g. a built-in data lake mounted under
-        # the user root) — matched on absolute path prefix, so this covers dirs
+        # the user root) - matched on absolute path prefix, so this covers dirs
         # deeper than the top level that ``exclude_top`` cannot reach.
         if prune_subtrees and any(root == p or root.startswith(p + os.sep) for p in prune_subtrees):
             dirs[:] = []
@@ -275,7 +275,7 @@ def scan_directory(
         if result.bounded:
             logger.warning(
                 "workspace scan of %s bounded after %.1fs (files>=%d, dirs>=%d, truncated=%s, timed_out=%s); "
-                "listing is partial — set BIOMNI_WORKSPACE_MAX_FILES / BIOMNI_WORKSPACE_SCAN_TIMEOUT_S to tune",
+                "listing is partial - set BIOMNI_WORKSPACE_MAX_FILES / BIOMNI_WORKSPACE_SCAN_TIMEOUT_S to tune",
                 path,
                 elapsed,
                 result.file_count,

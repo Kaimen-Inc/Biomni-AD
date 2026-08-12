@@ -36,20 +36,23 @@ Repository = "https://github.com/Kaimen-Inc/Biomni-AD"
 Upstream = "https://github.com/snap-stanford/biomni"
 
 [project.optional-dependencies]
-# LLM provider extras — install the ones you need.
+# LLM provider extras - install the ones you need.
 anthropic = ["langchain-anthropic>=0.2,<0.4"]
 bedrock = ["langchain-aws>=0.2,<0.4"]
 ollama = ["langchain-ollama>=0.2,<0.4"]
 # UI extras
 gradio = ["gradio>=5.0,<6.0"]
-chainlit = ["chainlit>=1.0,<3"]
+# The UI persists chat threads through Chainlit's SQLAlchemy data layer:
+# "custom-data" pulls in SQLAlchemy, aiosqlite drives the default SQLite store.
+chainlit = ["chainlit[custom-data]>=2.8,<3", "aiosqlite>=0.20,<1.0"]
 # Convenience meta-extra
 all = [
     "langchain-anthropic>=0.2,<0.4",
     "langchain-aws>=0.2,<0.4",
     "langchain-ollama>=0.2,<0.4",
     "gradio>=5.0,<6.0",
-    "chainlit>=1.0,<3",
+    "chainlit[custom-data]>=2.8,<3",
+    "aiosqlite>=0.20,<1.0",
 ]
 
 [tool.setuptools]
@@ -62,7 +65,7 @@ version = {attr = "biomni.version.__version__"}
 # chainlit_ui/ is consumed only by the top-level chainlit_app.py entry point
 # (which is not part of the wheel). It imports `chainlit` at module top, so
 # shipping it would make chainlit a hidden hard dep for anyone who happens to
-# `from chainlit_ui...` against the installed wheel — keep it source-only.
+# `from chainlit_ui...` against the installed wheel - keep it source-only.
 exclude = ["test*", "tutorials*", "chainlit_ui*"]
 
 [tool.pytest.ini_options]

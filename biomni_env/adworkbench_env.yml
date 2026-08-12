@@ -28,7 +28,7 @@ dependencies:
   - bedtools=2.31.1
   - biom-format=2.1.16
   - biopython=1.85
-  # removed: blast, bowtie2, bwa, diamond (sequence alignment — not needed)
+  # removed: blast, bowtie2, bwa, diamond (sequence alignment - not needed)
   - blinker=1.9.0
   - bokeh=3.7.3
   - bowtie2=2.5.4
@@ -142,7 +142,7 @@ dependencies:
   - lz4-c=1.10.0
   - mafft=7.526
   - macs2=2.2.9.1
-  # removed: openmm (molecular dynamics simulation — unused)
+  # removed: openmm (molecular dynamics simulation - unused)
   - markupsafe=3.0.2
   - matplotlib-base=3.10.5
   - matplotlib-inline=0.1.7
@@ -406,7 +406,7 @@ dependencies:
       - isodate==0.7.2
       - isoduration==20.11.0
       - itsdangerous==2.2.0
-      # removed: jax, jaxlib, jaxopt, jaxtyping (JAX ecosystem — not used in any tool)
+      # removed: jax, jaxlib, jaxopt, jaxtyping (JAX ecosystem - not used in any tool)
       - jiter==0.10.0
       - jmespath==1.0.1
       - joblib==1.5.1

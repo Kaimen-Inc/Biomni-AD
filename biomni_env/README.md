@@ -6,7 +6,7 @@ This directory contains scripts and configuration files to set up a comprehensiv
 
 | File | Purpose | When to use |
 |------|---------|-------------|
-| `environment.yml` | **Canonical minimal env** — Python 3.11 + LangChain stack + core scientific Python | First-time install, Docker build (default), CI |
+| `environment.yml` | **Canonical minimal env** - Python 3.11 + LangChain stack + core scientific Python | First-time install, Docker build (default), CI |
 | `fixed_env.yml` | Reduced full env without R / CLI tools (~13 GB) | If you want most of `bio_env.yml` but can skip R |
 | `bio_env.yml` | Layered on top of `environment.yml` for full bioinformatics tooling | When running `setup.sh` (auto-installs this) |
 | `bio_env_py310.yml` | Python 3.10 side env named `biomni_py310` | Only for `analyze_copy_number_purity_ploidy_and_focal_events` (cnvkit needs Py 3.10) |
@@ -21,8 +21,8 @@ This directory contains scripts and configuration files to set up a comprehensiv
 
 | Branch | Purpose |
 |--------|---------|
-| [`feat/adworkbench`](https://github.com/Kaimen-Inc/Biomni-AD/tree/feat/adworkbench) | **Recommended install branch** — AD Workbench integration with tighter dataset integration and containerization that works broadly. |
-| [`biomni-ad`](https://github.com/Kaimen-Inc/Biomni-AD/tree/biomni-ad) | **Primary stable branch** — Biomni-AD specialization without AD Workbench-specific deployment features. |
+| [`feat/adworkbench`](https://github.com/Kaimen-Inc/Biomni-AD/tree/feat/adworkbench) | **Recommended install branch** - AD Workbench integration with tighter dataset integration and containerization that works broadly. |
+| [`biomni-ad`](https://github.com/Kaimen-Inc/Biomni-AD/tree/biomni-ad) | **Primary stable branch** - Biomni-AD specialization without AD Workbench-specific deployment features. |
 | `main` | Upstream [Stanford SNAP Biomni](https://github.com/snap-stanford/Biomni). Periodically merged into `biomni-ad`. Read-only from this fork. |
 
 Install from the `feat/adworkbench` branch (recommended):
@@ -41,7 +41,7 @@ See the **[AD Data Lake section in README.md](../README.md#ad-data-lake)** for f
 
 1. Clone the repository:
 
-   **Biomni-AD (this fork — recommended for AD research):**
+   **Biomni-AD (this fork - recommended for AD research):**
    ```bash
    git clone https://github.com/Kaimen-Inc/Biomni-AD.git
    cd Biomni-AD/biomni_env

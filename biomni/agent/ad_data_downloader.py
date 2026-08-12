@@ -81,7 +81,7 @@ def _probe_size(uri: str, timeout: int = 15) -> tuple[int | None, str]:
         except Exception:
             pass
 
-        # 2) Range request (bytes=0-0) — servers that support it return Content-Range with total size
+        # 2) Range request (bytes=0-0) - servers that support it return Content-Range with total size
         try:
             range_headers = {**_HTTP_HEADERS, "Range": "bytes=0-0"}
             response = requests.get(uri, headers=range_headers, allow_redirects=True, timeout=timeout, stream=True)
@@ -451,7 +451,7 @@ def download_ad_catalog_data(
                         status = e.response.status_code if e.response is not None else 0
                         err_msg = f"HTTP {status}"
                         if 400 <= status < 500:
-                            # Permanent client error — cache so we skip on next run
+                            # Permanent client error - cache so we skip on next run
                             source_entry["download_error"] = err_msg
                             updated = True
                         results["skipped_error"].append(f"{ds_id}: {name} | {err_msg}")

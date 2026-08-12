@@ -135,7 +135,130 @@ BIOMNI_ENABLE_LLM_TELEMETRY=true             # Default: false (library); true in
                                              #          Emits a per-run llm_usage token/cost event.
 BIOMNI_RUN_HEARTBEAT_SECONDS=15              # Default: 15   (run-liveness heartbeat cadence; Chainlit)
 BIOMNI_LOG_REDACT_EMAILS=false               # Default: false (opt-in scrub of e-mail-shaped PII in logs)
+
+# Workspace scanning (bounds every directory walk; see biomni/fs_scan.py)
+BIOMNI_WORKSPACE_MAX_FILES=10000             # Default: 10000 (hard file cap per scan)
+BIOMNI_WORKSPACE_SCAN_TIMEOUT_S=15           # Default: 15    (wall-clock budget per scan, seconds)
+BIOMNI_WORKSPACE_SCAN_TTL_S=60               # Default: 60    (how long a scan result stays fresh)
+
+# Output directory (see "Workspace scope and outputs" below)
+BIOMNI_OUTPUT_ROOT=/data/outputs             # Default: unset (else <workspace>/biomni-outputs, else ./runs)
+BIOMNI_DEFAULT_SCOPE_PATHS=studyA,studyB     # Default: unset (seed a starting data scope for new users)
+
+# Per-user state: preferences, run records and chat history
+BIOMNI_STATE_DIR=/data/state                 # Default: unset (else <workspace>/.biomni, else no persistence)
+BIOMNI_PREFS_DIR=/data/state/prefs           # Default: $BIOMNI_STATE_DIR/prefs
+BIOMNI_RUNS_STATE_DIR=/data/state/runs       # Default: $BIOMNI_STATE_DIR/runs
+BIOMNI_RUN_STALE_AFTER_S=180                 # Default: 180   (heartbeat age after which a run is
+                                             #          reported as interrupted, not running)
+BIOMNI_ALLOW_ANONYMOUS_PERSISTENCE=true      # Default: false (single-user mode: with no auth gateway
+                                             #          every session is a separate anonymous user, so
+                                             #          nothing saved can ever be read back. This makes
+                                             #          all sessions one shared local user instead -
+                                             #          for development and single-user deployments.)
+
+# Chat history (the conversation list in the left sidebar)
+BIOMNI_THREADS_DB_URL=postgresql+asyncpg://… # Default: sqlite at $BIOMNI_STATE_DIR/threads/threads.db
+                                             #          (else <workspace>/.biomni/threads). Set this to
+                                             #          share history across replicas. The SQLite schema
+                                             #          is created automatically; any other database is
+                                             #          expected to be migrated by an operator.
+BIOMNI_THREAD_ELEMENT_MAX_BYTES=2097152      # Default: 2 MiB (per-attachment cap for archiving into the
+                                             #          history database; larger files stay only in the
+                                             #          run output directory)
+CHAINLIT_AUTH_SECRET=…                       # Default: generated once and stored next to the thread
+                                             #          database. Set explicitly for multi-replica
+                                             #          deployments, or browser sessions break on
+                                             #          rollout.
+
+# Authentication gateway. Identity headers are IGNORED unless this is enabled:
+# without a gateway stripping client-supplied copies, anyone could send
+# `x-user-id: <someone else>` and read or overwrite that person's settings and
+# run history. Enable it only when a gateway is actually in front.
+BIOMNI_TRUST_AUTH_HEADERS=true                # Default: false (fails closed)
+
+# Header names (each accepts a comma-separated list, additive to the defaults)
+BIOMNI_AUTH_USER_ID_HEADER=x-auth-request-user-id
+BIOMNI_AUTH_EMAIL_HEADER=x-auth-request-email
+BIOMNI_AUTH_WORKSPACE_HEADER=x-workspace-id
 ```
+
+## Workspace scope and outputs
+
+A deployment mounts the user's workspace at `BIOMNI_USER_DATA_PATH`. Users pick
+which folders of it the agent should use from the ⚙️ Settings panel; only the
+selected folders are scanned and described to the model, so a workspace with
+thousands of files costs no more than a small one.
+With nothing selected, the workspace is advertised by top-level folder name only
+(one directory listing) and the agent enumerates on demand.
+
+**Output directory** resolves to the first writable candidate:
+
+1. the user's setting in the ⚙️ Settings panel,
+2. `BIOMNI_OUTPUT_ROOT`,
+3. `<workspace>/biomni-outputs/` when the workspace mount is writable,
+4. `./runs/` next to the process.
+
+Only the last is container-local: results written there are lost when the pod
+restarts, and the UI says so. Set `BIOMNI_OUTPUT_ROOT` to a mounted volume, or
+make the workspace mount read-write, to keep results.
+
+Files attached to a message with 📎 are copied into `<output dir>/uploads/`
+under their original names, and it is that path the agent is given.
+Chainlit's own copy stays where it puts it - a scratch tree it deletes when the
+session ends and wipes on shutdown, with a UUID for a filename - so without this
+an attachment would be unreachable by the user's next visit, and the agent would
+never learn what the file was called.
+An attachment keeps working when the output directory is not writable; it just
+does not outlive the session.
+
+**Preferences and run records** follow the same shape:
+`BIOMNI_PREFS_DIR` / `BIOMNI_RUNS_STATE_DIR`, else `BIOMNI_STATE_DIR/{prefs,runs}`,
+else `<workspace>/.biomni/` when writable, else no persistence (settings apply to
+the session only).
+Storing them under the workspace is the only option that survives the
+application being deprovisioned without extra infrastructure, since it is the
+user's own storage.
+
+**Chat history** is stored the same way, in a database rather than files:
+`BIOMNI_THREADS_DB_URL`, else `BIOMNI_STATE_DIR/threads/threads.db`, else
+`<workspace>/.biomni/threads/threads.db`, else disabled.
+Every conversation - the questions, the plans, the code steps and the answers -
+is written as it happens, so a user who closes the tab finds the conversation
+again in the left sidebar and can carry on in it.
+Attachments up to `BIOMNI_THREAD_ELEMENT_MAX_BYTES` are archived with the
+conversation; anything larger is left in the run's output directory only.
+
+History is enabled only when the storage key is stable enough for a user to find
+their own conversations again: behind a gateway (`BIOMNI_TRUST_AUTH_HEADERS`),
+or in single-user mode (`BIOMNI_ALLOW_ANONYMOUS_PERSISTENCE`).
+Otherwise each page load is a new anonymous user, and the sidebar would fill
+with threads nobody could reopen.
+
+Closing the browser does not stop a run.
+The work carries on server-side and keeps writing into its own conversation, so
+reopening that conversation from the list on the left shows everything that
+happened while nobody was watching.
+If the run is still going when it is reopened, the rest of it streams into the
+page, and Stop applies to the run itself rather than to the tab.
+
+The limit is the process: a run is bound to the one executing it, so a restart
+or a pod eviction ends it, and the run record says `interrupted` rather than
+claiming a result nobody produced.
+Detaching execution into a worker that outlives the request would be a
+different piece of infrastructure; nothing here silently loses work today.
+
+Preferences are keyed by the user id the authentication gateway asserts, scoped
+by workspace id when one is supplied. Those headers are only believed when
+`BIOMNI_TRUST_AUTH_HEADERS` is enabled - the app cannot tell a gateway-forwarded
+header from a hand-crafted one, so it fails closed and treats every session as
+anonymous until a deployment declares that a gateway is in front. Keys are slugged and hashed, so a header
+value can never escape its directory, and an e-mail-only identity hashes to an
+opaque key rather than writing the address into a filename. With no gateway in
+front, the key is per-session and nothing persists across sessions.
+
+File-backed preferences assume a single replica (or `ReadWriteMany` storage).
+Check this before scaling the deployment out.
 
 ### Python Configuration
 

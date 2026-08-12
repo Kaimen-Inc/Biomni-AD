@@ -4,7 +4,7 @@
 #
 # The Dockerfile prepends ``/opt/conda/envs/biomni_e1/bin`` to PATH so the
 # correct python interpreter is the first ``python`` on PATH. We exec it
-# directly (no ``micromamba run`` wrapper) — saves the per-startup
+# directly (no ``micromamba run`` wrapper) - saves the per-startup
 # activation cost and shrinks the runtime dependency surface.
 
 set -euo pipefail

@@ -11,7 +11,7 @@ Two cross-cutting concerns live here so they stay out of the agent core:
 
 2. **Per-run usage telemetry.** ``LLMUsageTracker.record`` extracts the
    ``usage_metadata`` LangChain attaches to every chat-model response (input
-   tokens, output tokens, and — when present — cache-read / cache-creation
+   tokens, output tokens, and - when present - cache-read / cache-creation
    tokens) and accumulates totals so the agent can surface cost insight
    without depending on LangSmith.
 
@@ -94,7 +94,7 @@ def _to_cached_text_blocks(content: Any) -> list[dict[str, Any]] | None:
         return [{"type": "text", "text": content, "cache_control": {"type": "ephemeral"}}]
 
     if isinstance(content, list):
-        # Already structured. Avoid clobbering pre-existing cache_control —
+        # Already structured. Avoid clobbering pre-existing cache_control -
         # if the caller has already marked breakpoints, respect them.
         if any(isinstance(b, dict) and b.get("cache_control") for b in content):
             return content  # type: ignore[return-value]
@@ -103,7 +103,7 @@ def _to_cached_text_blocks(content: Any) -> list[dict[str, Any]] | None:
         if not text_blocks:
             return None
 
-        # Mark the last text block — this lets earlier blocks (if any) act
+        # Mark the last text block - this lets earlier blocks (if any) act
         # as non-cached preamble, which matches Anthropic's recommended
         # "cache the prefix" usage when blocks are layered.
         marked: list[dict[str, Any]] = []
@@ -185,7 +185,7 @@ def extract_usage(response: Any) -> LLMUsage:
     Looks at ``usage_metadata`` first (LangChain standard since 0.3) and
     falls back to provider-specific ``response_metadata.usage`` /
     ``response_metadata.token_usage``. Unknown shapes return a zero usage
-    object rather than raising — usage tracking is best-effort.
+    object rather than raising - usage tracking is best-effort.
     """
     if response is None:
         return LLMUsage()

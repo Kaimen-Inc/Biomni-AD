@@ -1,4 +1,4 @@
-"""Tests for biomni.observability — structured logging, correlation, redaction.
+"""Tests for biomni.observability - structured logging, correlation, redaction.
 
 These pin the behaviour the AKS deployment relies on: JSON lines with
 correlation ids, secret/PII scrubbing at the format chokepoint, idempotent
@@ -183,7 +183,7 @@ def test_setup_logging_is_idempotent():
 
 def test_setup_logging_removes_foreign_root_handlers():
     """A foreign root handler (e.g. chainlit's basicConfig StreamHandler) must be
-    dropped so records aren't emitted twice — once plain, once JSON."""
+    dropped so records aren't emitted twice - once plain, once JSON."""
     import io
 
     root = logging.getLogger()
@@ -413,6 +413,32 @@ def test_heartbeat_survives_failing_status_callback():
     # Still emits (status failure is swallowed; elapsed_ms always present).
     beats = _heartbeats(stream)
     assert beats and "elapsed_ms" in beats[0]
+
+
+def test_heartbeat_on_tick_hook_runs_each_beat():
+    stream, _ = _capture()
+    ticks: list[int] = []
+
+    with obs.RunHeartbeat(interval=0.05, on_tick=lambda: ticks.append(1)):
+        time.sleep(0.22)
+
+    # One tick per emitted beat: the durable run record advances in step with
+    # the log heartbeat, which is what makes staleness detection meaningful.
+    assert len(ticks) == len(_heartbeats(stream))
+    assert len(ticks) >= 2
+
+
+def test_heartbeat_survives_failing_on_tick_hook():
+    stream, _ = _capture()
+
+    def boom():
+        raise RuntimeError("tick failed")
+
+    with obs.RunHeartbeat(interval=0.05, on_tick=boom):
+        time.sleep(0.12)
+
+    # A failing registry write must not silence run-liveness logging.
+    assert _heartbeats(stream)
 
 
 def test_heartbeat_zero_interval_does_not_busy_loop():
