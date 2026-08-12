@@ -1369,11 +1369,13 @@ async def _process_message(message: cl.Message):
     # ------------------------------------------------------------------
     # Phase 2: Tool retrieval
     # ------------------------------------------------------------------
+    selected_data_lake: list[str] = []
     if getattr(agent, "use_tool_retriever", False):
         async with cl.Step(name="🔍 Selecting Resources", type="retrieval", show_input=False) as step:
             try:
                 resources = await run_in_executor(agent._prepare_resources_for_retrieval, prompt)
                 if resources:
+                    selected_data_lake = resources.get("data_lake", [])
                     await run_in_executor(agent.update_system_prompt_with_selected_resources, resources)
                     # Counts go to the log, not the transcript. This step used to
                     # announce things like "91 datasets", which reads as though
@@ -1400,7 +1402,7 @@ async def _process_message(message: cl.Message):
     # ------------------------------------------------------------------
     # Phase 3: Interactive planning
     # ------------------------------------------------------------------
-    prompt = await _interactive_planning(agent, prompt, agent_type=agent_type)
+    prompt = await _interactive_planning(agent, prompt, agent_type=agent_type, selected_data_lake=selected_data_lake)
     if prompt is None:
         # User cancelled
         await cl.Message(content="Execution cancelled.").send()

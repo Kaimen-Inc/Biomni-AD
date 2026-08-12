@@ -292,9 +292,22 @@ def extract_planned_data_files(plan_text: str) -> list[str]:
     return [f for f in files if not (f in seen or seen.add(f))]
 
 
-def build_planning_system_prompt(agent: A1, agent_type: str) -> str:
+def _format_data_lake_listing(agent: A1, names: list[str]) -> str:
+    """Render the resource-retrieval step's selected data-lake items as a concrete listing.
+
+    By the time planning runs, ``_prepare_resources_for_retrieval`` has already fetched
+    every one of these from the catalog if it wasn't local (see ``_ensure_data_lake_files``
+    in a1.py) - so the planner can name them outright rather than hedge with "if available".
+    """
+    data_lake_dict = getattr(agent, "data_lake_dict", {}) or {}
+    lines = [f"- {name}: {data_lake_dict.get(name, 'local data lake file')}" for name in names]
+    return "\n".join(lines)
+
+
+def build_planning_system_prompt(agent: A1, agent_type: str, selected_data_lake: list[str] | None = None) -> str:
     """Compose the planning system prompt for `agent_type`, appending any
-    locally-discovered user data inventory the agent has already snapshotted.
+    locally-discovered user data inventory the agent has already snapshotted,
+    plus the data-lake items the resource-retrieval step just matched to this query.
 
     Pure function - no I/O, no Chainlit calls - so it's directly testable.
     """
@@ -307,6 +320,22 @@ def build_planning_system_prompt(agent: A1, agent_type: str) -> str:
             f"\n\nThe following datasets are available in the local user data directory "
             f"({data_root}). Reference specific datasets from this listing when relevant "
             f"to the user's question:\n{inventory}"
+        )
+
+    # The retrieval step ("Selecting Resources") already matched data-lake items to this
+    # query and fetched any that weren't local yet - but ran as a separate LLM call that
+    # never told the planner what it found. Without this, the planner falls back on its
+    # own training-data familiarity with dataset naming conventions: it confidently names
+    # well-known files (GWAS summary stats, eQTL tables) and hedges on ones it's less sure
+    # of ("if found", "if available") even when those are present in this app's catalog
+    # right now. Grounding the plan in the actual retrieval result fixes both problems.
+    if selected_data_lake:
+        base += (
+            "\n\nThe resource-retrieval step already matched the following data lake items to "
+            "this question, and any that were not already local have been fetched. Treat these "
+            "as available now - name the specific ones you will use in your plan rather than "
+            "guessing at file names or hedging with 'if available' / 'if found':\n"
+            f"{_format_data_lake_listing(agent, selected_data_lake)}"
         )
 
     # Reviewers asked that a plan commit to the data it will read, so the user
@@ -332,14 +361,20 @@ def build_planning_system_prompt(agent: A1, agent_type: str) -> str:
     return base
 
 
-async def interactive_planning(agent: A1, prompt: str, agent_type: str = "a1") -> str | None:
+async def interactive_planning(
+    agent: A1, prompt: str, agent_type: str = "a1", selected_data_lake: list[str] | None = None
+) -> str | None:
     """Generate a plan, prompt the user to approve / revise / cancel, loop on revise.
+
+    `selected_data_lake` is the data-lake item names the resource-retrieval step ("Selecting
+    Resources") already matched to this query, so the plan can name them concretely instead
+    of guessing at file names from the model's own training data.
 
     Returns the (possibly modified) prompt on approval, or `None` if the user
     cancels. If plan generation itself raises, the approval gate is skipped
     and the original prompt is returned so execution still happens.
     """
-    base_prompt = build_planning_system_prompt(agent, agent_type)
+    base_prompt = build_planning_system_prompt(agent, agent_type, selected_data_lake)
     modification_context = ""
 
     while True:

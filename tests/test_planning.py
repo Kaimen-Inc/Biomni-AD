@@ -112,6 +112,36 @@ def test_missing_attributes_are_safe() -> None:
     assert "biomedical research assistant" in out
 
 
+def test_selected_data_lake_is_named_concretely() -> None:
+    """The retrieval step's picks must reach the planner as facts, not left for
+    it to guess at - this is what makes the plan name a real file instead of
+    hedging with 'if available' on something already sitting in the catalog.
+    """
+    planning = _import_planning()
+    agent = _Agent()
+    agent.data_lake_dict = {
+        "BindingDB_All_202409.tsv": "Measured binding affinities between proteins and small molecules.",
+    }
+
+    out = planning.build_planning_system_prompt(agent, "ad1", ["BindingDB_All_202409.tsv"])
+
+    assert "BindingDB_All_202409.tsv" in out
+    assert "Measured binding affinities" in out
+    assert "already matched" in out
+
+
+def test_no_selected_data_lake_omits_the_section() -> None:
+    planning = _import_planning()
+    out = planning.build_planning_system_prompt(_Agent(), "a1", [])
+    assert "already matched" not in out
+
+
+def test_selected_data_lake_defaults_to_none_safely() -> None:
+    planning = _import_planning()
+    out = planning.build_planning_system_prompt(_Agent(), "a1")
+    assert "already matched" not in out
+
+
 # ---------------------------------------------------------------------------
 # extract_planned_data_files
 # ---------------------------------------------------------------------------
