@@ -21,7 +21,11 @@ jobs:
         with:
           python-version: "3.11"
       - name: Install ruff
-        run: pip install "ruff>=0.6,<1.0"
+        # Pinned to the exact version in biomni_env/*.yml so CI and local dev
+        # agree on what "formatted" means - an open range let ruff 0.16 (which
+        # started formatting Python fences inside Markdown files) flag files
+        # nobody had checked locally since they were pinned to 0.12.7.
+        run: pip install "ruff==0.12.7"
       - name: ruff check
         run: ruff check .
       - name: ruff format --check
