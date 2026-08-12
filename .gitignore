@@ -51,7 +51,7 @@ runs/
 *sqlite
 
 # =============================================================================
-# Data (large datasets — use DVC or download separately)
+# Data (large datasets - use DVC or download separately)
 # =============================================================================
 data/biomni_data/
 

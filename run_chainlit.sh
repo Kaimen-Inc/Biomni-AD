@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # ---------------------------------------------------------------------------
-# run_chainlit.sh — launch the Biomni-AD Chainlit UI from the project root.
+# run_chainlit.sh - launch the Biomni-AD Chainlit UI from the project root.
 #
 # The whole point of this wrapper is to invoke the conda env's python even
 # when a virtualenv (.venv) is active in the same shell. Without it, a
@@ -27,7 +27,7 @@ REQUIRED_ENV="${BIOMNI_CONDA_ENV:-biomni_e1}"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 APP="$SCRIPT_DIR/chainlit_app.py"
 
-# Prefer conda when both conda and micromamba are present — conda's
+# Prefer conda when both conda and micromamba are present - conda's
 # activation scripts handle a wider range of env edge cases.
 if command -v conda &>/dev/null; then
     CONDA_CMD="conda"
