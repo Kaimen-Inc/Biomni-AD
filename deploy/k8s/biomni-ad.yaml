@@ -1,0 +1,222 @@
+# Example Kubernetes manifest for the Biomni-AD Chainlit app on AKS.
+#
+# This is a starting point, not a turnkey production config. Review resource
+# limits, replica count, ingress, and the Secret/ConfigMap wiring for your
+# cluster before applying. The pieces that matter for *observability* - the
+# focus of this manifest - are the three probes and the log-shaping env vars.
+#
+#   kubectl apply -f deploy/k8s/biomni-ad.yaml
+#
+# Logs: the container writes one JSON object per line to stdout. On AKS with
+# Container Insights enabled, those land in the Log Analytics workspace and are
+# queryable with KQL, e.g.:
+#
+#   ContainerLogV2
+#   | where ContainerName == "biomni-ad"
+#   | extend log = parse_json(LogMessage)
+#   | where log.event == "llm_usage"
+#   | summarize tokens=sum(toint(log.total_tokens)) by bin(TimeGenerated, 1h)
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: biomni-ad-secrets
+type: Opaque
+stringData:
+  # Provide whichever provider your BIOMNI_LLM resolves to. Readiness (/readyz)
+  # fails closed until at least one credential is present.
+  ANTHROPIC_API_KEY: "replace-me"
+  # OPENAI_API_KEY: "replace-me"
+  # AZURE_OPENAI_API_KEY: "replace-me"
+  #
+  # Signing key for the session cookie. Chainlit requires one as soon as
+  # authentication is enabled, which it always is here. Left unset the app
+  # generates one and stores it on the state volume, which is fine for a single
+  # replica; set it explicitly before scaling out, or each pod signs with a
+  # different key and users are logged out at random.
+  #   openssl rand -base64 48
+  # CHAINLIT_AUTH_SECRET: "replace-me"
+---
+# Persistent storage for run outputs, user preferences and run records.
+#
+# Without this the app falls back to a container-local ./runs directory, and a
+# rollout or restart destroys every artifact the user produced. The UI warns
+# when it detects that fallback.
+#
+# ReadWriteOnce is sufficient at replicas: 1 (as configured below). Scaling out
+# requires ReadWriteMany (e.g. an Azure Files share) because several pods would
+# otherwise write the same preference and run-record files.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: biomni-ad-state
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 20Gi
+  # storageClassName: azurefile-csi   # switch to a RWX class before scaling out
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: biomni-ad
+  labels:
+    app: biomni-ad
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: biomni-ad
+  template:
+    metadata:
+      labels:
+        app: biomni-ad
+    spec:
+      # The image runs as the non-root mambauser (UID 57439). A freshly
+      # provisioned block PVC mounts as root:root 0755, so without fsGroup the
+      # container cannot write /data - and because every write path here
+      # degrades gracefully, the failure is silent: outputs fall back to the
+      # ephemeral ./runs and preferences stop persisting, making the volume a
+      # no-op. fsGroup makes the kubelet chgrp the volume to that GID.
+      securityContext:
+        fsGroup: 57439
+        fsGroupChangePolicy: OnRootMismatch
+      containers:
+        - name: biomni-ad
+          image: ghcr.io/kaimen-inc/biomni-ad:latest # pin to a sha- tag in prod
+          ports:
+            - name: http
+              containerPort: 8000
+          env:
+            - name: LOG_LEVEL
+              value: "INFO"
+            - name: BIOMNI_LOG_FORMAT
+              value: "json"
+            - name: BIOMNI_ENABLE_LLM_TELEMETRY
+              value: "true"
+            # Total wall-clock budget per query: a run exceeding this is stopped
+            # cleanly between ReAct turns (emits a run_timeout event) instead of
+            # spinning. Recommended for interactive/demo so slow queries fail fast.
+            - name: BIOMNI_RUN_TIMEOUT_SECONDS
+              value: "600"
+            # Run-liveness heartbeat cadence (seconds).
+            - name: BIOMNI_RUN_HEARTBEAT_SECONDS
+              value: "15"
+            # Opt-in PII scrub of e-mail-shaped strings in logs (default off).
+            - name: BIOMNI_LOG_REDACT_EMAILS
+              value: "true"
+
+            # Run artifacts. Without this the app writes to a container-local
+            # ./runs and every result is lost on restart. Points at the PVC
+            # mounted below; users can override per session in the UI.
+            - name: BIOMNI_OUTPUT_ROOT
+              value: "/data/outputs"
+
+            # Per-user preferences (data scope, output directory), durable run
+            # records and the chat-history database, so a user who closes the
+            # tab still finds their jobs and their conversations.
+            - name: BIOMNI_STATE_DIR
+              value: "/data/state"
+
+            # Chat history is stored in SQLite under $BIOMNI_STATE_DIR by
+            # default, which assumes one replica - the same assumption the
+            # file-backed preferences already make. Point this at a shared
+            # database before scaling out (and migrate its schema; only the
+            # SQLite one is created automatically).
+            # - name: BIOMNI_THREADS_DB_URL
+            #   value: "postgresql+asyncpg://user:pass@host:5432/biomni"
+
+            # Identity from the authentication gateway. Left OFF here on
+            # purpose: this manifest exposes the app through a plain Service
+            # with no gateway, and with the flag on anyone able to reach the
+            # pod could send `x-user-id: <someone else>` and read or overwrite
+            # that person's settings and run history. Turn it on in the same
+            # change that puts a gateway in front - and make sure that gateway
+            # strips client-supplied copies of these headers.
+            # - name: BIOMNI_TRUST_AUTH_HEADERS
+            #   value: "true"
+            #
+            # Header names. The defaults cover the common conventions; set
+            # these only when the gateway uses different ones.
+            # - name: BIOMNI_AUTH_USER_ID_HEADER
+            #   value: "x-auth-request-user-id"
+            # - name: BIOMNI_AUTH_EMAIL_HEADER
+            #   value: "x-auth-request-email"
+            # - name: BIOMNI_AUTH_WORKSPACE_HEADER
+            #   value: "x-workspace-id"
+          envFrom:
+            - secretRef:
+                name: biomni-ad-secrets
+
+          volumeMounts:
+            - name: state
+              mountPath: /data
+
+          # Startup probe: gates the other two until the heavy agent stack has
+          # finished importing (~30-60s cold start). failureThreshold*period =
+          # up to 5 min before the pod is declared failed to start.
+          startupProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            periodSeconds: 10
+            failureThreshold: 30
+            timeoutSeconds: 3
+
+          # Liveness: restart the pod only if the process is wedged. Cheap,
+          # dependency-free - never gate this on upstream (LLM) availability.
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            periodSeconds: 20
+            timeoutSeconds: 3
+            failureThreshold: 3
+
+          # Readiness: pull the pod from the Service if it can't serve - data
+          # dir unmounted or no LLM credential. Returns 503 when not ready.
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: http
+            periodSeconds: 15
+            timeoutSeconds: 3
+            failureThreshold: 3
+
+          resources:
+            requests:
+              cpu: "1"
+              memory: 2Gi
+            limits:
+              # Agent-generated code runs in-process; cap memory so a runaway
+              # snippet is OOMKilled (visible in kube events) instead of taking
+              # the node down.
+              cpu: "2"
+              memory: 6Gi
+
+          # SIGTERM is sent on rollout/scale-down; give in-flight agent runs a
+          # chance to drain before SIGKILL. Runs that do not finish in time are
+          # reported as "interrupted" to the user on their next session rather
+          # than being lost silently (see biomni/run_registry.py).
+      terminationGracePeriodSeconds: 60
+
+      volumes:
+        - name: state
+          persistentVolumeClaim:
+            claimName: biomni-ad-state
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: biomni-ad
+  labels:
+    app: biomni-ad
+spec:
+  selector:
+    app: biomni-ad
+  ports:
+    - name: http
+      port: 80
+      targetPort: http

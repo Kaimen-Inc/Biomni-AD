@@ -1,12 +1,13 @@
 
-import os
-import shutil
 import json
+import os
+
 from biomni.agent.ad1 import AD1
+
 
 def test_ad1_tracking():
     print("Testing AD1 tracking...")
-    
+
     # Clean up previous runs if any (optional, but good for clean test)
     # runs_dir = os.path.join(os.getcwd(), "biomni_data", "runs")
     # if os.path.exists(runs_dir):
@@ -17,7 +18,7 @@ def test_ad1_tracking():
     # But let's try a real run with a simple query if possible, or mock LLM if needed.
     # Assuming A1/AD1 needs an LLM. If no keys are present, it might fail.
     # Let's check environment.
-    
+
     try:
         # Pass expected_data_lake_files=[] to skip massive download
         agent = AD1(expected_data_lake_files=[])
@@ -28,12 +29,12 @@ def test_ad1_tracking():
     # Run a simple query
     query = "Calculate 1 + 1. Please respond with just the number."
     print(f"Running query: {query}")
-    
+
       # Run the agent with a prompt that generates a file + needs code execution
     prompt = "Calculate 123 + 456 using python code, and then create a file named 'test_artifact.txt' with the result inside it."
     result = agent.go(prompt)
     print("Agent returned result.")
-    
+
     # Verification
     # User requested runs be in the CWD/runs
     runs_dir = os.path.join(os.getcwd(), "runs")
@@ -46,17 +47,17 @@ def test_ad1_tracking():
     if not runs:
         print("FAIL: No run directory created.")
         return
-        
+
     latest_run = runs[-1]
     run_path = os.path.join(runs_dir, latest_run)
     print(f"Checking run directory: {run_path}")
-    
+
     # 1. Check Logical Artifacts
     trace_path = os.path.join(run_path, "trace.json")
     if os.path.exists(trace_path):
         print("PASS: trace.json found.")
         # Verify trace content has code
-        with open(trace_path, "r") as f:
+        with open(trace_path) as f:
             trace_content = f.read()
             if "tool_calls" in trace_content or "Tool Call" in trace_content or "123 + 456" in trace_content:
                 print("PASS: trace.json contains code/tool info.")
@@ -74,7 +75,7 @@ def test_ad1_tracking():
     nb_path = os.path.join(run_path, "trace.ipynb")
     if os.path.exists(nb_path):
         print("PASS: trace.ipynb found.")
-        with open(nb_path, "r") as f:
+        with open(nb_path) as f:
             nb_content = json.load(f)
             if "cells" in nb_content and len(nb_content["cells"]) > 0:
                 print(f"PASS: trace.ipynb is valid and has {len(nb_content['cells'])} cells.")
@@ -88,20 +89,20 @@ def test_ad1_tracking():
                 print("FAIL: trace.ipynb is empty or invalid.")
     else:
         print("FAIL: trace.ipynb missing.")
-        
+
     # 2. Check Generated File Moving
     artifact_path_run = os.path.join(run_path, "test_artifact.txt")
     artifact_path_cwd = "test_artifact.txt"
-    
+
     if os.path.exists(artifact_path_run):
-        print(f"PASS: Generated file 'test_artifact.txt' found in run directory.")
+        print("PASS: Generated file 'test_artifact.txt' found in run directory.")
     else:
-        print(f"FAIL: Generated file 'test_artifact.txt' NOT found in run directory.")
-        
+        print("FAIL: Generated file 'test_artifact.txt' NOT found in run directory.")
+
     if not os.path.exists(artifact_path_cwd):
-        print(f"PASS: Generated file 'test_artifact.txt' correctly removed from CWD.")
+        print("PASS: Generated file 'test_artifact.txt' correctly removed from CWD.")
     else:
-        print(f"FAIL: Generated file 'test_artifact.txt' still exists in CWD (Should have been moved).")
+        print("FAIL: Generated file 'test_artifact.txt' still exists in CWD (Should have been moved).")
 
 if __name__ == "__main__":
     test_ad1_tracking()

@@ -6,17 +6,32 @@ services:
       args:
         BIOMNI_ENV_FILE: biomni_env/environment.yml
     image: biomni:latest
-    container_name: biomni
     env_file:
       - .env
+    # Default is root (0:0) so first-time `docker compose up` works with any
+    # bind-mount permissions. For security-hardened deployments set
+    # BIOMNI_CONTAINER_USER=57439:57439 in your .env to run as the micromamba
+    # base image's non-root `mambauser` - ensure ${BIOMNI_APP_DATA_HOST_PATH},
+    # ${BIOMNI_RUNS_HOST_PATH}, and ${BIOMNI_USER_DATA_HOST_PATH} are all
+    # pre-created and writable by that UID. (`docker run` of the published
+    # image runs as mambauser by default - compose's `user:` line is the
+    # override that picks root here for first-run convenience.)
+    user: "${BIOMNI_CONTAINER_USER:-0:0}"
     environment:
       CHAINLIT_HOST: 0.0.0.0
       CHAINLIT_PORT: 8000
       BIOMNI_PATH: /app/data
+      BIOMNI_USER_DATA_PATH: /app/user-data
+      BIOMNI_DATA_PATH: /app/user-data
       MPLBACKEND: Agg
     ports:
       - "${HOST_PORT:-8000}:8000"
     volumes:
-      - ./data:/app/data
-      - ./runs:/app/runs
+      - ${BIOMNI_APP_DATA_HOST_PATH:-./data}:/app/data
+      - ${BIOMNI_RUNS_HOST_PATH:-./runs}:/app/runs
+      - ${BIOMNI_USER_DATA_HOST_PATH:-/tmp/biomni_user_data}:/app/user-data:ro
     restart: unless-stopped
+    # No `healthcheck:` block - the image's HEALTHCHECK (see Dockerfile) is
+    # inherited automatically and shows up in `docker compose ps`. Keeping
+    # a second copy here is a future divergence trap: if the image's probe
+    # changes, this one would silently stay stale.

@@ -1,4 +1,4 @@
-# DETAILS.md — Biomni-AD Technical Reference
+# DETAILS.md - Biomni-AD Technical Reference
 
 
 **Related docs:** [README.md](README.md) | [ARCHITECTURE.md](ARCHITECTURE.md) | [CONTRIBUTION.md](CONTRIBUTION.md)
@@ -33,10 +33,11 @@ Biomni-AD is a **biomedical AI agent platform** specialized for Alzheimer's dise
 ```
 Biomni/
 ├── biomni/                        # Main library package
+│   ├── __init__.py                # Lazy exports of A1, AD1, BiomniConfig
+│   ├── artifact.py                # Shared run-id + filesystem snapshot helpers (used by both A1 and the Chainlit UI)
 │   ├── agent/
-│   │   ├── a1.py                  # A1: general-purpose biomedical agent (~3000 lines)
+│   │   ├── a1.py                  # A1: general-purpose biomedical agent - owns the LangGraph ReAct state machine
 │   │   ├── ad1.py                 # AD1: Alzheimer's specialist agent (extends A1)
-│   │   ├── react.py               # ReAct engine (LangGraph state machine)
 │   │   ├── env_collection.py      # Environment and data retrieval utilities
 │   │   ├── function_generator.py  # Dynamic function generation
 │   │   └── qa_llm.py              # Question-answering LLM wrappers
@@ -92,7 +93,7 @@ Biomni/
 │
 ├── chainlit_app.py                # Chainlit UI entry point (plan-then-approve workflow)
 ├── run_chainlit.sh                # Chainlit launcher script
-├── chainlit.md                    # Chainlit welcome page content
+├── chainlit.md.template           # Chainlit welcome-page template (rendered to chainlit.md at launch; gitignored)
 ├── docker/                        # Docker entrypoint scripts
 ├── docker-compose.yml             # Docker Compose configuration
 ├── Dockerfile                     # Micromamba-based container image
@@ -131,7 +132,7 @@ Biomni/
 
 ## 3. Core Module Descriptions
 
-### `biomni/agent/a1.py` — A1 General Agent
+### `biomni/agent/a1.py` - A1 General Agent
 
 The primary agent class (~3000 lines). Manages the full task lifecycle:
 - Initializes the data lake and tool registry on startup
@@ -141,7 +142,7 @@ The primary agent class (~3000 lines). Manages the full task lifecycle:
 - Exports execution traces as PDF via `save_conversation_history()`
 - Launches Gradio and Chainlit UIs
 
-### `biomni/agent/ad1.py` — AD1 Alzheimer's Agent
+### `biomni/agent/ad1.py` - AD1 Alzheimer's Agent
 
 Extends A1 with AD-specific capabilities (developed by Kuan-lin Huang, PhD):
 - Detects AD-related keywords (Alzheimer, dementia, MCI, amyloid, tau, etc.)
@@ -150,22 +151,33 @@ Extends A1 with AD-specific capabilities (developed by Kuan-lin Huang, PhD):
 - Downloads AD-specific data subsets to `data/biomniad/`
 - Provides `launch_ui()` for the Chainlit plan-then-approve interface
 
-### `biomni/agent/react.py` — ReAct Engine
+### ReAct Engine - `biomni/agent/a1.py`
 
-Core reasoning loop built on LangGraph:
+The active ReAct reasoning loop lives **inside the `A1` class** in `a1.py`, built on LangGraph:
+
 - State machine: `Agent node → Tool node → Agent node → ...`
 - Handles tool call dispatch and result injection
 - Applies timeout management to individual tool executions
 - Supports custom callback handlers for logging
 
-### `biomni/model/retriever.py` — Tool Retriever
+### `biomni/artifact.py` - Run artifact helpers
+
+Shared pure functions used by both `A1._save_run_artifacts` and the Chainlit UI:
+
+- `build_run_id(topic, llm_summarizer=None)` - produces `run_YYYYMMDD_HHMMSS_<slug>` directory names; optional LLM-driven slug with a deterministic fallback
+- `get_all_files(directory)` - recursive non-hidden file listing with a single canonical exclude set (`runs/`, `__pycache__/`, `node_modules/`, etc.)
+- `summarize_topic_for_run_id(topic)` - deterministic stopword-stripped slug
+
+Centralising these here prevents the agent and the UI from drifting on the exclude list, which previously caused mismatched initial/final file sets when the agent was driven from Chainlit.
+
+### `biomni/model/retriever.py` - Tool Retriever
 
 LLM-powered resource selector:
 - Parses user queries to identify relevant tools, datasets, and libraries
 - Returns ranked lists of tools/data for inclusion in the agent's context
 - Uses Anthropic or OpenAI LLMs for selection
 
-### `biomni/config.py` — Configuration
+### `biomni/config.py` - Configuration
 
 `BiomniConfig` dataclass providing centralized defaults:
 - `llm`: model name (default: `claude-sonnet-4-5`)
@@ -174,20 +186,20 @@ LLM-powered resource selector:
 - `commercial_mode`: filter non-commercial content (default: False)
 - Reads from environment variables; overridable at runtime via `default_config`
 
-### `biomni/llm.py` — LLM Factory
+### `biomni/llm.py` - LLM Factory
 
 Instantiates LangChain LLM objects for multiple providers:
 - Anthropic (Claude), OpenAI (GPT), Azure OpenAI, Google Gemini, AWS Bedrock, Groq, Ollama, Custom (OpenAI-compatible)
 
-### `biomni/env_desc.py` — Data Lake Registry
+### `biomni/env_desc.py` - Data Lake Registry
 
 Contains `data_lake_dict`: a mapping of dataset names to S3 download URLs and descriptions. Drives automatic data lake initialization on first agent run.
 
-### `biomni/know_how/` — Know-How Library
+### `biomni/know_how/` - Know-How Library
 
 Markdown documents with curated protocols and best practices. Loaded by `loader.py` and retrieved based on query relevance. Metadata headers track authors, affiliations, license, and commercial-use eligibility.
 
-### `chainlit_app.py` — Chainlit UI
+### `chainlit_app.py` - Chainlit UI
 
 Interactive plan-then-approve interface:
 1. Agent generates a numbered research plan (3–7 steps)
@@ -239,10 +251,12 @@ docker compose up -d
 
 | Pattern | Usage |
 |---------|-------|
-| **ReAct loop** | LangGraph state machine in `react.py` |
-| **Factory** | LLM provider selection in `llm.py` |
+| **ReAct loop** | LangGraph state machine inside `A1` in `a1.py` |
+| **Factory** | LLM provider selection in `llm.py` via `get_llm()` and `resolve_default_llm()` |
 | **Registry** | Tool discovery via `tool_registry.py` |
 | **Declarative schemas** | Tool metadata in `tool_description/` separates spec from implementation |
+| **Shared helpers** | Run-id / file-snapshot pure functions in `biomni/artifact.py` (single source of truth for A1 and the Chainlit UI) |
+| **Lazy public API** | `biomni.__init__` exposes `A1`, `AD1`, `BiomniConfig` via PEP 562 `__getattr__` so `import biomni` stays cheap |
 | **Abstract base** | `base_task.py` enforces consistent benchmark interface |
 | **Dataclass config** | `BiomniConfig` in `config.py` for centralized defaults |
 
@@ -263,15 +277,15 @@ docker compose up -d
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `ANTHROPIC_API_KEY` | — | Required for direct Anthropic Claude models |
-| `OPENAI_API_KEY` | — | Required for direct OpenAI GPT models |
-| `AZURE_ANTHROPIC_API_KEY` | — | Required for Claude models via Azure AI Foundry |
-| `AZURE_OPENAI_API_KEY` | — | Required for GPT models via Azure OpenAI |
-| `ENDPOINT_URL` | — | Azure endpoint (used by Azure Anthropic and optionally Azure OpenAI) |
-| `DEPLOYMENT_NAME` | — | Azure deployment name |
-| `GEMINI_API_KEY` | — | For Google Gemini models |
-| `GROQ_API_KEY` | — | For Groq-hosted models |
-| `AWS_BEARER_TOKEN_BEDROCK` | — | For AWS Bedrock models |
+| `ANTHROPIC_API_KEY` | - | Required for direct Anthropic Claude models |
+| `OPENAI_API_KEY` | - | Required for direct OpenAI GPT models |
+| `AZURE_ANTHROPIC_API_KEY` | - | Required for Claude models via Azure AI Foundry |
+| `AZURE_OPENAI_API_KEY` | - | Required for GPT models via Azure OpenAI |
+| `ENDPOINT_URL` | - | Azure endpoint (used by Azure Anthropic and optionally Azure OpenAI) |
+| `DEPLOYMENT_NAME` | - | Azure deployment name |
+| `GEMINI_API_KEY` | - | For Google Gemini models |
+| `GROQ_API_KEY` | - | For Groq-hosted models |
+| `AWS_BEARER_TOKEN_BEDROCK` | - | For AWS Bedrock models |
 | `BIOMNI_DATA_PATH` | `./data` | Data directory for the agent |
 | `BIOMNI_TIMEOUT_SECONDS` | `600` | Tool execution timeout |
 | `BIOMNI_LLM` | `claude-sonnet-4-5` | Default LLM for Chainlit UI |

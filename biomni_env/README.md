@@ -1,15 +1,50 @@
-# Biomni Environment Setup
+# Biomni-AD Environment Setup
 
 This directory contains scripts and configuration files to set up a comprehensive bioinformatics environment with various tools and packages.
 
-**Biomni-AD** (this repository) is developed by **Kuan-lin Huang, PhD**, building on the foundational [Biomni](https://github.com/snap-stanford/Biomni) platform by Stanford's SNAP Lab.
+## Which YAML do I use?
+
+| File | Purpose | When to use |
+|------|---------|-------------|
+| `environment.yml` | **Canonical minimal env** - Python 3.11 + LangChain stack + core scientific Python | First-time install, Docker build (default), CI |
+| `fixed_env.yml` | Reduced full env without R / CLI tools (~13 GB) | If you want most of `bio_env.yml` but can skip R |
+| `bio_env.yml` | Layered on top of `environment.yml` for full bioinformatics tooling | When running `setup.sh` (auto-installs this) |
+| `bio_env_py310.yml` | Python 3.10 side env named `biomni_py310` | Only for `analyze_copy_number_purity_ploidy_and_focal_events` (cnvkit needs Py 3.10) |
+| `r_packages.yml` | R packages layered on top of the base env | When `setup.sh` installs R support |
+| `adworkbench_env.yml` | AD Workbench-specific full env | Alternative Docker build: `--build-arg BIOMNI_ENV_FILE=biomni_env/adworkbench_env.yml` |
+
+`environment.yml` is the **single source of truth for the minimal env**. The Dockerfile defaults to it; the lightweight `pip install -e .` path in the project root provides the same core Python deps without conda. Reach for the other YAMLs only when you need the extras they layer on.
+
+**Biomni-AD** (this repository) is developed and maintained by **Kuan-lin Huang, PhD** at **[Kaimen Inc.](https://github.com/Kaimen-Inc/Biomni-AD)**, building on the foundational [Biomni](https://github.com/snap-stanford/Biomni) platform by Stanford's SNAP Lab.
+
+## Branch Guide
+
+| Branch | Purpose |
+|--------|---------|
+| [`feat/adworkbench`](https://github.com/Kaimen-Inc/Biomni-AD/tree/feat/adworkbench) | **Recommended install branch** - AD Workbench integration with tighter dataset integration and containerization that works broadly. |
+| [`biomni-ad`](https://github.com/Kaimen-Inc/Biomni-AD/tree/biomni-ad) | **Primary stable branch** - Biomni-AD specialization without AD Workbench-specific deployment features. |
+| `main` | Upstream [Stanford SNAP Biomni](https://github.com/snap-stanford/Biomni). Periodically merged into `biomni-ad`. Read-only from this fork. |
+
+Install from the `feat/adworkbench` branch (recommended):
+
+```bash
+pip install git+https://github.com/Kaimen-Inc/Biomni-AD.git@feat/adworkbench
+```
+
+## AD Data Lake
+
+Biomni-AD includes three JSON catalogs (NIAGADS, SinaiADRD, BiomniAD Discovery) covering hundreds of AD/ADRD datasets. Files ≤ 100 MB are downloaded automatically on first `AD1` initialization; larger files are accessed via catalog URIs or external portals.
+
+See the **[AD Data Lake section in README.md](../README.md#ad-data-lake)** for full download options and catalog details.
+
+## Environment Installation
 
 1. Clone the repository:
 
-   **Biomni-AD (this fork — recommended for AD research):**
+   **Biomni-AD (this fork - recommended for AD research):**
    ```bash
-   git clone https://github.com/kuanlinhuang/Biomni.git
-   cd Biomni/biomni_env
+   git clone https://github.com/Kaimen-Inc/Biomni-AD.git
+   cd Biomni-AD/biomni_env
    ```
 
    **Upstream Biomni (Stanford SNAP Lab):**
@@ -34,7 +69,7 @@ bash setup.sh
 If you already installed the base version, and just wants to add the additional packages in the new release, you can simply do:
 
 ```bash
-bash new_software_v005.sh
+bash new_software_v008.sh
 ```
 
 Note: we have only tested this setup.sh script with Ubuntu 22.04, 64 bit.

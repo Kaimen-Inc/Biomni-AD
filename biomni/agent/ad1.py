@@ -1,44 +1,93 @@
-import os
 import glob
 import json
-import getpass
-import platform
+import os
 import re
-from typing import Any
-from pathlib import Path
-from datetime import datetime
 import shutil
+from datetime import datetime
+from pathlib import Path
+from typing import Any
+
+from langchain_core.messages import HumanMessage
 
 from biomni.agent.a1 import A1
-from langchain_core.messages import HumanMessage
+from biomni.agent.ad_data_downloader import download_ad_catalog_data
+from biomni.fs_scan import scan_directory
 
 try:
     from rich.console import Console
     from rich.panel import Panel
     from rich.theme import Theme
-    from rich.markdown import Markdown
-    
-    custom_theme = Theme({
-        "info": "dim cyan",
-        "warning": "magenta",
-        "danger": "bold red",
-        "success": "bold green",
-        "header": "bold cyan underline"
-    })
+
+    custom_theme = Theme(
+        {
+            "info": "dim cyan",
+            "warning": "magenta",
+            "danger": "bold red",
+            "success": "bold green",
+            "header": "bold cyan underline",
+        }
+    )
     console = Console(theme=custom_theme)
-    print = console.print # Override print
+    print = console.print  # Override print
 except ImportError:
     # Fallback if rich is not available (though we verified it is)
     pass
 
+
 class AD1(A1):
-    def __init__(self, **kwargs):
+    def __init__(self, download_ad_data: bool = False, **kwargs):
         super().__init__(**kwargs)
-        self.ad_keywords = [
-            "Alzheimer", "AD", "dementia", "MCI", "amyloid", "tau", 
-            "neurodegeneration", "cognition"
-        ]
-        self._enforce_local_data_priority()
+        self.ad_keywords = ["Alzheimer", "AD", "dementia", "MCI", "amyloid", "tau", "neurodegeneration", "cognition"]
+
+        if download_ad_data:
+            # super().__init__() already built the local-data-priority block once
+            # (via the configure() -> _enforce_local_data_priority() dispatch), but
+            # the bulk download just changed what's actually on disk, so it needs
+            # rebuilding here. Without download_ad_data (the default), nothing
+            # changed since then and a second rebuild would just repeat the same
+            # catalog parse + AD-lake scan for no reason.
+            self._bulk_download_ad_data()
+            self._enforce_local_data_priority()
+
+    def _bulk_download_ad_data(self):
+        """Perform bulk download of BiomniAD catalog data (<100MB)."""
+        try:
+            console.print(
+                Panel(
+                    "[header]🚀 Initiating Bulk BiomniAD Data Download[/header]\nScanning catalogs for and fetching files < 100MB to local data lake.",
+                    border_style="cyan",
+                )
+            )
+        except NameError:
+            print("🚀 Initiating Bulk BiomniAD Data Download...")
+
+        results = download_ad_catalog_data(self.data_lake_dir)
+
+        # After download, sync descriptions and inform user
+        self._sync_data_lake_descriptions()
+        self._save_custom_data_index()
+
+        summary_text = (
+            f"✅ [success]Downloaded:[/success] {len(results['downloaded'])} file(s)\n"
+            f"⏭️ [info]Already present:[/info] {len(results['already_present'])} file(s)\n"
+            f"🚫 [warning]Skipped (too large):[/warning] {len(results['skipped_too_large'])} file(s)\n"
+            f"❌ [danger]Failed:[/danger] {len(results['skipped_error'])} file(s)"
+        )
+
+        try:
+            console.print(Panel(summary_text, title="[header]Download Summary[/header]", border_style="green"))
+            if results["downloaded"]:
+                console.print(f"📁 Files stored in: [bold]{os.path.join(self.data_lake_dir, 'biomniAD')}[/bold]")
+            if results["skipped_error"]:
+                console.print("\n[bold yellow]⚠️  Failed downloads (first 20):[/bold yellow]")
+                for entry in results["skipped_error"][:20]:
+                    console.print(f"  [red]•[/red] {entry}")
+        except NameError:
+            print(summary_text)
+            if results["skipped_error"]:
+                print("\n⚠️  Failed downloads (first 20):")
+                for entry in results["skipped_error"][:20]:
+                    print(f"  • {entry}")
 
     def _build_local_data_priority_instruction(self) -> str:
         """Build AD1 local-data-first policy block for the system prompt."""
@@ -46,57 +95,156 @@ class AD1(A1):
         if hasattr(self, "_get_data_lake_items"):
             local_items = self._get_data_lake_items()
 
-        # Also gather data root items (datasets under BIOMNI_USER_DATA_PATH / BIOMNI_DATA_PATH)
-        data_root_items = []
         data_root_dir = getattr(self, "data_root_dir", None)
+        data_root_items = []
         if hasattr(self, "_get_data_root_items"):
-            data_root_items = self._get_data_root_items(max_depth=2)
+            data_root_items = self._get_data_root_items(max_depth=5)
 
-        # Scan BiomniAD JSON catalogs
-        catalog_summary = self._scan_ad_catalogs_summary()
+        data_lake_dir = getattr(self, "data_lake_dir", "")
+        ad_data_lake = os.path.join(data_lake_dir, "biomniAD")
 
-        preview_limit = 25
-        preview = "\n".join(f"- {item}" for item in local_items[:preview_limit])
-        if len(local_items) > preview_limit:
-            preview += f"\n- ... and {len(local_items) - preview_limit} more data lake files"
-        if not preview:
-            preview = "- No data lake files detected yet."
+        # Build enriched BiomniAD dataset map from catalog JSONs
+        catalog_datasets = self._load_catalog_datasets()
+        local_ad_datasets = self._build_local_ad_dataset_inventory(ad_data_lake, catalog_datasets)
 
-        # Data root preview
+        # Format local AD datasets section
+        ad_lines = []
+        for entry in local_ad_datasets:
+            ad_lines.append(f"  [{entry['id']}] {entry['title']}")
+            ad_lines.append(f"    Description: {entry['description']}")
+            ad_lines.append(f"    Directory: {entry['dir']}")
+            for f in entry["files"]:
+                ad_lines.append(f"    - {f}")
+        ad_section = "\n".join(ad_lines) if ad_lines else "  (none downloaded yet)"
+
+        # Non-AD data lake files (generic Biomni data)
+        non_ad = [i for i in local_items if not i.startswith("biomniAD/")]
+        non_ad_preview = "\n".join(f"  - {i}" for i in non_ad[:20])
+        if len(non_ad) > 20:
+            non_ad_preview += f"\n  - ... and {len(non_ad) - 20} more"
+
+        # Data root preview - prefer pre-computed inventory from Chainlit sidebar
         root_preview = ""
-        if data_root_dir and data_root_items:
+        _precomputed = getattr(self, "user_data_inventory", None)
+        if _precomputed:
+            root_preview = f"\n\nUSER DATA DIRECTORY ({data_root_dir}):\n{_precomputed}"
+        elif data_root_dir and data_root_items:
             root_dirs = sorted({item.split("/")[0] for item in data_root_items if "/" in item})
             root_files = [item for item in data_root_items if "/" not in item]
             root_lines = []
-            for d in root_dirs[:15]:
+            for d in root_dirs[:80]:
                 sub_count = sum(1 for i in data_root_items if i.startswith(d + "/"))
-                root_lines.append(f"- 📁 {d}/ ({sub_count} file(s))")
-            for f in root_files[:5]:
-                root_lines.append(f"- 📄 {f}")
-            if len(root_dirs) > 15:
-                root_lines.append(f"- ... and {len(root_dirs) - 15} more directories")
-            root_preview = f"\n\nData root directory ({data_root_dir}):\n" + "\n".join(root_lines)
+                root_lines.append(f"  - 📁 {d}/ ({sub_count} file(s))")
+            for f in root_files[:30]:
+                root_lines.append(f"  - 📄 {f}")
+            if len(root_dirs) > 80:
+                root_lines.append(f"  - ... and {len(root_dirs) - 80} more directories")
+            root_preview = f"\n\nUSER DATA DIRECTORY ({data_root_dir}):\n" + "\n".join(root_lines)
         elif data_root_dir:
-            root_preview = f"\n\nData root directory ({data_root_dir}): (empty or not mounted)"
+            root_preview = f"\n\nUSER DATA DIRECTORY ({data_root_dir}): (empty or not mounted)"
 
         return f"""
 ### AD1_LOCAL_DATA_POLICY_START
-AD1 GLOBAL PRIORITY (APPLIES TO ALL TASKS):
-1. Local data first: always inspect the built-in data lake and user data directory before web search.
-   - Built-in data lake: {getattr(self, 'data_lake_dir', 'not set')}
-    - User data directory (BIOMNI_USER_DATA_PATH / BIOMNI_DATA_PATH): {data_root_dir or 'not set'}
-   - Use os.listdir() on both locations to discover available datasets.
-2. BiomniAD catalogs: scan JSON catalogs in biomni/know_how/resource/ for AD datasets with download URIs.
-3. External sources third: use web/literature/databases only to supplement missing local evidence.
-4. Code generation last: write custom code only when built-in tools and available data are insufficient.
-5. Never fabricate data. If local data is missing, explicitly state the gap.
+## AD1 DATA PRIORITY RULES - ALWAYS FOLLOW IN ORDER
 
-Data lake files: {len(local_items)}
-{preview}{root_preview}
+1. **LOCAL FILES FIRST** - Use files already on disk. Do NOT fetch data that is already present.
+   - BiomniAD data lake: {ad_data_lake}
+   - General data lake: {data_lake_dir}
+   - User data dir: {data_root_dir or "not set"}
 
-{catalog_summary}
+2. **BiomniAD CATALOG** - If a dataset is listed below without local files, use its catalog URI to fetch.
+   Catalogs: biomni/know_how/resource/BiomniAD_Discovery.json, NIAGADS_datasets_with_files.json, SinaiADRD.json
+
+3. **Web / literature** - Only after checking local and catalog sources.
+
+4. **Never fabricate data.** If a file is missing, say so explicitly.
+
+---
+## LOCALLY AVAILABLE BiomniAD DATASETS ({len(local_ad_datasets)} datasets, ready to load directly)
+
+{ad_section}
+
+## GENERAL DATA LAKE FILES ({len(non_ad)} files)
+{non_ad_preview or "  (none)"}
+{root_preview}
 ### AD1_LOCAL_DATA_POLICY_END
 """.strip()
+
+    def _load_catalog_datasets(self) -> dict[str, dict]:
+        """Load all BiomniAD catalog JSONs and return a dict keyed by dataset id.
+
+        Catalog files are static repo content, so the parse is cached on the
+        instance after the first call. Without this, every call to
+        ``_enforce_local_data_priority`` (agent construction, every query once
+        the tool retriever updates the system prompt, and any AD-keyword
+        message) re-globbed and re-parsed the same ~100KB of JSON from scratch.
+        """
+        cached = getattr(self, "_ad_catalog_datasets_cache", None)
+        if cached is not None:
+            return cached
+
+        current_dir = os.path.dirname(os.path.abspath(__file__))
+        resource_dir = os.path.join(current_dir, "..", "know_how", "resource")
+        datasets: dict[str, dict] = {}
+        for pat in ["BiomniAD*.json", "NIAGADS*.json", "SinaiADRD.json"]:
+            for catalog_path in glob.glob(os.path.join(resource_dir, pat)):
+                try:
+                    with open(catalog_path) as f:
+                        data = json.load(f)
+                    for ds in data.get("datasets", []):
+                        ds_id = ds.get("id")
+                        if ds_id:
+                            datasets[ds_id] = ds
+                except Exception:
+                    pass
+        self._ad_catalog_datasets_cache = datasets
+        return datasets
+
+    def _build_local_ad_dataset_inventory(self, ad_data_lake: str, catalog_datasets: dict) -> list[dict]:
+        """Return a list of biomniAD datasets that have local files, enriched with catalog descriptions.
+
+        Backed by the bounded/cached scanner (``biomni.fs_scan``) instead of a raw
+        ``os.listdir`` per dataset directory: the AD lake is exactly the kind of
+        tree that can end up relocated onto a slower or network-backed disk
+        (``BIOMNI_DATA_LAKE_PATH``), and an unbounded per-directory walk is the
+        same failure mode ``fs_scan`` exists to prevent for the user's workspace.
+        """
+        if not os.path.isdir(ad_data_lake):
+            return []
+
+        scan = scan_directory(ad_data_lake, max_depth=1)
+        files_by_dataset: dict[str, list[str]] = {}
+        for rel_path in scan.files:
+            ds_id, sep, fname = rel_path.partition("/")
+            if not sep:
+                continue  # a loose file directly under ad_data_lake, not inside a dataset dir
+            base = os.path.basename(fname)
+            if base.startswith(".") or any(base.lower().startswith(p) for p in ("readme", "read_me")):
+                continue
+            files_by_dataset.setdefault(ds_id, []).append(base)
+
+        entries = []
+        for ds_id in sorted(files_by_dataset):
+            local_files = sorted(files_by_dataset[ds_id])
+            if not local_files:
+                continue
+            ds_dir = os.path.join(ad_data_lake, ds_id)
+            cat = catalog_datasets.get(ds_id, {})
+            title = cat.get("title") or ds_id
+            # Truncate long description to 1 sentence
+            desc = (cat.get("study_description") or "").split(".")[0].strip()
+            if len(desc) > 160:
+                desc = desc[:157] + "..."
+            entries.append(
+                {
+                    "id": ds_id,
+                    "title": title,
+                    "description": desc or "No description available.",
+                    "dir": ds_dir,
+                    "files": local_files[:10] + (["..."] if len(local_files) > 10 else []),
+                }
+            )
+        return entries
 
     def _enforce_local_data_priority(self) -> None:
         """Ensure local-data-first policy is always present even after prompt updates."""
@@ -121,40 +269,47 @@ Data lake files: {len(local_items)}
         """Update prompt and then re-apply AD1 global local-data-first policy."""
         super().update_system_prompt_with_selected_resources(selected_resources)
         self._enforce_local_data_priority()
-        
+
     def go(self, prompt):
         """Execute the agent with the given prompt, injecting AD context if relevant."""
-        
+
         # Initialize log/raw_log early so _save_run_artifacts always has them,
         # even when super().go() raises an exception.
         self.log = getattr(self, "log", [])
         self.raw_log = getattr(self, "raw_log", [])
 
         # 1. Setup run directory
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        run_id = f"run_{timestamp}"
-        runs_root = os.path.abspath(os.path.join(os.getcwd(), "runs"))
+        run_id = self._build_run_id(prompt)
+        runs_root = self._resolve_runs_root()
         current_run_dir = os.path.join(runs_root, run_id)
         os.makedirs(current_run_dir, exist_ok=True)
-        
+
         try:
-            console.print(Panel(f"[bold white]🚀 Starting AD1 Agent Run[/bold white]\n[dim]ID: {run_id}[/dim]", title="[header]Biomni AD1[/header]", border_style="cyan"))
+            console.print(
+                Panel(
+                    f"[bold white]🚀 Starting AD1 Agent Run[/bold white]\n[dim]ID: {run_id}[/dim]",
+                    title="[header]Biomni AD1[/header]",
+                    border_style="cyan",
+                )
+            )
         except NameError:
-             print(f"\n🚀 Starting AD1 Agent Run: {run_id}")
-        
+            print(f"\n🚀 Starting AD1 Agent Run: {run_id}")
+
         # 2. Capture initial file state
         initial_files = self._get_all_files(os.getcwd())
 
         # Check for AD keywords
         is_ad_task = any(keyword.lower() in prompt.lower() for keyword in self.ad_keywords)
-        
+
         if is_ad_task:
             try:
-                console.print("\n[magenta]🧠 AD/Dementia task detected.[/magenta] Injecting specialized data sourcing protocols...")
+                console.print(
+                    "\n[magenta]🧠 AD/Dementia task detected.[/magenta] Injecting specialized data sourcing protocols..."
+                )
             except NameError:
                 print("\n🧠 AD/Dementia task detected. Injecting specialized data sourcing protocols...")
             self._inject_ad_context()
-        
+
         # 3. Run the agent
         try:
             super().go(prompt)
@@ -163,10 +318,10 @@ Data lake files: {len(local_items)}
                 console.print(f"\n[danger]❌ Agent execution failed:[/danger] {e}")
             except NameError:
                 print(f"\n❌ Agent execution failed: {e}")
-        
+
         # 4. Save artifacts
         self._save_run_artifacts(run_id, current_run_dir, initial_files)
-        
+
         last_content = ""
         try:
             if hasattr(self, "_conversation_state") and self._conversation_state:
@@ -178,9 +333,9 @@ Data lake files: {len(local_items)}
     def _save_run_artifacts(self, run_id, run_dir, initial_files):
         """Standardized logic to save all run artifacts (trace, notebook, reports, and generated files)."""
         try:
-             console.print("\n[header]💾 Saving run artifacts...[/header]")
+            console.print("\n[header]💾 Saving run artifacts...[/header]")
         except NameError:
-             print("\n💾 Saving run artifacts...")
+            print("\n💾 Saving run artifacts...")
 
         # Save trace logs (JSON)
         trace_path = os.path.join(run_dir, "trace.json")
@@ -188,9 +343,9 @@ Data lake files: {len(local_items)}
             with open(trace_path, "w") as f:
                 json.dump(self.log, f, indent=2)
             try:
-                console.print(f"  [success]✓[/success] Saved execution trace: [bold]trace.json[/bold]")
+                console.print("  [success]✓[/success] Saved execution trace: [bold]trace.json[/bold]")
             except NameError:
-                print(f"  ✓ Saved execution trace: trace.json")
+                print("  ✓ Saved execution trace: trace.json")
         except Exception as e:
             print(f"  ⚠️ Failed to save trace: {e}")
 
@@ -201,9 +356,9 @@ Data lake files: {len(local_items)}
             with open(nb_path, "w", encoding="utf-8") as f:
                 json.dump(nb_content, f, indent=2)
             try:
-                console.print(f"  [success]✓[/success] Saved trace notebook: [bold]trace.ipynb[/bold]")
+                console.print("  [success]✓[/success] Saved trace notebook: [bold]trace.ipynb[/bold]")
             except NameError:
-                print(f"  ✓ Saved trace notebook: trace.ipynb")
+                print("  ✓ Saved trace notebook: trace.ipynb")
         except Exception as e:
             print(f"  ⚠️ Failed to save notebook: {e}")
 
@@ -214,10 +369,10 @@ Data lake files: {len(local_items)}
             with open(history_path_base + ".md", "w", encoding="utf-8") as f:
                 f.write(md_content)
             try:
-                console.print(f"  [success]✓[/success] Saved report: [bold]report.md[/bold]")
+                console.print("  [success]✓[/success] Saved report: [bold]report.md[/bold]")
             except NameError:
-                print(f"  ✓ Saved report: report.md")
-                
+                print("  ✓ Saved report: report.md")
+
             # Try to save PDF if possible
             self.save_conversation_history(history_path_base, include_images=True, save_pdf=True)
         except Exception as e:
@@ -228,14 +383,45 @@ Data lake files: {len(local_items)}
         new_files = final_files - initial_files
 
         allowed_output_extensions = {
-            ".png", ".jpg", ".jpeg", ".gif", ".bmp", ".webp", ".svg", ".pdf",
-            ".csv", ".tsv", ".xlsx", ".xls", ".json", ".jsonl", ".txt", ".md",
-            ".html", ".parquet", ".npy", ".npz", ".pkl", ".pt", ".h5", ".hdf5",
-            ".rds", ".loom", ".h5ad",
+            ".png",
+            ".jpg",
+            ".jpeg",
+            ".gif",
+            ".bmp",
+            ".webp",
+            ".svg",
+            ".pdf",
+            ".csv",
+            ".tsv",
+            ".xlsx",
+            ".xls",
+            ".json",
+            ".jsonl",
+            ".txt",
+            ".md",
+            ".html",
+            ".parquet",
+            ".npy",
+            ".npz",
+            ".pkl",
+            ".pt",
+            ".h5",
+            ".hdf5",
+            ".rds",
+            ".loom",
+            ".h5ad",
         }
         excluded_path_parts = {
-            "runs", ".venv", "venv", "env", ".git", "__pycache__", ".chainlit",
-            "site-packages", "dist-info", "node_modules",
+            "runs",
+            ".venv",
+            "venv",
+            "env",
+            ".git",
+            "__pycache__",
+            ".chainlit",
+            "site-packages",
+            "dist-info",
+            "node_modules",
         }
 
         def is_generated_output_file(file_path: str) -> bool:
@@ -252,18 +438,18 @@ Data lake files: {len(local_items)}
             return Path(file_path).suffix.lower() in allowed_output_extensions
 
         new_output_files = [f for f in sorted(new_files) if is_generated_output_file(f)]
-        
+
         if new_output_files:
             print(f"\n📦 New output files generated ({len(new_output_files)}):")
             for file_path in new_output_files:
                 try:
                     rel_path = os.path.relpath(file_path, os.getcwd())
                     dest_path = os.path.join(run_dir, os.path.basename(file_path))
-                    
+
                     if os.path.exists(dest_path):
                         base, ext = os.path.splitext(dest_path)
                         dest_path = f"{base}_{int(datetime.now().timestamp())}{ext}"
-                    
+
                     if os.path.isfile(file_path):
                         shutil.move(file_path, dest_path)
                         print(f"  ✓ Moved to run folder: {rel_path}")
@@ -280,107 +466,108 @@ Data lake files: {len(local_items)}
     def _generate_notebook(self):
         """Generate a Jupyter Notebook structure from self.raw_log."""
         cells = []
-        
-        # Add header
-        cells.append({
-            "cell_type": "markdown",
-            "metadata": {},
-            "source": ["# Biomni AD1 Execution Trace\n", f"Run ID: {datetime.now().strftime('%Y%m%d_%H%M%S')}"]
-        })
 
-        if not hasattr(self, 'raw_log') or not self.raw_log:
+        # Add header
+        cells.append(
+            {
+                "cell_type": "markdown",
+                "metadata": {},
+                "source": ["# Biomni AD1 Execution Trace\n", f"Run ID: {datetime.now().strftime('%Y%m%d_%H%M%S')}"],
+            }
+        )
+
+        if not hasattr(self, "raw_log") or not self.raw_log:
             return {"cells": cells, "metadata": {}, "nbformat": 4, "nbformat_minor": 5}
 
         import re
+
         for msg in self.raw_log:
             # Handle user/system messages
-            msg_type = getattr(msg, 'type', '')
-            msg_content = getattr(msg, 'content', '')
-            
+            msg_type = getattr(msg, "type", "")
+            msg_content = getattr(msg, "content", "")
+
             if msg_type in ["human", "system"]:
-                cells.append({
-                    "cell_type": "markdown",
-                    "metadata": {},
-                    "source": [f"**{msg_type.title()}**: {msg_content}"]
-                })
-            
+                cells.append(
+                    {"cell_type": "markdown", "metadata": {}, "source": [f"**{msg_type.title()}**: {msg_content}"]}
+                )
+
             # Handle AI messages (thoughts, tools, responses)
             elif msg_type == "ai":
                 # 1. Look for XML tags <execute> manually (requested by trace logic)
                 code_blocks = re.findall(r"<execute>(.*?)</execute>", msg_content, re.DOTALL)
-                
+
                 # 2. Extract thinking (text before first tag)
                 thinking = msg_content
                 if code_blocks:
                     first_tag_pos = msg_content.find("<execute>")
                     thinking = msg_content[:first_tag_pos].strip()
-                
+
                 if thinking:
-                     cells.append({
-                        "cell_type": "markdown",
-                        "metadata": {},
-                        "source": [f"**Assistant Reasoning**:\n{thinking}"]
-                    })
+                    cells.append(
+                        {"cell_type": "markdown", "metadata": {}, "source": [f"**Assistant Reasoning**:\n{thinking}"]}
+                    )
 
                 for code in code_blocks:
-                    cells.append({
-                        "cell_type": "code",
-                        "execution_count": None,
-                        "metadata": {},
-                        "outputs": [],
-                        "source": [code.strip()]
-                    })
-                
+                    cells.append(
+                        {
+                            "cell_type": "code",
+                            "execution_count": None,
+                            "metadata": {},
+                            "outputs": [],
+                            "source": [code.strip()],
+                        }
+                    )
+
                 # 3. Final response (text after last tag)
                 after_tags = msg_content
                 if code_blocks:
                     last_tag_pos = msg_content.rfind("</execute>")
-                    after_tags = msg_content[last_tag_pos+10:].strip()
-                
+                    after_tags = msg_content[last_tag_pos + 10 :].strip()
+
                 if after_tags and not any(tag in after_tags for tag in ["<solution>", "<execute>"]):
-                    cells.append({
-                        "cell_type": "markdown",
-                        "metadata": {},
-                        "source": [f"**Assistant Output**:\n{after_tags}"]
-                    })
+                    cells.append(
+                        {"cell_type": "markdown", "metadata": {}, "source": [f"**Assistant Output**:\n{after_tags}"]}
+                    )
 
                 # 4. Handle native tool_calls if they exist
                 if hasattr(msg, "tool_calls") and msg.tool_calls:
                     for tool_call in msg.tool_calls:
                         tool_name = tool_call.get("name")
                         tool_args = tool_call.get("args")
-                        
+
                         if tool_name == "run_python_repl":
-                            cells.append({
-                                "cell_type": "code",
-                                "execution_count": None,
-                                "metadata": {},
-                                "outputs": [],
-                                "source": [tool_args.get("command", "# No code")]
-                            })
+                            cells.append(
+                                {
+                                    "cell_type": "code",
+                                    "execution_count": None,
+                                    "metadata": {},
+                                    "outputs": [],
+                                    "source": [tool_args.get("command", "# No code")],
+                                }
+                            )
                         else:
-                            cells.append({
-                                "cell_type": "markdown",
-                                "metadata": {},
-                                "source": [f"*Tool Call*: {tool_name}\nArgs: {json.dumps(tool_args)}"]
-                            })
+                            cells.append(
+                                {
+                                    "cell_type": "markdown",
+                                    "metadata": {},
+                                    "source": [f"*Tool Call*: {tool_name}\nArgs: {json.dumps(tool_args)}"],
+                                }
+                            )
 
             # Handle Tool Messages (Outputs)
             elif msg_type == "tool":
-                 cells.append({
-                    "cell_type": "markdown",
-                    "metadata": {},
-                    "source": [f"**Observation ({getattr(msg, 'name', 'Tool')})**:\n```\n{msg_content}\n```"]
-                })
+                cells.append(
+                    {
+                        "cell_type": "markdown",
+                        "metadata": {},
+                        "source": [f"**Observation ({getattr(msg, 'name', 'Tool')})**:\n```\n{msg_content}\n```"],
+                    }
+                )
 
         notebook = {
             "cells": cells,
             "metadata": {
-                "kernelspec": {
-                    "display_name": "Python 3",
-                    "language": "python",
-                    "name": "python3"
-                },
+                "kernelspec": {"display_name": "Python 3", "language": "python", "name": "python3"},
                 "language_info": {
                     "codemirror_mode": {"name": "ipython", "version": 3},
                     "file_extension": ".py",
@@ -388,35 +575,13 @@ Data lake files: {len(local_items)}
                     "name": "python",
                     "nbconvert_exporter": "python",
                     "pygments_lexer": "ipython3",
-                    "version": "3.8.5"
-                }
+                    "version": "3.8.5",
+                },
             },
             "nbformat": 4,
-            "nbformat_minor": 5
+            "nbformat_minor": 5,
         }
         return notebook
-
-    def _get_all_files(self, directory):
-        """Recursively get all files in a directory, ignoring system and run directories."""
-        file_list = []
-        excluded_dirs = {
-            "runs", ".git", "__pycache__", ".gemini", ".venv", "venv", "env",
-            ".chainlit", "node_modules", "site-packages",
-        }
-
-        for root, dirs, files in os.walk(directory):
-            # Prune ignored directories early.
-            dirs[:] = [
-                d for d in dirs
-                if not d.startswith(".") and d not in excluded_dirs
-            ]
-                
-            for file in files:
-                # Ignore hidden files
-                if file.startswith('.'):
-                    continue
-                file_list.append(os.path.join(root, file))
-        return set(file_list)
 
     def _scan_ad_catalogs_summary(self) -> str:
         """Scan BiomniAD JSON catalogs and return a compact summary string."""
@@ -437,7 +602,7 @@ Data lake files: {len(local_items)}
         datasets = []
         for p in catalog_paths:
             try:
-                with open(p, "r") as f:
+                with open(p) as f:
                     data = json.load(f)
                 datasets.extend(data.get("datasets", []))
             except Exception:
@@ -451,7 +616,40 @@ Data lake files: {len(local_items)}
             lines.append(f"  - {title} ({n_files} file URI(s))")
         if len(datasets) > 20:
             lines.append(f"  ... and {len(datasets) - 20} more datasets")
-        return "\n".join(lines)
+
+        # Check for local presence of files
+        enriched_lines = []
+        ad_data_lake = os.path.join(getattr(self, "data_lake_dir", ""), "biomniAD")
+
+        for line in lines:
+            if line.startswith("  - "):
+                # Try to extract the title/id from the line and dataset object to check local files
+                # This matches the title in the loop below
+                pass
+            enriched_lines.append(line)
+
+        # Better loop for checking local availability
+        final_lines = [lines[0], lines[1]]
+        for d in datasets[:25]:
+            title = d.get("title", d.get("id", "?"))
+            ds_id = d.get("id", "unknown")
+            files = d.get("files", [])
+
+            local_count = 0
+            if ad_data_lake and os.path.isdir(os.path.join(ad_data_lake, ds_id)):
+                ds_dir = os.path.join(ad_data_lake, ds_id)
+                for f in files:
+                    fname = f.get("name", os.path.basename(f.get("uri", "")))
+                    if fname and os.path.exists(os.path.join(ds_dir, fname)):
+                        local_count += 1
+
+            status = f" ({local_count}/{len(files)} LOCAL)" if local_count > 0 else f" ({len(files)} URIs)"
+            final_lines.append(f"  - {title}{status}")
+
+        if len(datasets) > 25:
+            final_lines.append(f"  ... and {len(datasets) - 25} more datasets")
+
+        return "\n".join(final_lines)
 
     def _inject_ad_context(self):
         """Inject BiomniAD data sourcing instructions into the system prompt."""
@@ -460,16 +658,16 @@ Data lake files: {len(local_items)}
             know_how_path = os.path.join(current_dir, "..", "know_how", "biomniAD_data_sourcing.md")
 
             if os.path.exists(know_how_path):
-                with open(know_how_path, "r") as f:
+                with open(know_how_path) as f:
                     ad_sourcing_content = f.read()
 
                 data_root_dir = getattr(self, "data_root_dir", "not set")
 
                 ad_instruction = f"""
 
-AD/DEMENTIA TOOL PRIORITY — ALWAYS FOLLOW THIS ORDER:
-1. **Local data first**: Scan the built-in data lake ({getattr(self, 'data_lake_dir', 'not set')}) and user data directory ({data_root_dir}) for any locally available AD datasets.
-   Use os.listdir() on both locations — the data lake has curated datasets; the user directory may contain additional data.
+AD/DEMENTIA TOOL PRIORITY - ALWAYS FOLLOW THIS ORDER:
+1. **Local data first**: Scan the built-in data lake ({getattr(self, "data_lake_dir", "not set")}) and user data directory ({data_root_dir}) for any locally available AD datasets.
+   Use os.listdir() on both locations - the data lake has curated datasets; the user directory may contain additional data.
 2. **BiomniAD catalogs second**: Load JSON catalogs from biomni/know_how/resource/ to find datasets with download URIs.
 3. **Web & literature search third**: Use advanced_web_search(), search_pubmed(), search_biorxiv() to supplement.
 4. **Code generation last**: Write custom Python/R code only when the above cannot answer directly.
@@ -488,7 +686,6 @@ ALZHEIMER'S & DEMENTIA DATA SOURCING PROTOCOL
         except Exception as e:
             print(f"Warning: Failed to inject AD context: {e}")
 
-
     def launch_ui(
         self,
         thread_id: int = 42,
@@ -501,12 +698,10 @@ ALZHEIMER'S & DEMENTIA DATA SOURCING PROTOCOL
             import gradio as gr
             from gradio import ChatMessage
         except ImportError as exc:
-            raise ImportError(
-                "Gradio is not installed. Please install it with: pip install gradio"
-            ) from exc
+            raise ImportError("Gradio is not installed. Please install it with: pip install gradio") from exc
 
-        from time import time
         import re
+        from time import time
 
         supported_extensions = (".png", ".jpg", ".jpeg", ".gif", ".bmp", ".webp", ".pdf")
 
@@ -528,33 +723,33 @@ ALZHEIMER'S & DEMENTIA DATA SOURCING PROTOCOL
         def get_all_files(directory):
             """Recursively get all files in a directory."""
             file_list = []
-            for root, dirs, files in os.walk(directory):
+            for root, _dirs, files in os.walk(directory):
                 for file in files:
                     # Ignore hidden files and directories
-                    if file.startswith('.') or '/.' in root:
+                    if file.startswith(".") or "/." in root:
                         continue
                     file_list.append(os.path.join(root, file))
             return set(file_list)
-            
+
         def get_runs_list():
             """Get list of recent runs with prompt history."""
-            runs_dir = os.path.join(os.getcwd(), "runs")
+            runs_dir = self._resolve_runs_root()
             if not os.path.exists(runs_dir):
                 return "No runs found yet."
-            
+
             # Sort runs by name (timestamped)
-            runs = sorted([d for d in os.listdir(runs_dir) if d.startswith('run_')], reverse=True)
-            
+            runs = sorted([d for d in os.listdir(runs_dir) if d.startswith("run_")], reverse=True)
+
             md_list = "### 🕒 Recent Runs\n"
-            for i, r in enumerate(runs[:15]): # Show up to 15
+            for i, r in enumerate(runs[:15]):  # Show up to 15
                 run_num = len(runs) - i
                 prompt_snippet = ""
-                
+
                 # Try to get prompt from trace.json
                 trace_json_path = os.path.join(runs_dir, r, "trace.json")
                 if os.path.exists(trace_json_path):
                     try:
-                        with open(trace_json_path, "r") as f:
+                        with open(trace_json_path) as f:
                             trace_data = json.load(f)
                             if trace_data and isinstance(trace_data, list):
                                 # First entry is usually the user prompt
@@ -562,9 +757,9 @@ ALZHEIMER'S & DEMENTIA DATA SOURCING PROTOCOL
                                 if "Human Message" in first_msg:
                                     # Extract text after headers
                                     prompt_snippet = first_msg.split("\n\n")[-1][:60].strip() + "..."
-                    except:
+                    except Exception:
                         pass
-                
+
                 if prompt_snippet:
                     md_list += f"> **Run #{run_num}**  \n> {prompt_snippet}  \n> [ {r} ]\n\n"
                 else:
@@ -594,12 +789,10 @@ ALZHEIMER'S & DEMENTIA DATA SOURCING PROTOCOL
             # Show data root directory contents
             data_root = getattr(self, "data_root_dir", None)
             if data_root and os.path.isdir(data_root):
-                lines.append(f"\n### 📂 Data Root")
+                lines.append("\n### 📂 Data Root")
                 lines.append(f"Path: `{data_root}`")
                 try:
-                    entries = sorted(
-                        [name for name in os.listdir(data_root) if not name.startswith(".")]
-                    )
+                    entries = sorted([name for name in os.listdir(data_root) if not name.startswith(".")])
                 except OSError:
                     entries = []
 
@@ -619,9 +812,7 @@ ALZHEIMER'S & DEMENTIA DATA SOURCING PROTOCOL
                 lines.append(f"Path: `{user_data_path}`")
                 if os.path.isdir(user_data_path):
                     try:
-                        entries = sorted(
-                            [name for name in os.listdir(user_data_path) if not name.startswith(".")]
-                        )
+                        entries = sorted([name for name in os.listdir(user_data_path) if not name.startswith(".")])
                     except OSError:
                         entries = []
 
@@ -648,7 +839,7 @@ ALZHEIMER'S & DEMENTIA DATA SOURCING PROTOCOL
 
             text_input = prompt_input.get("text", "")
             files = prompt_input.get("files", [])
-            
+
             # Capture initial file state
             initial_files = get_all_files(os.getcwd())
 
@@ -680,7 +871,13 @@ ALZHEIMER'S & DEMENTIA DATA SOURCING PROTOCOL
                         metadata={"title": "🧠 AD Context"},
                     )
                 )
-                yield inner_history, main_history, gr.update(), gr.update(), gr.update() # Update outputs including runs_list
+                yield (
+                    inner_history,
+                    main_history,
+                    gr.update(),
+                    gr.update(),
+                    gr.update(),
+                )  # Update outputs including runs_list
 
             for file_info in files:
                 file_path = file_info
@@ -692,6 +889,7 @@ ALZHEIMER'S & DEMENTIA DATA SOURCING PROTOCOL
                     agent_messages.append(HumanMessage(content=msg["content"]))
                 elif msg["role"] == "assistant" and msg["content"] not in ["Executor is working on it 👉"]:
                     from langchain_core.messages import AIMessage
+
                     agent_messages.append(AIMessage(content=msg["content"]))
 
             agent_messages.append(HumanMessage(content=text_input))
@@ -796,9 +994,7 @@ ALZHEIMER'S & DEMENTIA DATA SOURCING PROTOCOL
                         code_execution_messages.append(code_msg)
                         yield inner_history, main_history, gr.update(), gr.update(), gr.update()
 
-                    observation_match = re.search(
-                        r"<observation>(.*?)</observation>", message.content, re.DOTALL
-                    )
+                    observation_match = re.search(r"<observation>(.*?)</observation>", message.content, re.DOTALL)
                     if observation_match:
                         observation = observation_match.group(1).strip()
 
@@ -827,9 +1023,7 @@ ALZHEIMER'S & DEMENTIA DATA SOURCING PROTOCOL
                         )
                         yield inner_history, main_history, gr.update(), gr.update(), gr.update()
 
-                        if isinstance(observation, str) and any(
-                            ext in observation for ext in supported_extensions
-                        ):
+                        if isinstance(observation, str) and any(ext in observation for ext in supported_extensions):
                             matches = re.findall(
                                 r"(\S+?(?:\.png|\.jpg|\.jpeg|\.gif|\.bmp|\.webp|\.pdf))",
                                 observation,
@@ -837,9 +1031,7 @@ ALZHEIMER'S & DEMENTIA DATA SOURCING PROTOCOL
                             valid_matches = []
                             for match in matches:
                                 if not (
-                                    match.startswith("Warning:")
-                                    or match.startswith("Error:")
-                                    or match.startswith("'")
+                                    match.startswith("Warning:") or match.startswith("Error:") or match.startswith("'")
                                 ):
                                     if not match.startswith("."):
                                         valid_matches.append(match)
@@ -903,14 +1095,10 @@ ALZHEIMER'S & DEMENTIA DATA SOURCING PROTOCOL
                     self.main_history_copy += [{"role": "assistant", "content": solution}]
                 else:
                     cleaned_content = re.sub(r"<execute>.*?</execute>", "", final_message, flags=re.DOTALL)
-                    cleaned_content = re.sub(
-                        r"<observation>.*?</observation>", "", cleaned_content, flags=re.DOTALL
-                    )
+                    cleaned_content = re.sub(r"<observation>.*?</observation>", "", cleaned_content, flags=re.DOTALL)
                     cleaned_content = re.sub(r"\n\s*\n", "\n\n", cleaned_content)
 
-                    summary = cleaned_content.strip() or (
-                        "Task completed. Please check the execution log for details."
-                    )
+                    summary = cleaned_content.strip() or ("Task completed. Please check the execution log for details.")
                     main_history.append(
                         ChatMessage(
                             role="assistant",
@@ -930,13 +1118,12 @@ ALZHEIMER'S & DEMENTIA DATA SOURCING PROTOCOL
 
             # Sync raw_log for notebook generation
             if s and "messages" in s:
-                 self.raw_log = list(s["messages"])
+                self.raw_log = list(s["messages"])
 
             # Setup run directory
-            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            run_id = f"run_{timestamp}"
-            runs_root = os.path.abspath(os.path.join(os.getcwd(), "runs"))
-            os.makedirs(runs_root, exist_ok=True) # Ensure runs_root exists
+            run_id = self._build_run_id(prompt_input)
+            runs_root = self._resolve_runs_root()
+            os.makedirs(runs_root, exist_ok=True)  # Ensure runs_root exists
             current_run_dir = os.path.join(runs_root, run_id)
             os.makedirs(current_run_dir, exist_ok=True)
 
@@ -945,13 +1132,19 @@ ALZHEIMER'S & DEMENTIA DATA SOURCING PROTOCOL
 
             # Update runs list in sidebar
             updated_runs_list = get_runs_list()
-            
+
             # Count total runs for the success message
-            total_runs = len([d for d in os.listdir(runs_root) if d.startswith('run_')])
+            total_runs = len([d for d in os.listdir(runs_root) if d.startswith("run_")])
 
             status_md = f"### ✅ Run #{total_runs} Completed\nAll artifacts, including logs and generated data, have been moved to:\n`{current_run_dir}`"
 
-            yield inner_history, main_history, gr.update(value=status_md, visible=True), gr.update(value=updated_runs_list), gr.update(visible=False)
+            yield (
+                inner_history,
+                main_history,
+                gr.update(value=status_md, visible=True),
+                gr.update(value=updated_runs_list),
+                gr.update(visible=False),
+            )
 
         def like(data: Any = None) -> None:
             """Handle like/dislike events from the chatbot."""
@@ -961,12 +1154,12 @@ ALZHEIMER'S & DEMENTIA DATA SOURCING PROTOCOL
         # Custom CSS - Simple & Professional
         custom_css = """
         @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&display=swap');
-        
+
         body, .gradio-container {
             font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif !important;
             background-color: #ffffff !important;
         }
-        
+
         /* Sidebar */
         #sidebar {
             background: #f8fafc;
@@ -974,12 +1167,12 @@ ALZHEIMER'S & DEMENTIA DATA SOURCING PROTOCOL
             padding: 20px;
             min-width: 240px !important;
         }
-        
+
         #sidebar .prose {
             word-wrap: break-word !important;
             white-space: normal !important;
         }
-        
+
         #sidebar .prose blockquote {
             border-left: 3px solid #3b82f6;
             margin: 8px 0;
@@ -989,7 +1182,7 @@ ALZHEIMER'S & DEMENTIA DATA SOURCING PROTOCOL
             font-size: 13px;
             box-shadow: 0 1px 3px rgba(0,0,0,0.08);
         }
-        
+
         #sidebar .prose strong {
             color: #1e40af;
         }
@@ -999,26 +1192,26 @@ ALZHEIMER'S & DEMENTIA DATA SOURCING PROTOCOL
             background: #ffffff;
             padding: 24px;
         }
-        
+
         /* Trace Area */
         #trace-area {
             background: #fafafa;
             border-left: 1px solid #e2e8f0;
             padding: 20px;
         }
-        
+
         /* Messages */
         .message-row.user-row .message {
             background: #2563eb !important;
             color: white !important;
             border-radius: 16px 16px 4px 16px !important;
         }
-        
+
         .message-row.bot-row .message {
             background: #f1f5f9 !important;
             border-radius: 16px 16px 16px 4px !important;
         }
-        
+
         /* Buttons */
         button.primary {
             background: #2563eb !important;
@@ -1026,13 +1219,13 @@ ALZHEIMER'S & DEMENTIA DATA SOURCING PROTOCOL
             border: none !important;
             border-radius: 8px !important;
         }
-        
+
         button.secondary {
             background: #f1f5f9 !important;
             color: #1e40af !important;
             border: 1px solid #e2e8f0 !important;
         }
-        
+
         .prose {
             font-size: 14px !important;
             line-height: 1.5 !important;
@@ -1044,7 +1237,7 @@ ALZHEIMER'S & DEMENTIA DATA SOURCING PROTOCOL
             # AD1 Logo
             logo_path = Path(__file__).resolve().parents[2] / "figs" / "Biomni-AD_Logo_v2.png"
             if not logo_path.exists():
-                 logo_path = Path(__file__).resolve().parents[2] / "figs" / "biomni_logo.png"
+                logo_path = Path(__file__).resolve().parents[2] / "figs" / "biomni_logo.png"
 
             verification_container = gr.Group(visible=require_verification)
             main_interface_container = gr.Group(visible=not require_verification)
@@ -1066,17 +1259,16 @@ ALZHEIMER'S & DEMENTIA DATA SOURCING PROTOCOL
                 # Top Header (Logo + Title)
                 with gr.Row(elem_classes="header-row"):
                     with gr.Column(scale=1):
-                         if logo_path.exists():
+                        if logo_path.exists():
                             gr.Image(logo_path, show_label=False, height=60, container=False)
-                         else:
+                        else:
                             gr.Markdown("# Biomni AD1")
 
                 with gr.Row(elem_id="main-row"):
-                    
                     # --- Left Sidebar: Explorer ---
                     with gr.Column(scale=1, elem_id="sidebar"):
                         gr.Markdown("## 📂 Explorer")
-                        
+
                         runs_list = gr.Markdown(value=get_runs_list())
                         local_data_summary = gr.Markdown(value=get_local_data_summary())
                         refresh_runs_btn = gr.Button("Refresh", size="sm", variant="secondary")
@@ -1091,17 +1283,17 @@ ALZHEIMER'S & DEMENTIA DATA SOURCING PROTOCOL
                             show_copy_button=True,
                             show_share_button=True,
                             autoscroll=True,
-                            avatar_images=(None, None), # Can add avatars here
-                            elem_id="main-chatbot"
+                            avatar_images=(None, None),  # Can add avatars here
+                            elem_id="main-chatbot",
                         )
-                        
+
                         with gr.Row():
                             prompt_input = gr.MultimodalTextbox(
                                 interactive=True,
                                 file_count="multiple",
                                 placeholder="Ask a research question or upload data...",
                                 show_label=False,
-                                scale=8
+                                scale=8,
                             )
                             # submit_btn = gr.Button("Send", variant="primary", scale=1) # MultimodalTextbox has embed submit
 
@@ -1113,15 +1305,15 @@ ALZHEIMER'S & DEMENTIA DATA SOURCING PROTOCOL
                             type="messages",
                             height=500,
                             show_copy_button=True,
-                            elem_id="inner-chatbot"
+                            elem_id="inner-chatbot",
                         )
-                        
+
                         gr.Markdown("### 📦 Run Artifacts")
                         run_status = gr.Markdown("Waiting for execution...")
-                        
+
                         # Hidden placeholders
                         pdf_output = gr.File(visible=False)
-                        notebook_output = gr.File(visible=False)
+                        gr.File(visible=False)
 
                 # Wiring
                 prompt_input.submit(
@@ -1129,7 +1321,7 @@ ALZHEIMER'S & DEMENTIA DATA SOURCING PROTOCOL
                     [prompt_input, innerloop_chatbot, main_chatbot],
                     [innerloop_chatbot, main_chatbot, run_status, runs_list, pdf_output],
                 ).then(lambda: gr.MultimodalTextbox(value=None), None, [prompt_input])
-                
+
                 main_chatbot.like(like)
 
         print(f"Launching Biomni AD1 Gradio demo on {server_name}:7860")

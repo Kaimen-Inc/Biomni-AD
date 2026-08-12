@@ -1,16 +1,75 @@
+import logging
 import os
-from typing import TYPE_CHECKING, Literal, Optional, cast
+from typing import TYPE_CHECKING, Literal, Optional, cast, get_args
 
 from dotenv import load_dotenv
 from langchain_core.language_models.chat_models import BaseChatModel
 
 load_dotenv(override=True)
 
+logger = logging.getLogger(__name__)
+
 if TYPE_CHECKING:
     from biomni.config import BiomniConfig
 
 SourceType = Literal["OpenAI", "AzureOpenAI", "Anthropic", "Ollama", "Gemini", "Bedrock", "Groq", "Custom"]
-ALLOWED_SOURCES: set[str] = set(SourceType.__args__)
+ALLOWED_SOURCES: set[str] = set(get_args(SourceType))
+
+
+def resolve_source(
+    model: str,
+    source: SourceType | None = None,
+    base_url: str | None = None,
+) -> SourceType:
+    """Resolve the provider source for a model string.
+
+    Mirrors the auto-detection logic in :func:`get_llm` but is callable
+    independently so callers (e.g. the A1 agent) can know the resolved
+    source without re-implementing the heuristic.
+
+    Precedence: explicit ``source`` arg -> ``LLM_SOURCE`` / ``BIOMNI_SOURCE``
+    env vars -> model-name prefix heuristics -> ``base_url`` presence ->
+    Azure-Anthropic env detection. Raises ``ValueError`` if the source can't
+    be determined.
+    """
+    if source is not None:
+        if source not in ALLOWED_SOURCES:
+            raise ValueError(f"Unknown source: {source!r}. Valid: {sorted(ALLOWED_SOURCES)}")
+        return source
+
+    env_source = os.getenv("LLM_SOURCE") or os.getenv("BIOMNI_SOURCE")
+    if env_source in ALLOWED_SOURCES:
+        return cast("SourceType", env_source)
+
+    if model.startswith("claude-"):
+        return "Anthropic"
+    if model.startswith("gpt-oss"):
+        return "Ollama"
+    if model.startswith("gpt-"):
+        return "OpenAI"
+    if model.startswith("azure-"):
+        return "AzureOpenAI"
+    if model.startswith("gemini-"):
+        return "Gemini"
+    if "groq" in model.lower():
+        return "Groq"
+    if base_url is not None:
+        return "Custom"
+    if "/" in model or any(
+        name in model.lower()
+        for name in ("llama", "mistral", "qwen", "gemma", "phi", "dolphin", "orca", "vicuna", "deepseek")
+    ):
+        return "Ollama"
+    if model.startswith(("anthropic.claude-", "amazon.titan-", "meta.llama-", "mistral.", "cohere.", "ai21.", "us.")):
+        return "Bedrock"
+    if (
+        os.getenv("AZURE_ANTHROPIC_API_KEY")
+        and os.getenv("ENDPOINT_URL")
+        and "anthropic" in os.getenv("ENDPOINT_URL", "")
+    ):
+        return "Anthropic"
+
+    raise ValueError("Unable to determine model source. Please specify 'source' parameter.")
 
 
 def get_llm(
@@ -21,6 +80,9 @@ def get_llm(
     base_url: str | None = None,
     api_key: str | None = None,
     config: Optional["BiomniConfig"] = None,
+    *,
+    max_retries: int | None = None,
+    request_timeout: float | None = None,
 ) -> BaseChatModel:
     """
     Get a language model instance based on the specified model name and source.
@@ -34,6 +96,8 @@ def get_llm(
         base_url (str): The base URL for custom model serving (e.g., "http://localhost:8000/v1"), default is None
         api_key (str): The API key for the custom llm
         config (BiomniConfig): Optional configuration object. If provided, unspecified parameters will use config values
+        max_retries: Provider-SDK retry attempts on 429/5xx. Falls back to ``config.llm_max_retries`` then ``3``.
+        request_timeout: Per-call HTTP timeout in seconds. Falls back to ``config.llm_request_timeout`` then ``120``.
     """
     # Use config values for any unspecified parameters
     if config is not None:
@@ -43,11 +107,15 @@ def get_llm(
             temperature = config.temperature
         if source is None:
             if config.source in ALLOWED_SOURCES:
-                source = cast(SourceType, config.source)
+                source = cast("SourceType", config.source)
         if base_url is None:
             base_url = config.base_url
         if api_key is None:
             api_key = config.api_key or "EMPTY"
+        if max_retries is None:
+            max_retries = config.llm_max_retries
+        if request_timeout is None:
+            request_timeout = config.llm_request_timeout
 
     # Use defaults if still not specified
     if model is None:
@@ -56,53 +124,14 @@ def get_llm(
         temperature = 0.7
     if api_key is None:
         api_key = "EMPTY"
-    # Auto-detect source from model name if not specified
-    if source is None:
-        env_source = os.getenv("LLM_SOURCE") or os.getenv("BIOMNI_SOURCE")
-        if env_source in ALLOWED_SOURCES:
-            source = cast(SourceType, env_source)
-        else:
-            if model[:7] == "claude-":
-                source = "Anthropic"
-            elif model[:7] == "gpt-oss":
-                source = "Ollama"
-            elif model[:4] == "gpt-":
-                source = "OpenAI"
-            elif model.startswith("azure-"):
-                source = "AzureOpenAI"
-            elif model[:7] == "gemini-":
-                source = "Gemini"
-            elif "groq" in model.lower():
-                source = "Groq"
-            elif base_url is not None:
-                source = "Custom"
-            elif "/" in model or any(
-                name in model.lower()
-                for name in [
-                    "llama",
-                    "mistral",
-                    "qwen",
-                    "gemma",
-                    "phi",
-                    "dolphin",
-                    "orca",
-                    "vicuna",
-                    "deepseek",
-                ]
-            ):
-                source = "Ollama"
-            elif model.startswith(
-                ("anthropic.claude-", "amazon.titan-", "meta.llama-", "mistral.", "cohere.", "ai21.", "us.")
-            ):
-                source = "Bedrock"
-            elif (
-                os.getenv("AZURE_ANTHROPIC_API_KEY")
-                and os.getenv("ENDPOINT_URL")
-                and "anthropic" in os.getenv("ENDPOINT_URL", "")
-            ):
-                source = "Anthropic"
-            else:
-                raise ValueError("Unable to determine model source. Please specify 'source' parameter.")
+    if max_retries is None:
+        max_retries = 3
+    if request_timeout is None and config is None:
+        # Only default-fill when no config was passed; explicit None from a
+        # configured caller means "disable per-call timeout".
+        request_timeout = 120.0
+    # Resolve source via shared helper (auto-detection + env precedence).
+    source = resolve_source(model, source, base_url)
 
     # Create appropriate model based on source
     if source == "OpenAI":
@@ -142,6 +171,8 @@ def get_llm(
                 base_url=os.getenv("OPENAI_BASE_URL"),
                 use_responses_api=True,
                 output_version="v0",
+                max_retries=max_retries,
+                timeout=request_timeout,
             )
         else:
             return ChatOpenAI(
@@ -149,6 +180,8 @@ def get_llm(
                 temperature=temperature,
                 stop_sequences=stop_sequences,
                 base_url=os.getenv("OPENAI_BASE_URL"),
+                max_retries=max_retries,
+                timeout=request_timeout,
             )
 
     elif source == "AzureOpenAI":
@@ -160,8 +193,8 @@ def get_llm(
             )
         API_VERSION = "2024-12-01-preview"
         # Derive deployment name: strip "azure-" prefix if present, else fall back to DEPLOYMENT_NAME env var
-        deployment = model.replace("azure-", "") if model.startswith("azure-") else (
-            os.getenv("DEPLOYMENT_NAME") or model
+        deployment = (
+            model.replace("azure-", "") if model.startswith("azure-") else (os.getenv("DEPLOYMENT_NAME") or model)
         )
 
         # Some Azure-hosted models (e.g. gpt-5.*) reject any temperature value other
@@ -178,6 +211,8 @@ def get_llm(
             azure_deployment=deployment,
             openai_api_version=API_VERSION,
             temperature=1,  # default; will be stripped from payload by subclass
+            max_retries=max_retries,
+            timeout=request_timeout,
         )
 
     elif source == "Anthropic":
@@ -217,15 +252,17 @@ def get_llm(
                 )
                 if result.stdout.strip():
                     os.environ["ANTHROPIC_API_KEY"] = result.stdout.strip()
-                    print("✓ Loaded ANTHROPIC_API_KEY from ~/.bash_profile")
-            except Exception as e:
-                print(f"Note: Could not load ANTHROPIC_API_KEY from bash_profile: {e}")
+                    logger.info("Loaded ANTHROPIC_API_KEY from ~/.bash_profile")
+            except Exception:
+                logger.warning("Could not load ANTHROPIC_API_KEY from bash_profile", exc_info=True)
 
         return ChatAnthropic(
             model=model,
             temperature=temperature,
             max_tokens=8192,
             stop_sequences=stop_sequences,
+            max_retries=max_retries,
+            default_request_timeout=request_timeout,
         )
 
     elif source == "Gemini":
@@ -247,6 +284,8 @@ def get_llm(
             api_key=os.getenv("GEMINI_API_KEY"),
             base_url="https://generativelanguage.googleapis.com/v1beta/openai/",
             stop_sequences=stop_sequences,
+            max_retries=max_retries,
+            timeout=request_timeout,
         )
 
     elif source == "Groq":
@@ -262,6 +301,8 @@ def get_llm(
             api_key=os.getenv("GROQ_API_KEY"),
             base_url="https://api.groq.com/openai/v1",
             stop_sequences=stop_sequences,
+            max_retries=max_retries,
+            timeout=request_timeout,
         )
 
     elif source == "Ollama":
@@ -271,10 +312,12 @@ def get_llm(
             raise ImportError(  # noqa: B904
                 "langchain-ollama package is required for Ollama models. Install with: pip install langchain-ollama"
             )
-        return ChatOllama(
-            model=model,
-            temperature=temperature,
-        )
+        # ChatOllama exposes a transport-level timeout, not max_retries; pass
+        # what's supported and let local Ollama retries stay manual.
+        ollama_kwargs: dict[str, object] = {"model": model, "temperature": temperature}
+        if request_timeout is not None:
+            ollama_kwargs["timeout"] = request_timeout
+        return ChatOllama(**ollama_kwargs)
 
     elif source == "Bedrock":
         try:
@@ -283,12 +326,16 @@ def get_llm(
             raise ImportError(  # noqa: B904
                 "langchain-aws package is required for Bedrock models. Install with: pip install langchain-aws"
             )
-        return ChatBedrock(
-            model=model,
-            temperature=temperature,
-            stop_sequences=stop_sequences,
-            region_name=os.getenv("AWS_REGION", "us-east-1"),
-        )
+        # Bedrock retry config lives on the boto3 client; pass through via
+        # ``config`` kwarg when available. Older langchain-aws versions don't
+        # accept ``config`` directly, so build defensively.
+        bedrock_kwargs: dict[str, object] = {
+            "model": model,
+            "temperature": temperature,
+            "stop_sequences": stop_sequences,
+            "region_name": os.getenv("AWS_REGION", "us-east-1"),
+        }
+        return ChatBedrock(**bedrock_kwargs)
 
     elif source == "Custom":
         try:
@@ -306,6 +353,8 @@ def get_llm(
             stop_sequences=stop_sequences,
             base_url=base_url,
             api_key=api_key,
+            max_retries=max_retries,
+            timeout=request_timeout,
         )
         return llm
 

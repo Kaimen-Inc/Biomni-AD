@@ -1,0 +1,156 @@
+name: Docker image
+
+# Two responsibilities, one file:
+#   1. On every PR that touches Docker / packaging files, run `docker build`
+#      so a broken Dockerfile is caught at PR time instead of at deploy time.
+#   2. On push to long-lived branches and tags, push the image to GHCR so
+#      operators can `docker pull ghcr.io/<owner>/biomni-ad:<tag>` rather
+#      than building locally or shipping a tarball.
+#
+# The build job runs on every relevant change; the publish job is gated on
+# the push event and skips for PRs (where pushing would be wrong anyway).
+
+on:
+  pull_request:
+    # Cover everything the Dockerfile COPYs or that affects build dependencies.
+    # When in doubt, add the path here - over-matching wastes a few minutes
+    # of CI; under-matching lets a broken-build PR merge to a release branch.
+    paths:
+      - "Dockerfile"
+      - ".dockerignore"
+      - "docker-compose.yml"
+      - "docker/**"
+      - "biomni_env/environment.yml"
+      - "pyproject.toml"
+      - "MANIFEST.in"
+      - "biomni/**"
+      - "chainlit_app.py"
+      - "chainlit_ui/**"
+      - "chainlit.md.template"
+      - ".chainlit/**"
+      - "public/**"
+      - ".github/workflows/docker.yml"
+  push:
+    branches:
+      - main
+      - biomni-ad
+      - feat/adworkbench
+    tags:
+      - "v*"
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}
+
+jobs:
+  build:
+    name: Build (verify Dockerfile)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      # Verify the image builds. No push, no registry login - this job
+      # protects PRs and is the canary for the publish job below.
+      - name: Build image (no push)
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: Dockerfile
+          push: false
+          tags: biomni-ad:ci
+          cache-from: type=gha
+          # ``mode=min`` (default) keeps PR cache writes small - only the
+          # final layers are exported. The publish job uses ``mode=max``
+          # to feed every intermediate stage back into the GHA cache so
+          # branch builds benefit from PR-warmed caches.
+          cache-to: type=gha,mode=min
+          # ``provenance: false`` skips SLSA attestations on PR builds -
+          # they aren't published anywhere so the attestation has no
+          # downstream consumer. The publish job sets the same value
+          # explicitly for the same reason (Container Apps and other
+          # consumers we currently target don't read attestations).
+          provenance: false
+
+  publish:
+    name: Build & publish to GHCR
+    # Only push on push events (branch / tag), not PRs - pushing PR builds
+    # would require a token that PRs from forks shouldn't have anyway.
+    if: github.event_name == 'push'
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # Tag strategy:
+      #   - branch name        (refs/heads/main → :main; / in feat branches
+      #                         sanitised to - per Docker tag rules)
+      #   - git SHA short      (always - primary content-addressed tag,
+      #                         what production should pin to)
+      #   - :latest            (only when pushing the default branch -
+      #                         conventional "newest published" alias)
+      #   - semver aliases     (v1.2.3 git tag → :1.2.3 and :1.2)
+      # Branch and :latest tags are convenience aliases; the :<sha> tag
+      # is the canonical immutable pointer.
+      - name: Extract image metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          tags: |
+            type=ref,event=branch
+            type=raw,value=latest,enable={{is_default_branch}}
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=sha,format=short
+          labels: |
+            org.opencontainers.image.title=Biomni-AD
+            org.opencontainers.image.description=Alzheimer's-specialized biomedical AI agent (Chainlit UI)
+            org.opencontainers.image.licenses=Apache-2.0
+
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: Dockerfile
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          # ``mode=max`` exports every intermediate stage; PR builds run
+          # later read these as ``cache-from`` for fast canary checks.
+          cache-to: type=gha,mode=max
+          # No SLSA provenance attestations - keeps the manifest list
+          # clean (no unknown/unknown platform entry that confuses some
+          # older orchestrators) and matches the PR build job.
+          provenance: false
+          # Build-args feed the Dockerfile's GIT_SHA / GIT_REF ARGs so
+          # the in-image LABELs carry a meaningful default for tooling
+          # that inspects the image without consulting GHCR metadata.
+          # metadata-action also writes image.revision / image.version
+          # via the labels: input above; both layers agree because both
+          # derive from github.sha / github.ref_name.
+          build-args: |
+            GIT_SHA=${{ github.sha }}
+            GIT_REF=${{ github.ref_name }}

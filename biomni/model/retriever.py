@@ -2,7 +2,6 @@ import contextlib
 import re
 
 from langchain_core.messages import HumanMessage
-from langchain_openai import ChatOpenAI
 
 
 class ToolRetriever:
@@ -94,7 +93,13 @@ IMPORTANT GUIDELINES:
 
         # Use the provided LLM or create a new one
         if llm is None:
-            llm = ChatOpenAI(model="gpt-4o")
+            # Route the fallback through get_llm so it inherits LLM resilience
+            # config (max_retries / request_timeout -> provider-SDK 429/5xx
+            # backoff). A fresh BiomniConfig() honors BIOMNI_LLM_* env overrides.
+            from biomni.config import BiomniConfig
+            from biomni.llm import get_llm
+
+            llm = get_llm("gpt-4o", source="OpenAI", config=BiomniConfig())
 
         # Invoke the LLM
         if hasattr(llm, "invoke"):

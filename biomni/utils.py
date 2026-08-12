@@ -2,7 +2,6 @@ import ast
 import concurrent.futures
 import enum
 import importlib
-
 import json
 import os
 import pickle
@@ -318,11 +317,16 @@ def get_all_functions_from_file(file_path):
 
 
 def write_python_code(request: str):
-    from langchain_anthropic import ChatAnthropic
     from langchain_core.output_parsers import StrOutputParser
     from langchain_core.prompts import ChatPromptTemplate
 
-    model = ChatAnthropic(model="claude-3-5-sonnet-20240620")
+    from biomni.config import BiomniConfig
+    from biomni.llm import get_llm
+
+    # Route through get_llm so this call inherits the project's LLM resilience
+    # config (max_retries / request_timeout -> provider-SDK 429/5xx backoff).
+    # A fresh BiomniConfig() honors BIOMNI_LLM_* env overrides at call time.
+    model = get_llm("claude-3-5-sonnet-20240620", source="Anthropic", config=BiomniConfig())
     template = """Write some python code to solve the user's problem.
 
     Return only python code in Markdown format, e.g.:
@@ -460,7 +464,7 @@ def pretty_print(message, printout=True):
         if message.name is not None:
             title += f"\nName: {message.name}"
         title += f"\n\n{message.content}"
-        
+
         # Check for tool_calls (LangChain standard for tool usage)
         if hasattr(message, "tool_calls") and message.tool_calls:
             for tool_call in message.tool_calls:
@@ -950,7 +954,7 @@ def check_and_download_s3_files(
         try:
             # Ensure directory exists for nested files
             os.makedirs(os.path.dirname(file_path), exist_ok=True)
-            
+
             response = requests.get(url, stream=True)
             response.raise_for_status()
 
@@ -1025,11 +1029,11 @@ def check_and_download_s3_files(
         return download_results
 
     print(f"Downloading {len(files_to_download)} missing files from {folder}...")
-    
+
     def process_file(filename):
         local_file_path = os.path.join(local_data_lake_path, filename)
         s3_file_url = urljoin(s3_bucket_url + "/" + folder + "/", filename)
-        
+
         success = download_with_progress(s3_file_url, local_file_path, filename)
         if success:
             print(f"✓ Successfully downloaded: {filename}")
@@ -1038,7 +1042,7 @@ def check_and_download_s3_files(
     # Use ThreadPoolExecutor for parallel downloads
     with concurrent.futures.ThreadPoolExecutor(max_workers=10) as executor:
         future_to_file = {executor.submit(process_file, f): f for f in files_to_download}
-        
+
         for future in concurrent.futures.as_completed(future_to_file):
             filename = future_to_file[future]
             try:
