@@ -218,3 +218,69 @@ def test_extract_drops_hedged_and_glob_entries():
 def test_extract_keeps_plain_concrete_paths():
     plan = f"{_heading()}\n- studyA/plasma_1.csv\n- /abs/path/data.tsv.gz\n"
     assert _extract(plan) == ["studyA/plasma_1.csv", "/abs/path/data.tsv.gz"]
+
+
+# --------------------------------------------------------------------------- #
+# Triage - answering without a plan
+# --------------------------------------------------------------------------- #
+
+
+def test_a_plain_answer_is_returned_as_is() -> None:
+    planning = _import_planning()
+    assert planning.parse_triage_response("The GWAS file is bellenguez_2022.tsv.") == (
+        "The GWAS file is bellenguez_2022.tsv."
+    )
+
+
+def test_the_sentinel_means_plan() -> None:
+    planning = _import_planning()
+    assert planning.parse_triage_response("NEEDS_PLAN") is None
+
+
+def test_a_sentinel_wrapped_in_prose_still_means_plan() -> None:
+    """The failure that is not self-correcting: reading a hedged sentinel as an
+    answer would print "NEEDS_PLAN" at the user and skip their analysis."""
+    planning = _import_planning()
+    assert planning.parse_triage_response("This one needs data, so: NEEDS_PLAN") is None
+    assert planning.parse_triage_response("`NEEDS_PLAN`") is None
+
+
+def test_an_empty_reply_means_plan() -> None:
+    planning = _import_planning()
+    assert planning.parse_triage_response("") is None
+    assert planning.parse_triage_response("   \n ") is None
+
+
+def test_triage_prompt_biases_towards_planning() -> None:
+    planning = _import_planning()
+    prompt = planning.build_triage_system_prompt(_Agent())
+    assert "When you are unsure" in prompt
+    assert planning.NEEDS_PLAN_SENTINEL in prompt
+
+
+def test_triage_prompt_includes_a_bounded_inventory() -> None:
+    planning = _import_planning()
+
+    class _BigInventory:
+        user_data_inventory = "x" * 20_000
+
+    prompt = planning.build_triage_system_prompt(_BigInventory())
+    assert "listing truncated" in prompt
+    # Bounded: this call runs on every single message.
+    assert len(prompt) < 10_000
+
+
+def test_direct_answers_can_be_switched_off(monkeypatch) -> None:
+    planning = _import_planning()
+    monkeypatch.delenv("BIOMNI_ALWAYS_PLAN", raising=False)
+    assert planning.direct_answers_enabled() is True
+    monkeypatch.setenv("BIOMNI_ALWAYS_PLAN", "true")
+    assert planning.direct_answers_enabled() is False
+
+
+def test_plan_action_names_are_stable() -> None:
+    """chainlit_app registers fallback handlers under these exact names; a
+    rename that only touched one side would restore the bare 404."""
+    planning = _import_planning()
+    assert [name for name, _label in planning.PLAN_ACTIONS] == ["approve", "revise", "cancel"]
+    assert "Nothing was run" in planning.STALE_PLAN_ACTION_NOTE

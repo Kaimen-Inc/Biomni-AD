@@ -1,15 +1,18 @@
-## Hi, I'm Biomni-AD 🧠
+## How to use Biomni-AD
 
-#### Your AI co-scientist for Alzheimer's disease research.
+**Ask a quick question** - "which GWAS files do I have?", "what columns are in that file?", "what is a cis-eQTL?"
+You get a straight answer. No plan, no approval step.
 
-**Biomni-AD** is an open-source, AD-specialized extension of [Biomni](https://github.com/snap-stanford/Biomni) (Stanford SNAP Lab), maintained by **Kuan-lin Huang, PhD** at **[Kaimen Inc.](https://github.com/Kaimen-Inc/Biomni-AD)**
+**Ask for an analysis** - anything that means reading data, running code, or searching the literature.
+You get a numbered plan naming the exact files it will read. Approve it, revise it in plain English, or cancel. Nothing runs until you approve.
 
-I can analyze omics data, mine AD knowledge bases, run bioinformatics pipelines, and help generate research hypotheses — every step is shown as an inspectable, reproducible trace.
+**Choose your data** - ⚙️ (next to the paperclip) → *Data folders the agent may use*.
+Only the folders you pick are read and described to the agent, so a workspace with thousands of files costs no more than a small one. Pick the studies you are actually working on: the more you select, the slower each session and the more diluted the agent's attention. The panel also shows what is currently selected and how many files that is.
 
-Tell me a research question to get started. The agent prioritizes your local data lake and curated AD catalogs (NIAGADS, SinaiADRD, BiomniAD Discovery, CRISPRbrain) before searching external sources.
+**Find your results** - every run writes to its own folder, and the path is printed when it finishes. Change where they go in ⚙️ → *Output directory*.
 
-<!-- BIOMNI_SUGGESTED_PROMPTS_START -->
-<!-- BIOMNI_SUGGESTED_PROMPTS_END -->
+**Pick up where you left off** - past conversations are listed on the left. Open one to read it, or keep talking in it; the agent remembers what was already said.
 
-<!-- BIOMNI_LOCAL_DATASET_SECTION_START -->
-<!-- BIOMNI_LOCAL_DATASET_SECTION_END -->
+**Attach a file** - 📎 to upload something outside your workspace for one-off use.
+
+Settings are remembered for your next session. Turn that off in ⚙️.

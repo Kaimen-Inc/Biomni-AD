@@ -1,6 +1,12 @@
-"""Plan-then-approve workflow for the Chainlit UI.
+"""Triage and the plan-then-approve workflow for the Chainlit UI.
 
-The agent first proposes a numbered research plan; the user approves,
+Two stages. First `quick_answer` decides whether the message needs the research
+pipeline at all: "which GWAS files do I have?" is a question, not a project, and
+making someone approve a numbered plan to be told is a waste of their time.
+Anything that would require reading data, running code or searching falls
+through to the second stage.
+
+There, the agent proposes a numbered research plan; the user approves,
 revises, or cancels before any code executes.
 
 `build_planning_system_prompt` is a pure function and is unit-tested
@@ -20,7 +26,7 @@ from typing import TYPE_CHECKING
 
 import chainlit as cl
 from biomni.observability import emit_event
-from langchain_core.messages import HumanMessage, SystemMessage
+from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 
 if TYPE_CHECKING:
     from biomni.agent.a1 import A1
@@ -44,7 +50,7 @@ AD1_PLANNING_SYSTEM_PROMPT = (
     "You are an expert Alzheimer's disease research assistant planning a task. "
     "Given the user's research question, write a concise numbered plan "
     "of several steps describing exactly how you will solve it. "
-    "DATA SOURCING — LOCAL FIRST: draw on the datasets listed below and in the AD data lake for as much "
+    "DATA SOURCING - LOCAL FIRST: draw on the datasets listed below and in the AD data lake for as much "
     "of the analysis as possible. Do NOT download, fetch, or call external APIs when the data is already "
     "present locally. Do NOT simulate or fabricate data. "
     "Prefer built-in domain tools (database queries, tool functions) over custom code, and write custom "
@@ -57,10 +63,139 @@ AD1_PLANNING_SYSTEM_PROMPT = (
     # point rather than a preamble.
     "PLAN CONTENT: every numbered step must be an analysis step that advances the science, named with the "
     "specific dataset, tool or method it uses. NEVER include a step whose purpose is to scan, list, "
-    "enumerate, inventory or 'discover' files or directories — finding and loading a file is part of the "
+    "enumerate, inventory or 'discover' files or directories - finding and loading a file is part of the "
     "step that uses it, not a step of its own. In the numbered steps refer to data by dataset or study "
     "name, not by filesystem path. "
     "Be specific and tailor the plan to user's question. Do not execute any code yet."
+)
+
+
+# --------------------------------------------------------------------------- #
+# Triage: does this question need a plan at all?
+# --------------------------------------------------------------------------- #
+
+# Sentinel the triage call returns instead of an answer. Deliberately ugly and
+# unlikely to appear in prose, since a false positive here silently swallows a
+# real analysis request.
+NEEDS_PLAN_SENTINEL = "NEEDS_PLAN"
+
+TRIAGE_SYSTEM_PROMPT = (
+    "You are the front desk of an Alzheimer's disease research agent. Decide whether the user's "
+    "message needs the full research pipeline, or whether you can simply answer it.\n\n"
+    f"Reply with exactly `{NEEDS_PLAN_SENTINEL}` and nothing else if answering would require ANY of: "
+    "reading or parsing a data file, running code, computing or counting anything from data, querying a "
+    "database, searching the literature or the web, or producing a figure or table from data.\n\n"
+    "Otherwise answer the user directly, in a few sentences. That covers questions about what the data "
+    "is (names, locations, formats, what a dataset contains), definitions and background knowledge, "
+    "questions about what you can do, and follow-ups that are already answered by the conversation "
+    "above.\n\n"
+    "Never guess at a number, a result, or a file's contents in a direct answer - if you would have to "
+    f"look, reply `{NEEDS_PLAN_SENTINEL}`. When you are unsure, reply `{NEEDS_PLAN_SENTINEL}`: an "
+    "unnecessary plan costs the user one click, a fabricated answer costs them their trust."
+)
+
+# The workspace listing is injected so "which files do I have?" is answerable
+# without a plan. Bounded because it can be hundreds of lines and this is a
+# latency-sensitive call on every single message.
+_TRIAGE_INVENTORY_CHARS = 4000
+
+
+def build_triage_system_prompt(agent: A1) -> str:
+    """Compose the triage prompt, with a bounded view of the workspace."""
+    prompt = TRIAGE_SYSTEM_PROMPT
+    inventory = getattr(agent, "user_data_inventory", None)
+    if inventory:
+        excerpt = inventory[:_TRIAGE_INVENTORY_CHARS]
+        if len(inventory) > _TRIAGE_INVENTORY_CHARS:
+            excerpt += "\n... (listing truncated)"
+        prompt += (
+            "\n\nThe user's selected data is listed below. You may answer questions about what is here "
+            f"directly; anything about what is *inside* these files needs `{NEEDS_PLAN_SENTINEL}`.\n{excerpt}"
+        )
+    return prompt
+
+
+def parse_triage_response(text: str) -> str | None:
+    """The direct answer, or ``None`` when the question needs a plan.
+
+    Treats a reply that merely *contains* the sentinel as a request for a plan.
+    Models like to wrap a bare token in prose ("I think this is NEEDS_PLAN"),
+    and reading that as an answer would show the user the sentinel and skip the
+    analysis they asked for - the one failure here that is not self-correcting.
+    """
+    if not text:
+        return None
+    answer = text.strip()
+    if not answer or NEEDS_PLAN_SENTINEL in answer:
+        return None
+    return answer
+
+
+def direct_answers_enabled() -> bool:
+    """Whether short questions may bypass the plan gate (default on).
+
+    A deployment that needs every action to pass through an explicit approval -
+    for audit, or because it does not trust the triage call - sets
+    ``BIOMNI_ALWAYS_PLAN``.
+    """
+    return os.getenv("BIOMNI_ALWAYS_PLAN", "").strip().lower() not in {"1", "true", "yes", "on"}
+
+
+async def quick_answer(agent: A1, prompt: str, history: list[dict] | None = None) -> str | None:
+    """Answer a question that needs no analysis, or ``None`` to go on and plan.
+
+    One extra LLM call on every message, which is the price of not making
+    someone approve a five-step research plan to be told which file they are
+    looking at. Any failure returns ``None``: the plan path is the safe default,
+    so triage must never be able to break a request.
+    """
+    if not direct_answers_enabled():
+        return None
+
+    messages = [SystemMessage(content=build_triage_system_prompt(agent))]
+    for turn in history or []:
+        content = turn.get("content") or ""
+        if not content:
+            continue
+        messages.append(
+            AIMessage(content=content) if turn.get("role") == "assistant" else HumanMessage(content=content)
+        )
+    messages.append(HumanMessage(content=prompt))
+
+    try:
+        loop = asyncio.get_event_loop()
+        response = await loop.run_in_executor(None, agent.llm.invoke, messages)
+    except Exception:
+        logger.warning("Triage call failed; falling back to the planning path", exc_info=True)
+        return None
+
+    text = response.content if hasattr(response, "content") else str(response)
+    if not isinstance(text, str):
+        return None
+    answer = parse_triage_response(text)
+    emit_event("query_triage", direct=answer is not None)
+    return answer
+
+
+# The plan-gate buttons. Named here rather than inline because the app also
+# registers fallback handlers for these exact names - see STALE_PLAN_ACTION_NOTE.
+PLAN_ACTIONS: tuple[tuple[str, str], ...] = (
+    ("approve", "✅ Approve & Execute"),
+    ("revise", "✏️ Revise Plan"),
+    ("cancel", "🚫 Cancel"),
+)
+
+# Shown when a plan button is clicked but nothing is waiting for it any more.
+#
+# While a plan is pending, the browser resolves a click through the ask it was
+# issued with; that path never consults the server's action-callback registry.
+# The registry is only reached once the ask is gone - after a server restart or
+# rollout, or after the 300s timeout - and with nothing registered Chainlit
+# answers "Not Found: No callback found for action approve", which reads like a
+# broken app rather than an expired question.
+STALE_PLAN_ACTION_NOTE = (
+    "That plan is no longer waiting for an answer - the server restarted, or the question timed out. "
+    "**Nothing was run.** Send your question again to get a fresh plan."
 )
 
 
@@ -192,7 +327,7 @@ def build_planning_system_prompt(agent: A1, agent_type: str) -> str:
         "workspace is, and five absolute paths are a wall of text). "
         "Every entry must be a real file. Never list a directory, a glob, or a placeholder "
         "such as 'to be discovered' or 'if available'. If you have not been shown concrete files, omit "
-        "the section entirely — do not replace it with a directory listing or a file-discovery step."
+        "the section entirely - do not replace it with a directory listing or a file-discovery step."
     )
     return base
 
@@ -251,11 +386,7 @@ async def interactive_planning(agent: A1, prompt: str, agent_type: str = "a1") -
 
         res = await cl.AskActionMessage(
             content=question,
-            actions=[
-                cl.Action(name="approve", label="✅ Approve & Execute", payload={"value": "approve"}),
-                cl.Action(name="revise", label="✏️ Revise Plan", payload={"value": "revise"}),
-                cl.Action(name="cancel", label="🚫 Cancel", payload={"value": "cancel"}),
-            ],
+            actions=[cl.Action(name=name, label=label, payload={"value": name}) for name, label in PLAN_ACTIONS],
             timeout=300,
         ).send()
 

@@ -125,12 +125,17 @@ def discover_present_dataset_ids(ad_lake: Path) -> set[str]:
     return present
 
 
-def build_suggested_prompts_markdown(ad_lake: Path) -> str:
+def build_suggested_prompts_markdown(ad_lake: Path, *, per_category: int = 1, limit: int = 5) -> str:
     """Generate the suggested-prompts markdown block for the welcome page.
 
     Returns an empty string when the AD data lake is missing or no
     datasets with local files match an entry in `AD_DATASET_PROMPTS`,
     so callers can no-op cleanly.
+
+    ``per_category`` caps how many examples each category contributes and
+    ``limit`` caps the total. This is a "here is the shape of a good question"
+    section, not a catalogue: the full list ran to twenty prompts and turned a
+    page meant to be skimmed in ten seconds into something nobody reads.
     """
     present_ids = discover_present_dataset_ids(ad_lake)
     if not present_ids:
@@ -138,17 +143,14 @@ def build_suggested_prompts_markdown(ad_lake: Path) -> str:
 
     by_category: dict[str, list[str]] = defaultdict(list)
     for ds_id, prompt_text, category in AD_DATASET_PROMPTS:
-        if ds_id in present_ids:
+        if ds_id in present_ids and len(by_category[category]) < per_category:
             by_category[category].append(prompt_text)
 
     if not by_category:
         return ""
 
-    lines = ["**Suggested prompts based on your local data:**", ""]
-    for category, prompts in by_category.items():
-        lines.append(f"*{category}*")
-        for p in prompts:
-            lines.append(f'- *"{p}"*')
-        lines.append("")
+    chosen = [p for prompts in by_category.values() for p in prompts][:limit]
+    lines = ["**Examples, using data you actually have:**", ""]
+    lines.extend(f'- *"{p}"*' for p in chosen)
 
     return "\n".join(lines).rstrip()

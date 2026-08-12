@@ -72,7 +72,6 @@ except ModuleNotFoundError:
 import chainlit as cl
 from biomni.artifact import build_run_id, get_all_files
 from biomni.config import default_config, resolve_default_llm
-from biomni.fs_scan import scan_directory
 from biomni.health import register_health_routes
 from biomni.identity import UserIdentity, resolve_identity, single_user_mode, trust_auth_headers
 from biomni.observability import (
@@ -150,8 +149,12 @@ def _extract_final_answer(state: dict) -> str:
 # `from chainlit_ui.planning import PLANNING_SYSTEM_PROMPT, AD1_PLANNING_SYSTEM_PROMPT`.
 from chainlit_ui.datasets import build_suggested_prompts_markdown
 from chainlit_ui.persistence import build_data_layer, ensure_auth_secret
+from chainlit_ui.planning import PLAN_ACTIONS, STALE_PLAN_ACTION_NOTE
 from chainlit_ui.planning import (
     interactive_planning as _interactive_planning,
+)
+from chainlit_ui.planning import (
+    quick_answer as _quick_answer,
 )
 from chainlit_ui.workspace_panel import (
     build_previous_runs_notice,
@@ -184,17 +187,6 @@ def _build_ad_suggested_prompts() -> str:
     """Thin shim over chainlit_ui.datasets — resolves the repo-local AD lake path."""
     ad_lake = Path(__file__).resolve().parent / "data" / "biomni_data" / "data_lake" / "biomniAD"
     return build_suggested_prompts_markdown(ad_lake)
-
-
-def _list_path_entries(path: str, max_items: int = 40) -> list[str]:
-    """List non-hidden entries for a path (brief, non-recursive)."""
-    if not path or not os.path.isdir(path):
-        return []
-    try:
-        entries = sorted(name for name in os.listdir(path) if not name.startswith("."))
-    except OSError:
-        return []
-    return entries[:max_items]
 
 
 def _resolve_user_data_roots() -> list[tuple[str, str]]:
@@ -247,148 +239,49 @@ def _resolve_user_data_roots() -> list[tuple[str, str]]:
     return resolved
 
 
-def _display_data_root_label(env_name: str) -> str:
-    """Map env var names to concise sidebar labels."""
-    if env_name == "BIOMNI_USER_DATA_HOST_PATH":
-        return "AD_WORKBENCH_DATASETS"
-    return env_name
-
-
 def _resolve_builtin_data_lake_root() -> str:
     """Return the default repo-local data lake directory path."""
     repo_root = Path(__file__).resolve().parent
     return str((repo_root / "data" / "biomni_data" / "data_lake").resolve())
 
 
-def _list_local_data_lake_files(base_path: str, max_items: int = 30) -> list[str]:
-    """List local data lake files (relative paths) from common Biomni folders."""
-    candidates = [
-        Path(base_path) / "biomni_data" / "data_lake",
-        Path(base_path) / "data_lake",
-    ]
-
-    data_lake_dir = next((c for c in candidates if c.is_dir()), None)
-    if data_lake_dir is None:
-        return []
-
-    # Bounded/cached scan so this can't stall process startup even if the
-    # built-in data lake is pointed at a large volume.
-    result = scan_directory(str(data_lake_dir))
-    items = sorted(f for f in result.files if f != "_custom_data_index.json")
-    return items[:max_items]
-
-
-def _build_welcome_local_dataset_section() -> str:
-    """Build a collapsed markdown block shown at the bottom of the Chainlit welcome page."""
-    # Data lake always sourced from the repo-local built-in location
-    _repo_root = Path(__file__).resolve().parent
-    builtin_data_lake = _repo_root / "data" / "biomni_data" / "data_lake"
-    data_lake_files = _list_local_data_lake_files(str(_repo_root / "data"), max_items=200)
-
-    # User data can come from BIOMNI_USER_DATA_PATH and legacy BIOMNI_DATA_PATH/BIOMNI_PATH.
-    #
-    # Only the top-level folder NAMES are read here, with a single directory
-    # listing. This function runs at import time, before any session exists, so
-    # a recursive scan of the workspace would put a large-mount traversal on the
-    # process-startup path where nothing can bound its effect on first paint.
-    # The per-session workspace panel is where the user picks a scope and sees
-    # real file counts.
-    user_roots = _resolve_user_data_roots()
-    user_folders: list[str] = []
-    if user_roots:
-        user_folders = list_top_level_dirs(user_roots[0][1])
-
-    # One-line summary for the collapsed header
-    summary_parts = [f"{len(data_lake_files)} data lake files"]
-    if user_folders:
-        summary_parts.append(f"{len(user_folders)} user data folders")
-
-    lines: list[str] = []
-    lines.append(f"<details><summary>📊 {' · '.join(summary_parts)} available — click to expand</summary>")
-    lines.append("")
-    lines.append(f"**Built-in Data Lake** — `{builtin_data_lake}`")
-    lines.append("")
-    if data_lake_files:
-        for name in data_lake_files:
-            lines.append(f"- `{name}`")
-    else:
-        lines.append("- *(none found)*")
-
-    if user_roots:
-        lines.append("")
-        lines.append(
-            "**User Data** — from `BIOMNI_USER_DATA_HOST_PATH` / `BIOMNI_USER_DATA_PATH` / `BIOMNI_DATA_PATH` / `BIOMNI_PATH`"
-        )
-        lines.append("")
-        primary_label = _display_data_root_label(user_roots[0][0])
-        lines.append(f"Primary path ({primary_label}): `{user_roots[0][1]}`")
-        if len(user_roots) > 1:
-            lines.append("Additional configured paths:")
-            for env_name, root in user_roots[1:]:
-                lines.append(f"- `{_display_data_root_label(env_name)}`: `{root}`")
-        lines.append("")
-        if user_folders:
-            lines.append("Top-level folders:")
-            for name in user_folders[:40]:
-                lines.append(f"- `{name}/`")
-            if len(user_folders) > 40:
-                lines.append(f"- `... and {len(user_folders) - 40} more`")
-            lines.append("")
-            lines.append("_Choose which of these the agent should use in ⚙️ Settings._")
-        else:
-            lines.append("- *(none found)*")
-
-    lines.append("")
-    lines.append("</details>")
-
-    return "\n".join(lines)
-
-
 def _refresh_chainlit_welcome_markdown() -> None:
-    """Append or replace managed sections (suggested prompts + dataset list) in chainlit.md.
+    """Rebuild chainlit.md from its template plus the local-data examples.
 
-    Reads from ``chainlit.md`` if it already exists (preserves any operator
-    edits between launches), else from ``chainlit.md.template`` (the tracked
-    source of truth), else from a hardcoded minimal fallback.
+    ``chainlit.md`` is generated and gitignored; ``chainlit.md.template`` is the
+    tracked source, and the place to edit this page.
+
+    Written whole rather than patched. The previous version preserved whatever
+    was already in chainlit.md and spliced managed sections into it between HTML
+    comment markers - but Chainlit's Readme renderer prints those markers as
+    literal text ("<!-- BIOMNI_SUGGESTED_PROMPTS_START -->" in the middle of the
+    page), so the mechanism that made the file editable also defaced it.
+
+    The page also used to end with an inventory of the data lake and the
+    workspace - 200 file names in a collapsed block. Gone: this is a page about
+    how to use the app, and a file listing is neither instruction nor something
+    the reader can act on from here.
     """
     try:
-        if CHAINLIT_MD_PATH.exists():
-            original = CHAINLIT_MD_PATH.read_text(encoding="utf-8")
-        elif CHAINLIT_MD_TEMPLATE_PATH.exists():
-            original = CHAINLIT_MD_TEMPLATE_PATH.read_text(encoding="utf-8")
+        if CHAINLIT_MD_TEMPLATE_PATH.exists():
+            base = CHAINLIT_MD_TEMPLATE_PATH.read_text(encoding="utf-8")
         else:
-            original = (
-                "## Hi, I'm Biomni-AD 🧠\n"
-                "#### Your AI co-scientist on the journey to conquer Alzheimer's disease.\n\n"
-                "Tell me a research question to get started.\n"
+            base = (
+                "## How to use Biomni-AD\n\n"
+                "Ask a quick question for a straight answer, or ask for an analysis and "
+                "approve the plan before anything runs.\n"
             )
 
-        # Strip both managed blocks
+        # Tolerate a template still carrying the retired marker blocks.
         for start, end in [
             (_SUGGESTED_PROMPTS_BLOCK_START, _SUGGESTED_PROMPTS_BLOCK_END),
             (_WELCOME_DATASET_BLOCK_START, _WELCOME_DATASET_BLOCK_END),
         ]:
-            original = re.sub(
-                rf"\n?{re.escape(start)}.*?{re.escape(end)}\n?",
-                "\n",
-                original,
-                flags=re.DOTALL,
-            )
-        base = original.rstrip()
+            base = re.sub(rf"\n?{re.escape(start)}.*?{re.escape(end)}\n?", "\n", base, flags=re.DOTALL)
 
-        # Build suggested prompts block (only shown when local datasets are present)
         suggested = _build_ad_suggested_prompts()
-        prompts_block = (
-            (f"\n\n{_SUGGESTED_PROMPTS_BLOCK_START}\n{suggested}\n{_SUGGESTED_PROMPTS_BLOCK_END}\n")
-            if suggested
-            else ""
-        )
-
-        # Build dataset inventory block
-        dataset_section = _build_welcome_local_dataset_section()
-        dataset_block = f"\n\n{_WELCOME_DATASET_BLOCK_START}\n{dataset_section}\n{_WELCOME_DATASET_BLOCK_END}\n"
-
-        CHAINLIT_MD_PATH.write_text(base + prompts_block + dataset_block, encoding="utf-8")
+        page = base.rstrip() + (f"\n\n{suggested}\n" if suggested else "\n")
+        CHAINLIT_MD_PATH.write_text(page, encoding="utf-8")
     except Exception:
         logger.warning("Could not refresh chainlit welcome markdown", exc_info=True)
 
@@ -1155,6 +1048,23 @@ def _apply_scope_to_agent(agent, ws: WorkspaceSession) -> None:
     agent.runs_root = ws.output.path
 
 
+async def _on_stale_plan_action(action: cl.Action) -> None:
+    """Answer a click on a plan button that nothing is waiting for.
+
+    Reached only once the ask behind those buttons is gone - a restart, a
+    rollout, or the 300s timeout - because a live ask is resolved by the browser
+    without consulting this registry. Without a handler Chainlit returns a bare
+    "Not Found: No callback found for action approve", which looks like the app
+    is broken at the exact moment the user is trying to authorise work.
+    """
+    logger.info("stale plan action clicked: %s", getattr(action, "name", "?"))
+    await cl.Message(content=STALE_PLAN_ACTION_NOTE).send()
+
+
+for _plan_action_name, _ in PLAN_ACTIONS:
+    cl.action_callback(_plan_action_name)(_on_stale_plan_action)
+
+
 @cl.on_settings_update
 async def on_settings_update(settings: dict):
     """Apply a scope / output-directory change and re-render everything from it."""
@@ -1278,6 +1188,25 @@ async def _process_message(message: cl.Message):
         if file_paths:
             prompt += "\n\nUser uploaded these files:\n" + "\n".join(f"- {p}" for p in file_paths)
 
+    history = cl.user_session.get("history", [])
+
+    # ------------------------------------------------------------------
+    # Phase 0: Triage - can this be answered without the pipeline?
+    # ------------------------------------------------------------------
+    # "Which GWAS files do I have?" should not cost a resource-retrieval pass,
+    # a generated plan and an approval click. Runs before the phases below
+    # precisely so a direct answer skips them: they exist to set up an analysis
+    # that is not going to happen. The model makes the call, biased towards
+    # planning, and any failure falls through to the plan path.
+    answer = await _quick_answer(agent, prompt, history)
+    if answer:
+        await cl.Message(content=answer).send()
+        cl.user_session.set(
+            "history",
+            [*history, {"role": "user", "content": prompt}, {"role": "assistant", "content": answer}],
+        )
+        return
+
     # ------------------------------------------------------------------
     # Phase 1: AD context injection (AD1 only)
     # ------------------------------------------------------------------
@@ -1331,7 +1260,6 @@ async def _process_message(message: cl.Message):
     # ------------------------------------------------------------------
     # Phase 4: Stream agent execution
     # ------------------------------------------------------------------
-    history = cl.user_session.get("history", [])
     thread_id = cl.user_session.get("thread_id", "42")
 
     # Pre-create the run directory so OUTPUT_DIR is available during code
