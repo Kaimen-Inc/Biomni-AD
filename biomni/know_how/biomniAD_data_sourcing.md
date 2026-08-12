@@ -10,10 +10,10 @@ Trigger keywords: "Alzheimer", "AD", "dementia", "MCI", "amyloid", "tau", "neuro
 
 ## Step-by-step agent instructions
 
-1. **Scan BIOMNI_DATA_PATH first** - List the root of the configured data directory. Datasets may live directly under it (e.g. `/mnt/dataset1/files`). Print what you find.
-2. **Scan local JSON catalogs** - Load every JSON file matching `resource/BiomniAD*.json`, `resource/NIAGADS*.json`, and `resource/SinaiADRD.json` from the know-how resource directory. Each entry has: `id`, `title`, `dataset_url`, `open_access_portal_url`, optional `manifest_url`, and `files[]` with per-file `uri` download links.
-3. **Summarise** - Print relevant dataset names, modality, and a one-line recommendation for the current task.
-4. **Download only what is needed** - If a dataset materially improves the task, download the smallest useful subset to the data path. Cache the path and reference it in subsequent tool calls.
+1. **Scan BIOMNI_DATA_PATH first** — List the root of the configured data directory. Datasets may live directly under it (e.g. `/mnt/dataset1/files`). Print what you find.
+2. **Scan local JSON catalogs** — Load every JSON file matching `resource/BiomniAD*.json`, `resource/NIAGADS*.json`, and `resource/SinaiADRD.json` from the know-how resource directory. Each entry has: `id`, `title`, `dataset_url`, `open_access_portal_url`, optional `manifest_url`, and `files[]` with per-file `uri` download links.
+3. **Summarise** — Print relevant dataset names, modality, and a one-line recommendation for the current task.
+4. **Download only what is needed** — If a dataset materially improves the task, download the smallest useful subset to the data path. Cache the path and reference it in subsequent tool calls.
 5. **Never fabricate data.** If local data is missing, explicitly state the gap.
 
 ### How to load catalogs (reference code)
@@ -40,7 +40,7 @@ for d in datasets:
 
 ## Available AD datasets (quick reference, check json files for more details)
 
-### NIAGADS (NG*) - genetics / omics / biomarkers
+### NIAGADS (NG*) — genetics / omics / biomarkers
 
 | ID | Title (short) | Modality |
 |----|---------------|----------|
@@ -61,7 +61,7 @@ for d in datasets:
 | NG00158 | Sex Differences in AD Pathology (Dumitrescu 2019) | GWAS sumstats |
 | NG00159 | Longitudinal Memory Change Endophenotype (Archer 2023) | GWAS sumstats |
 | NG00160 | Sex-Specific Late-Life Memory Architecture | GWAS sumstats |
-| NG00161 | Sex Differences - Cognitive Resilience (Eissman 2022) | GWAS sumstats |
+| NG00161 | Sex Differences — Cognitive Resilience (Eissman 2022) | GWAS sumstats |
 | NG00165 | CHARGE x ADSP R1 WGS (Wang 2024) | GWAS sumstats |
 | NG00166 | ADSP R3 17k WGS (Lee 2023) | GWAS sumstats |
 | NG00169 | PSP Summary Statistics (Farrell 2024) | GWAS sumstats |
@@ -113,27 +113,6 @@ print(df.describe())
 
 - Download via `files[].uri` or `manifest_url`/`dataset_url` when the dataset modality aligns with the task and expected benefit > cost.
 - Prefer the smallest relevant subset first; escalate to larger downloads only if needed.
-
-## Bulk local download
-
-To download all BiomniAD catalog files less than 100MB locally for the agent:
-
-**Standalone Python:**
-```python
-from biomni.agent.ad_data_downloader import download_ad_catalog_data
-# Specify your local data lake path
-results = download_ad_catalog_data("/path/to/data_lake")
-print(f"Downloaded {len(results['downloaded'])} files.")
-```
-
-**Via AD1 Agent:**
-```python
-from biomni.agent.ad1 import AD1
-# This will automatically download/cache missing files < 100MB during initialization
-agent = AD1(download_ad_data=True)
-```
-
-Files are stored in `<data_lake>/biomniAD/<dataset_id>/` and are automatically annotated as `[LOCAL]` in the agent's sourcing instructions.
 
 ## One-liner
 

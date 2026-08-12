@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "biomni"
 dynamic = ["version"]
-description = "Biomni-AD: Alzheimer's Disease Biomedical AI Agent"
+description = "Biomni"
 readme = "README.md"
 license = "Apache-2.0"
 license-files = ["LICENSE"]
@@ -13,47 +13,15 @@ authors = [
     {name = "Biomni Team", email = "kexinh@cs.stanford.edu"}
 ]
 requires-python = ">=3.11"
-dependencies = [
-    "pydantic>=2.7,<3",
-    "langchain>=0.3,<0.4",
-    "langchain-core>=0.3,<0.4",
-    "langchain-openai>=0.2,<0.4",
-    "langchain-text-splitters>=0.3,<0.4",
-    "langgraph==0.3.18",
-    "python-dotenv>=1.0",
-    "pandas>=2.0",
-    "requests>=2.31",
-    "pyyaml>=6.0",
-    "tqdm>=4.66",
-    "beautifulsoup4>=4.12",
-    "lxml>=5.0",
-    "pyarrow>=15.0",
-]
+dependencies = ["pydantic", "langchain", "python-dotenv"]
 
 [project.urls]
-Homepage = "https://github.com/Kaimen-Inc/Biomni-AD"
-Repository = "https://github.com/Kaimen-Inc/Biomni-AD"
-Upstream = "https://github.com/snap-stanford/biomni"
+Homepage = "https://github.com/snap-stanford/biomni"
+Repository = "https://github.com/snap-stanford/biomni"
 
 [project.optional-dependencies]
-# LLM provider extras - install the ones you need.
-anthropic = ["langchain-anthropic>=0.2,<0.4"]
-bedrock = ["langchain-aws>=0.2,<0.4"]
-ollama = ["langchain-ollama>=0.2,<0.4"]
-# UI extras
 gradio = ["gradio>=5.0,<6.0"]
-# The UI persists chat threads through Chainlit's SQLAlchemy data layer:
-# "custom-data" pulls in SQLAlchemy, aiosqlite drives the default SQLite store.
-chainlit = ["chainlit[custom-data]>=2.8,<3", "aiosqlite>=0.20,<1.0"]
-# Convenience meta-extra
-all = [
-    "langchain-anthropic>=0.2,<0.4",
-    "langchain-aws>=0.2,<0.4",
-    "langchain-ollama>=0.2,<0.4",
-    "gradio>=5.0,<6.0",
-    "chainlit[custom-data]>=2.8,<3",
-    "aiosqlite>=0.20,<1.0",
-]
+chainlit = ["chainlit>=1.0"]
 
 [tool.setuptools]
 include-package-data = true
@@ -62,24 +30,11 @@ include-package-data = true
 version = {attr = "biomni.version.__version__"}
 
 [tool.setuptools.packages.find]
-# chainlit_ui/ is consumed only by the top-level chainlit_app.py entry point
-# (which is not part of the wheel). It imports `chainlit` at module top, so
-# shipping it would make chainlit a hidden hard dep for anyone who happens to
-# `from chainlit_ui...` against the installed wheel - keep it source-only.
-exclude = ["test*", "tutorials*", "chainlit_ui*"]
-
-[tool.pytest.ini_options]
-testpaths = ["tests"]
-python_files = ["test_*.py"]
-addopts = ["-ra", "--strict-markers"]
+exclude = ["test*", "tutorials*"]
 
 [tool.ruff]
 src = ["src"]
 line-length = 120
-extend-exclude = [
-    # Legacy integration script kept for manual AD1 saving verification
-    "tests/verify_ad1_saving.py",
-]
 
 [tool.ruff.format]
 docstring-code-format = true

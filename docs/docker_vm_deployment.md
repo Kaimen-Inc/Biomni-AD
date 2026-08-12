@@ -140,7 +140,7 @@ By default, Docker builds with `biomni_env/environment.yml` (more reliable on cl
 To use the larger `fixed_env.yml` variant instead:
 
 ```bash
-docker-compose build --build-arg BIOMNI_ENV_FILE=biomni_env/adworkbench_env.yml
+docker compose build --build-arg BIOMNI_ENV_FILE=biomni_env/fixed_env.yml
 docker compose up -d
 ```
 
@@ -191,50 +191,10 @@ http://<VM_PUBLIC_IP>:8000
 
 `docker-compose.yml` mounts:
 
-- `biomni_app_data` (Docker named volume) `-> /app/data` (built-in Biomni data, writable)
-- `biomni_runs` (Docker named volume) `-> /app/runs` (run artifacts, writable)
-- `${BIOMNI_USER_DATA_HOST_PATH:-/tmp/biomni_user_data} -> /app/user-data` (read-only user local data)
+- `./data -> /app/data` (datasets and Biomni data path)
+- `./runs -> /app/runs` (run artifacts)
 
 So data survives container rebuild/restart.
-
-Biomni is preconfigured to read user local data from `/app/user-data` inside the container,
-and internal app data writes go to Docker-managed writable volumes. This avoids host
-filesystem permission issues (for example, read-only `/mnt` mounts or restrictive repo paths).
-
-### Use a host `/mnt/...` folder as user local data
-
-If your user dataset lives on the VM host at `/mnt/...`, set one env variable and restart.
-
-1. In `.env`:
-
-```bash
-BIOMNI_USER_DATA_HOST_PATH=/mnt/pluripotentstemcellline
-```
-
-2. Restart the service:
-
-```bash
-docker compose down
-docker compose up -d
-```
-
-Notes:
-
-- Use `:ro` when the host mount is read-only (common for shared `/mnt` datasets).
-- `chmod` will fail on read-only mounts; this is expected and not required for read access.
-- Ensure the host path exists and is readable by Docker on the VM (execute bit on directories).
-- If `BIOMNI_USER_DATA_HOST_PATH` is not set, Docker falls back to `/tmp/biomni_user_data`.
-
-### If you previously saw `Permission denied: /app/data/biomni_data`
-
-Recreate containers so the new named volumes take effect:
-
-```bash
-docker compose down -v
-docker compose up -d --build
-```
-
-This clears old bind mounts/volumes for this compose project and starts with clean writable app volumes.
 
 ## 6) Operations
 
@@ -305,17 +265,3 @@ docker ps --format 'table {{.ID}}\t{{.Names}}\t{{.Ports}}'
 - Restrict inbound IP ranges where possible.
 - Keep `.env` private and rotate API keys regularly.
 - Add VM-level monitoring and Docker log rotation.
-- **Run the container as non-root.** The compose file defaults to `user: "0:0"`
-  for first-run convenience, but you can flip to the micromamba base image's
-  non-root `mambauser` (UID 57439) by adding to `.env`:
-
-  ```env
-  BIOMNI_CONTAINER_USER=57439:57439
-  ```
-
-  Before flipping, pre-chown the bind-mounted host paths so the non-root UID
-  can write to them:
-
-  ```bash
-  sudo chown -R 57439:57439 ./data ./runs
-  ```
