@@ -104,6 +104,7 @@ SQLITE_SCHEMA: tuple[str, ...] = (
         "language"      TEXT,
         "indent"        INTEGER,
         "defaultOpen"   BOOLEAN,
+        "autoCollapse"  BOOLEAN,
         FOREIGN KEY ("threadId") REFERENCES threads("id") ON DELETE CASCADE
     )
     """,
@@ -143,6 +144,17 @@ SQLITE_SCHEMA: tuple[str, ...] = (
 )
 
 REQUIRED_TABLES = ("users", "threads", "steps", "elements", "feedbacks")
+
+# Columns that Chainlit releases added after the CREATE TABLE statements above
+# were written, applied to databases that already exist.
+#
+# This is not cosmetic. The data layer builds its INSERT from the keys of the
+# live step dict, so one unknown column fails the whole statement - and
+# `execute_sql` catches the error and logs it, so the step is lost without
+# anything surfacing. A single missing column silently empties the transcript.
+# `autoCollapse` arrived in chainlit 2.10, inside the ">=2.8,<3" this project
+# allows, which is close enough to reach a deployment on the next `pip install`.
+SQLITE_ADDED_COLUMNS: tuple[tuple[str, str, str], ...] = (("steps", "autoCollapse", "BOOLEAN"),)
 
 
 # --------------------------------------------------------------------------- #
@@ -215,11 +227,29 @@ def ensure_sqlite_schema(db_path: str) -> bool:
             conn.execute("PRAGMA foreign_keys=ON")
             for statement in SQLITE_SCHEMA:
                 conn.execute(statement)
+            _add_missing_columns(conn)
             conn.commit()
         return True
     except Exception:
         logger.warning("could not initialise the chat history database at %s", db_path, exc_info=True)
         return False
+
+
+def _add_missing_columns(conn: sqlite3.Connection) -> None:
+    """Bring an existing database up to :data:`SQLITE_ADDED_COLUMNS`.
+
+    ``CREATE TABLE IF NOT EXISTS`` does nothing for a database that already has
+    the table, so a column added to the schema would only ever reach fresh
+    installs - and the deployments that lose their transcripts are precisely the
+    ones with history to lose. Additive and idempotent: no column is dropped or
+    retyped, so an older build keeps working against the same file.
+    """
+    for table, column, declaration in SQLITE_ADDED_COLUMNS:
+        existing = {row[1] for row in conn.execute(f"PRAGMA table_info({table})")}
+        if column in existing:
+            continue
+        conn.execute(f'ALTER TABLE {table} ADD COLUMN "{column}" {declaration}')
+        logger.info("added the %s.%s column to the chat history database", table, column)
 
 
 def verify_sqlite_schema(db_path: str) -> list[str]:
@@ -442,13 +472,28 @@ class InlineBlobStorage:
     ) -> dict[str, Any]:
         raw = data.encode("utf-8") if isinstance(data, str) else data
         encoded = base64.b64encode(raw).decode("ascii")
-        return {"object_key": object_key, "url": f"data:{mime};base64,{encoded}"}
+        # No object key on purpose. The data layer treats one as "this payload
+        # lives somewhere addressable" and, when reopening a thread, throws away
+        # the stored URL to ask get_read_url for a fresh one - which for an
+        # inline payload cannot be produced from a key alone. Every image in a
+        # resumed conversation came back as a broken thumbnail because of it.
+        # Returning only the URL keeps the data layer on the column that holds
+        # the actual bytes.
+        return {"url": f"data:{mime};base64,{encoded}"}
 
     async def delete_file(self, object_key: str) -> bool:
         return True  # the payload lives in the row; deleting the row deletes it
 
     async def get_read_url(self, object_key: str) -> str:
-        return object_key
+        """Unreachable for anything this class wrote; see :meth:`upload_file`.
+
+        Rows written before that changed still carry an object key, and the
+        data layer will ask for a URL for them. Raising is the honest answer -
+        there is no such location - and it makes the caller fall back to the
+        row's own ``url``, which is the payload. Those conversations repair
+        themselves on the next read.
+        """
+        raise NotImplementedError("inline element payloads have no addressable location")
 
     async def close(self) -> None:
         return None

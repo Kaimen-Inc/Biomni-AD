@@ -11,7 +11,6 @@ from __future__ import annotations
 
 import pytest
 from biomni import fs_scan
-from biomni.run_registry import RunRecord
 from biomni.workspace_prefs import WorkspacePrefs, resolve_scope
 from chainlit_ui import workspace_panel as panel
 
@@ -147,31 +146,16 @@ def test_inventory_flags_a_bounded_scan(workspace, monkeypatch):
 
 # --------------------------------------------------------------------------- #
 # Runs
+#
+# Nothing here renders a run any more. Run state is still recorded (see
+# tests/test_run_registry.py), but it reaches the user as their conversation in
+# the list on the left, not as a notice in an unrelated chat.
 # --------------------------------------------------------------------------- #
 
 
-def test_previous_runs_notice_only_mentions_unfinished_work():
-    records = [
-        RunRecord(run_id="ok", status="completed", prompt="done job"),
-        RunRecord(run_id="bad", status="interrupted", prompt="broken job", output_dir="/out/bad"),
-    ]
-    notice = panel.build_previous_runs_notice(records)
-    assert notice is not None
-    assert "broken job" in notice
-    assert "done job" not in notice
-    assert "/out/bad" in notice
-
-
-def test_previous_runs_notice_is_none_when_all_is_well():
-    assert panel.build_previous_runs_notice([RunRecord(run_id="ok", status="completed")]) is None
-    assert panel.build_previous_runs_notice([]) is None
-
-
-def test_previous_runs_notice_truncates_long_lists():
-    records = [RunRecord(run_id=f"r{i}", status="failed", prompt=f"job {i}") for i in range(8)]
-    notice = panel.build_previous_runs_notice(records)
-    assert notice is not None
-    assert "and 3 more" in notice
+def test_no_run_text_is_rendered_for_the_user():
+    """Guards the removal: a notice about other conversations is not wanted."""
+    assert not [name for name in dir(panel) if "run" in name.lower() and not name.startswith("_")]
 
 
 # --------------------------------------------------------------------------- #

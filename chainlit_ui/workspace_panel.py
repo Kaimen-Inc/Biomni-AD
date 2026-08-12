@@ -31,7 +31,6 @@ from biomni.fs_scan import EXCLUDED_DIRS, scan_directory
 if TYPE_CHECKING:
     from collections.abc import Iterable, Sequence
 
-    from biomni.run_registry import RunRecord
     from biomni.workspace_prefs import ScopeResolution
 
 logger = logging.getLogger(__name__)
@@ -40,14 +39,6 @@ logger = logging.getLogger(__name__)
 # The human-facing panel has no equivalent: it reports counts, never listings.
 _INVENTORY_PREVIEW_FILES = 500
 _INVENTORY_TREE_LINES = 300
-
-_STATUS_ICONS = {
-    "running": "🔄",
-    "completed": "✅",
-    "failed": "⚠️",
-    "interrupted": "⏸",
-    "cancelled": "🚫",
-}
 
 
 # --------------------------------------------------------------------------- #
@@ -303,38 +294,13 @@ def build_scope_inventory(
 # --------------------------------------------------------------------------- #
 # Human-facing text
 #
-# There is no workspace panel any more. Chainlit's element sidebar cannot be
-# populated without being opened, and a panel that reappears on every session
-# start was rejected by reviewers three times over. What survives here is the
-# text that has somewhere better to be: a chat notice about work that did not
-# finish, and the labels for the Settings picker.
+# There is no workspace panel any more, and no arrival notice about earlier
+# runs either. Chainlit's element sidebar cannot be populated without being
+# opened, and a run's own conversation - which stays live even after the
+# browser is closed - is already one click away in the list on the left, so a
+# summary of it in a different chat only got in the way. What survives here is
+# the text with somewhere better to be: the labels for the Settings picker.
 # --------------------------------------------------------------------------- #
-
-
-def build_previous_runs_notice(records: Iterable[RunRecord]) -> str | None:
-    """A chat message about runs that ended badly while the user was away.
-
-    Only unfinished work is worth interrupting someone with on arrival;
-    completed runs are in the sidebar for whenever they want them.
-    """
-    unfinished = [r for r in records if r.status in {"interrupted", "failed"}]
-    if not unfinished:
-        return None
-
-    lines = [
-        f"**{len(unfinished)} earlier run{'s' if len(unfinished) > 1 else ''} did not finish.**",
-        "",
-    ]
-    for record in unfinished[:5]:
-        icon = _STATUS_ICONS.get(record.status, "•")
-        lines.append(f"- {icon} {record.label} ({record.status})")
-        if record.output_dir:
-            lines.append(f"  Partial results: `{record.output_dir}`")
-    if len(unfinished) > 5:
-        lines.append(f"- _... and {len(unfinished) - 5} more_")
-    lines.append("")
-    lines.append("Ask again to re-run any of them.")
-    return "\n".join(lines)
 
 
 def scope_choice_items(names: Iterable[str]) -> dict[str, str]:

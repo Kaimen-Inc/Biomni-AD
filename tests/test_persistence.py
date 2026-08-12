@@ -132,6 +132,36 @@ def test_schema_covers_every_column_chainlit_writes(tmp_path):
     assert element_fields <= element_cols
 
 
+def test_a_database_from_an_older_build_gains_new_columns(tmp_path):
+    """The upgrade path that CREATE TABLE IF NOT EXISTS cannot serve.
+
+    An existing file keeps its old table definition forever, and a step dict
+    with one column the table lacks fails its INSERT - which the data layer
+    logs and swallows, so the conversation simply stops being recorded. The
+    databases at risk are exactly the ones with history in them.
+    """
+    db = tmp_path / "threads.db"
+    persistence.ensure_sqlite_schema(str(db))
+    with sqlite3.connect(db) as conn:
+        for _, column, _ in persistence.SQLITE_ADDED_COLUMNS:
+            conn.execute(f'ALTER TABLE steps DROP COLUMN "{column}"')
+        conn.commit()
+
+    assert persistence.ensure_sqlite_schema(str(db)) is True
+
+    with sqlite3.connect(db) as conn:
+        columns = {row[1] for row in conn.execute("PRAGMA table_info(steps)")}
+    assert {column for _, column, _ in persistence.SQLITE_ADDED_COLUMNS} <= columns
+
+
+def test_reapplying_the_schema_is_idempotent(tmp_path):
+    """It runs on every boot; a second pass must not fail on its own work."""
+    db = tmp_path / "threads.db"
+    assert persistence.ensure_sqlite_schema(str(db)) is True
+    assert persistence.ensure_sqlite_schema(str(db)) is True
+    assert persistence.verify_sqlite_schema(str(db)) == []
+
+
 # --------------------------------------------------------------------------- #
 # Auth secret
 # --------------------------------------------------------------------------- #
@@ -203,4 +233,28 @@ def test_inline_storage_returns_a_data_url():
     storage = persistence.InlineBlobStorage()
     result = asyncio.run(storage.upload_file("user/el/plot.png", b"\x89PNG", mime="image/png"))
     assert result["url"] == "data:image/png;base64,iVBORw=="
-    assert result["object_key"] == "user/el/plot.png"
+
+
+def test_inline_storage_claims_no_object_key():
+    """An object key makes reopening a thread break every image.
+
+    The data layer reads it as "the bytes are somewhere addressable", drops the
+    stored URL, and asks get_read_url to rebuild one from the key - which for a
+    payload that lives in the row is not possible. Reporting no key keeps the
+    read on the column holding the data URL.
+    """
+    storage = persistence.InlineBlobStorage()
+    result = asyncio.run(storage.upload_file("user/el/plot.png", b"\x89PNG", mime="image/png"))
+    assert not result.get("object_key")
+    assert result  # still truthy: the data layer rejects an empty result
+
+
+def test_inline_storage_refuses_to_invent_a_read_url():
+    """Raising is what makes conversations written by the older code readable.
+
+    The data layer catches it and falls back to the row's own URL, so an
+    element that still carries an object key renders from its stored payload.
+    """
+    storage = persistence.InlineBlobStorage()
+    with pytest.raises(NotImplementedError):
+        asyncio.run(storage.get_read_url("user/el/plot.png"))

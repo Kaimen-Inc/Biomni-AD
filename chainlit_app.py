@@ -14,10 +14,12 @@ Environment variables:
 """
 
 import asyncio
+import inspect
 import logging
 import os
 import re
 import sys
+import threading
 import time
 import uuid
 from concurrent.futures import ThreadPoolExecutor
@@ -148,6 +150,7 @@ def _extract_final_answer(state: dict) -> str:
 # intentionally not re-exported — anything that needs them should
 # `from chainlit_ui.planning import PLANNING_SYSTEM_PROMPT, AD1_PLANNING_SYSTEM_PROMPT`.
 from chainlit_ui.datasets import build_suggested_prompts_markdown
+from chainlit_ui.live_runs import LIVE_RUNS
 from chainlit_ui.persistence import build_data_layer, ensure_auth_secret
 from chainlit_ui.planning import PLAN_ACTIONS, STALE_PLAN_ACTION_NOTE
 from chainlit_ui.planning import (
@@ -158,7 +161,6 @@ from chainlit_ui.planning import (
 )
 from chainlit_ui.uploads import store_uploads, uploads_dir
 from chainlit_ui.workspace_panel import (
-    build_previous_runs_notice,
     build_scope_inventory,
     list_top_level_dirs,
     scope_choice_items,
@@ -769,14 +771,26 @@ async def run_in_executor(fn, *args):
 
 
 async def stream_langgraph(agent_app, inputs, config):
-    """Yield LangGraph state dicts asynchronously from a sync stream."""
+    """Yield LangGraph state dicts asynchronously from a sync stream.
+
+    The graph runs in a worker thread, which cancellation cannot reach: an
+    asyncio task that is cancelled stops *reading*, and a thread that nobody
+    reads goes right on calling the model. Stop therefore used to end the
+    conversation while the run it stopped kept working - for as long as the
+    whole plan took. The flag below is the cooperative half of the stop: the
+    producer checks it between graph nodes, so the run ends after the step it
+    was already in.
+    """
     queue: asyncio.Queue = asyncio.Queue()
     loop = asyncio.get_event_loop()
+    stop = threading.Event()
 
     def _producer():
         try:
             for state in agent_app.stream(inputs, stream_mode="values", config=config):
                 asyncio.run_coroutine_threadsafe(queue.put(state), loop)
+                if stop.is_set():
+                    break
         finally:
             asyncio.run_coroutine_threadsafe(queue.put(None), loop)  # sentinel
 
@@ -787,11 +801,17 @@ async def stream_langgraph(agent_app, inputs, config):
     ctx = capture_context()
     executor.submit(ctx.run, _producer)
 
-    while True:
-        state = await queue.get()
-        if state is None:
-            break
-        yield state
+    try:
+        while True:
+            state = await queue.get()
+            if state is None:
+                break
+            yield state
+    finally:
+        stop.set()
+        # Not waited on: the worker may be mid-node, and holding the event loop
+        # for it would freeze the UI. It exits at the next check.
+        executor.shutdown(wait=False)
 
 
 # ---------------------------------------------------------------------------
@@ -907,10 +927,68 @@ async def on_chat_resume(thread: dict):
     thread is read-only. Everything a session needs - the agent, the workspace
     scope, the settings panel - is constructed here exactly as on a fresh start,
     plus the conversation history so the agent knows what was already said.
+
+    If the run that filled this conversation is still going - the user closed
+    the tab and came back - it is redirected into this connection, so the rest
+    of it streams in here instead of into a socket nobody is holding.
     """
     history = _history_from_thread(thread)
-    emit_event("chat_resume", steps=len(thread.get("steps") or []), history_turns=len(history))
+    reattached = await _follow_live_run(thread.get("id"))
+    emit_event(
+        "chat_resume",
+        steps=len(thread.get("steps") or []),
+        history_turns=len(history),
+        reattached=reattached,
+    )
     await _start_session(resumed_history=history)
+
+
+async def _follow_live_run(thread_id: str | None) -> bool:
+    """Point a still-running conversation at this connection. True if one was.
+
+    Redirecting the emitter is enough for the work itself: the rest of the run
+    arrives as ordinary streamed steps. Saying so is left to
+    :func:`_announce_live_run`, which cannot run yet - see there.
+    """
+    try:
+        if not LIVE_RUNS.reattach(thread_id, _websocket_session()):
+            return False
+        asyncio.create_task(_announce_live_run())
+        return True
+    except Exception:
+        logger.warning("Could not follow the live run for thread %s", thread_id, exc_info=True)
+        return False
+
+
+# How long to let the browser finish restoring a conversation before telling it
+# the conversation is still busy.
+_RESUME_ANNOUNCE_DELAY_S = 1.0
+
+
+async def _announce_live_run() -> None:
+    """Put a reopened conversation back into its running state.
+
+    Deferred, and that is the whole subtlety: Chainlit sends the stored
+    transcript to the browser *after* the resume handler returns, and the page
+    settles into an idle state as it renders it. Anything said from inside the
+    handler is undone a moment later, which is exactly how this looked - live
+    steps streaming in under an input box that believed nothing was happening,
+    so Stop was not offered.
+
+    ``task_start`` restores the running state and with it the Stop button, which
+    :func:`on_stop` makes good on. Its ``task_end`` comes from the run's own
+    handler when it finishes, through the emitter that was just redirected.
+    """
+    try:
+        await asyncio.sleep(_RESUME_ANNOUNCE_DELAY_S)
+        await cl.context.emitter.task_start()
+        # send_toast is a coroutine on a websocket connection and a no-op stub
+        # off one; only the first is awaitable.
+        toast: object = cl.context.emitter.send_toast("This conversation is still running. Output will continue below.")
+        if inspect.isawaitable(toast):
+            await toast
+    except Exception:
+        logger.warning("Could not announce the live run", exc_info=True)
 
 
 def _history_from_thread(thread: dict) -> list[dict]:
@@ -987,6 +1065,13 @@ async def _start_session(resumed_history: list[dict] | None = None) -> None:
             output_source=ws.output.source,
             output_ephemeral=ws.output.is_ephemeral,
             prefs_persisted=not isinstance(ws.store, NullPrefsStore),
+            # Earlier runs are reported here and nowhere else. Every run has a
+            # conversation in the list on the left holding everything it
+            # produced - including work that carried on after the browser was
+            # closed - so opening a new chat with a summary of a different one
+            # interrupted the user with what a click already shows them. The
+            # count stays as an operational signal.
+            unfinished_runs=len(ws.registry.unfinished(ws.runs)),
         )
     except Exception:
         logger.exception("Failed to resolve workspace session (continuing with defaults)")
@@ -998,24 +1083,33 @@ async def _start_session(resumed_history: list[dict] | None = None) -> None:
         except Exception:
             logger.exception("Failed to render workspace settings (session remains usable)")
 
-    # Tell the user about work that did not finish while they were away. Only
-    # unfinished runs are worth interrupting someone with; a completed run
-    # already reported where it wrote its results, in its own conversation. Not
-    # on a resume either: the user is reopening one specific conversation, and a
-    # banner about unrelated runs would be an interruption they did not ask for.
-    if ws is not None and resumed_history is None:
-        try:
-            notice = build_previous_runs_notice(ws.runs)
-            if notice:
-                await cl.Message(content=notice).send()
-        except Exception:
-            logger.exception("Failed to render previous-runs notice")
-
 
 def _chainlit_thread_id() -> str | None:
     """Chainlit's id for the conversation, when there is a session to ask."""
     try:
         return getattr(cl.context.session, "thread_id", None)
+    except Exception:
+        return None
+
+
+def _thread_key() -> str:
+    """The conversation id used for run bookkeeping, from either lifecycle path.
+
+    Always set by _start_session; the fallback only matters if a message
+    somehow arrives before one ran, and it keeps register/release agreeing on a
+    key either way.
+    """
+    return cl.user_session.get("thread_id") or "unknown"
+
+
+def _websocket_session():
+    """The connection this handler is running on, or None if there is none.
+
+    The object itself is what a detached run needs: redirecting its ``emit`` is
+    how a reopened tab starts receiving output again (see chainlit_ui.live_runs).
+    """
+    try:
+        return cl.context.session
     except Exception:
         return None
 
@@ -1204,7 +1298,25 @@ async def on_message(message: cl.Message):
         try:
             await _process_message(message)
         finally:
+            # Unconditional: the handler may have been cancelled or raised, and
+            # a conversation left registered as live would have the next tab
+            # that opens it wait on a run that is not there.
+            LIVE_RUNS.release(_thread_key(), _websocket_session())
             _emit_run_telemetry(agent, usage_before, started)
+
+
+@cl.on_stop
+async def on_stop():
+    """Make Stop work from a tab that did not start the run.
+
+    Chainlit cancels the clicking session's own task before calling this. For a
+    conversation reopened while its run continued in the background that task is
+    not the run, so without this the button would report a stop that never
+    happened. Cancelling the run makes its handler unwind normally: the record
+    closes out and the page is told the task ended.
+    """
+    if LIVE_RUNS.cancel(_thread_key()):
+        emit_event("run_stopped_by_user")
 
 
 async def _process_message(message: cl.Message):
@@ -1293,6 +1405,13 @@ async def _process_message(message: cl.Message):
     # Phase 4: Stream agent execution
     # ------------------------------------------------------------------
     thread_id = cl.user_session.get("thread_id", "42")
+
+    # From here on the work is detachable: Chainlit keeps the task alive when
+    # the websocket drops, and every step is persisted as it happens, so
+    # closing the browser costs nothing. Claiming the conversation lets a tab
+    # that reopens it pick the output back up live (on_chat_resume). Deliberately
+    # after the plan gate: an unanswered approval is not work in progress.
+    LIVE_RUNS.register(_thread_key(), _websocket_session(), asyncio.current_task())
 
     # Pre-create the run directory so OUTPUT_DIR is available during code
     # execution. The root comes from the session's resolved output target
@@ -1567,14 +1686,27 @@ async def _cancel_task(task: asyncio.Task) -> None:
 
 
 async def _display_images(observation: str):
-    """Scan observation text for image file paths and display them."""
+    """Scan observation text for image file paths and display them.
+
+    One plot is usually named more than once in a single observation - the
+    script prints the absolute path it saved to, and then the file turns up
+    again in a listing or a summary line - so the same figure was posted twice,
+    and twice again in the stored transcript. Matches are resolved and
+    de-duplicated within the observation; a genuinely regenerated file in a
+    later step is a later observation and still shown.
+    """
     pattern = r"(\S+?(?:" + "|".join(re.escape(e) for e in SUPPORTED_IMAGE_EXTENSIONS) + r"))"
+    shown: set[str] = set()
     for match in re.findall(pattern, observation, re.IGNORECASE):
         fp = match.strip("\"'")
         # Resolve relative or absolute path
         candidates = [fp, os.path.join(os.getcwd(), fp)]
         for candidate in candidates:
             if os.path.isfile(candidate):
+                resolved = os.path.realpath(candidate)
+                if resolved in shown:
+                    break
+                shown.add(resolved)
                 try:
                     image = cl.Image(path=candidate, name=os.path.basename(candidate), display="inline")
                     await cl.Message(content="", elements=[image]).send()

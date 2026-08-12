@@ -235,9 +235,18 @@ or in single-user mode (`BIOMNI_ALLOW_ANONYMOUS_PERSISTENCE`).
 Otherwise each page load is a new anonymous user, and the sidebar would fill
 with threads nobody could reopen.
 
-Note that this is conversation persistence, not job persistence: reopening a
-thread restores what was said and produced, but a run that was still executing
-when the process stopped is reported as interrupted rather than resumed.
+Closing the browser does not stop a run.
+The work carries on server-side and keeps writing into its own conversation, so
+reopening that conversation from the list on the left shows everything that
+happened while nobody was watching.
+If the run is still going when it is reopened, the rest of it streams into the
+page, and Stop applies to the run itself rather than to the tab.
+
+The limit is the process: a run is bound to the one executing it, so a restart
+or a pod eviction ends it, and the run record says `interrupted` rather than
+claiming a result nobody produced.
+Detaching execution into a worker that outlives the request would be a
+different piece of infrastructure; nothing here silently loses work today.
 
 Preferences are keyed by the user id the authentication gateway asserts, scoped
 by workspace id when one is supplied. Those headers are only believed when
