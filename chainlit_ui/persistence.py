@@ -43,6 +43,9 @@ AUTH_SECRET_FILENAME = "auth_secret"
 # itself still exists in the run's output directory.
 _DEFAULT_MAX_INLINE_BYTES = 2 * 1024 * 1024
 
+# How long a blocked SQLite writer waits for the lock before giving up.
+_SQLITE_BUSY_TIMEOUT_S = 30.0
+
 
 # --------------------------------------------------------------------------- #
 # Schema
@@ -321,9 +324,17 @@ def build_data_layer(workspace_root: str | None = None) -> Any | None:
     else:
         logger.info("using an operator-provided chat history database; its schema is assumed to exist")
 
+    # SQLite serialises writers. Two browser tabs (or two users in single-user
+    # mode) both mid-conversation is not an exotic case, and the default busy
+    # timeout is 5 seconds - short enough that a burst of step writes can fail
+    # with "database is locked". The data layer would swallow that into a log
+    # line and drop the step, so give a blocked writer room to wait instead.
+    connect_args = {"timeout": _SQLITE_BUSY_TIMEOUT_S} if db_path else None
+
     try:
         return _inline_element_data_layer_class()(
             conninfo=url,
+            connect_args=connect_args,
             storage_provider=InlineBlobStorage(),
             # Only SQLite needs the tag workaround; Postgres has a real array type.
             drop_list_tags=bool(db_path),

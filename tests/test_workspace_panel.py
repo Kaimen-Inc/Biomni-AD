@@ -12,7 +12,7 @@ from __future__ import annotations
 import pytest
 from biomni import fs_scan
 from biomni.run_registry import RunRecord
-from biomni.workspace_prefs import OutputTarget, WorkspacePrefs, resolve_scope
+from biomni.workspace_prefs import WorkspacePrefs, resolve_scope
 from chainlit_ui import workspace_panel as panel
 
 
@@ -131,13 +131,6 @@ def test_inventory_flags_a_scope_whose_folders_all_vanished(workspace):
     assert "Tell the user" in text
 
 
-def test_panel_flags_a_scope_whose_folders_all_vanished(workspace):
-    scope = resolve_scope(WorkspacePrefs(scope_paths=["ghost"]), str(workspace))
-    text = panel.build_scope_panel(scope, str(workspace), None)
-    assert "Selected but missing" in text
-    assert "ghost" in text
-
-
 def test_inventory_is_empty_without_a_workspace():
     scope = resolve_scope(WorkspacePrefs(), None)
     assert panel.build_scope_inventory(scope, None) == ""
@@ -153,93 +146,8 @@ def test_inventory_flags_a_bounded_scan(workspace, monkeypatch):
 
 
 # --------------------------------------------------------------------------- #
-# Sidebar panel
-# --------------------------------------------------------------------------- #
-
-
-def test_panel_without_selection_invites_a_choice(workspace):
-    scope = resolve_scope(WorkspacePrefs(), str(workspace))
-    text = panel.build_scope_panel(scope, str(workspace), None)
-    assert "Nothing selected yet" in text
-    assert "Settings" in text
-    # The panel must not enumerate the workspace: an un-actionable folder list
-    # is exactly the noise reviewers asked to have removed from the right-hand
-    # side. The names belong in the Settings picker, where they can be chosen.
-    assert "studyA" not in text
-
-
-def test_panel_with_selection_shows_counts(workspace):
-    scope = resolve_scope(WorkspacePrefs(scope_paths=["studyA"]), str(workspace))
-    text = panel.build_scope_panel(scope, str(workspace), None)
-    assert "`studyA/`" in text
-    assert "2 files" in text
-
-
-def test_panel_warns_about_ephemeral_output(workspace):
-    scope = resolve_scope(WorkspacePrefs(), str(workspace))
-    output = OutputTarget(path="/app/runs", source="cwd-fallback", writable=True)
-    text = panel.build_scope_panel(scope, str(workspace), output)
-    assert "lost when the application restarts" in text
-    assert "BIOMNI_OUTPUT_ROOT" in text
-
-
-def test_panel_warns_about_unwritable_output(workspace):
-    scope = resolve_scope(WorkspacePrefs(), str(workspace))
-    output = OutputTarget(path="/nope", source="env", writable=False, reason="no writable output location found")
-    text = panel.build_scope_panel(scope, str(workspace), output)
-    assert "Not writable" in text
-
-
-def test_panel_stays_quiet_about_a_healthy_output(workspace):
-    scope = resolve_scope(WorkspacePrefs(), str(workspace))
-    output = OutputTarget(path=str(workspace / "biomni-outputs"), source="workspace", writable=True)
-    text = panel.build_scope_panel(scope, str(workspace), output)
-    assert "⚠️" not in text
-    assert "biomni-outputs" in text
-
-
-def test_panel_lists_missing_selections(workspace):
-    scope = resolve_scope(WorkspacePrefs(scope_paths=["studyA", "ghost"]), str(workspace))
-    text = panel.build_scope_panel(scope, str(workspace), None)
-    assert "Selected but missing" in text
-    assert "ghost" in text
-
-
-def test_panel_without_workspace():
-    scope = resolve_scope(WorkspacePrefs(), None)
-    assert "No user workspace is configured" in panel.build_scope_panel(scope, None, None)
-
-
-def test_panel_reports_persistence_location(workspace):
-    scope = resolve_scope(WorkspacePrefs(), str(workspace))
-    text = panel.build_scope_panel(scope, str(workspace), None, persistence="/state/prefs")
-    assert "/state/prefs" in text
-
-
-# --------------------------------------------------------------------------- #
 # Runs
 # --------------------------------------------------------------------------- #
-
-
-def test_runs_panel_is_helpful_when_empty():
-    assert "No runs recorded yet" in panel.build_runs_panel([])
-
-
-def test_runs_panel_lists_status_and_output():
-    records = [
-        RunRecord(run_id="r1", status="completed", prompt="find targets", output_dir="/out/r1"),
-        RunRecord(run_id="r2", status="interrupted", prompt="long job", error="stopped"),
-    ]
-    text = panel.build_runs_panel(records)
-    assert "find targets" in text and "/out/r1" in text
-    assert "long job" in text and "stopped" in text
-
-
-def test_runs_panel_respects_limit():
-    records = [RunRecord(run_id=f"r{i}", prompt=f"job {i}") for i in range(10)]
-    text = panel.build_runs_panel(records, limit=2)
-    assert "job 0" in text and "job 1" in text
-    assert "job 5" not in text
 
 
 def test_previous_runs_notice_only_mentions_unfinished_work():
@@ -285,3 +193,14 @@ def test_tree_preview_renders_nested_paths():
 def test_tree_preview_respects_max_lines():
     paths = [f"dir/f{i}.csv" for i in range(50)]
     assert len(panel.build_tree_preview_lines(paths, max_lines=5)) <= 5
+
+
+def test_files_label_gets_the_noun_right():
+    """Shown in the Settings dialog and the scope-change message, so "1 files"
+    would be visible to every user with a single-file folder."""
+    one = panel.ScopeEntrySummary(label="a", path="/a", file_count=1, bounded=False)
+    many = panel.ScopeEntrySummary(label="b", path="/b", file_count=4, bounded=False)
+    capped = panel.ScopeEntrySummary(label="c", path="/c", file_count=1, bounded=True)
+    assert one.files_label() == "1 file"
+    assert many.files_label() == "4 files"
+    assert capped.files_label() == "1+ files"

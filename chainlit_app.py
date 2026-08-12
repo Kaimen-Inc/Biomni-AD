@@ -14,7 +14,6 @@ Environment variables:
 """
 
 import asyncio
-import hashlib
 import logging
 import os
 import re
@@ -156,9 +155,7 @@ from chainlit_ui.planning import (
 )
 from chainlit_ui.workspace_panel import (
     build_previous_runs_notice,
-    build_runs_panel,
     build_scope_inventory,
-    build_scope_panel,
     list_top_level_dirs,
     scope_choice_items,
     summarize_scope,
@@ -627,8 +624,38 @@ def _build_workspace_session(session_id: str, header_source: object) -> Workspac
     return _refresh_workspace_view(ws)
 
 
+def _output_dir_description(ws: WorkspaceSession) -> str:
+    """Help text for the output-directory field, including its warnings.
+
+    The two warnings used to live in the sidebar panel, and they are the only
+    part of it that was load-bearing: a user whose results are going somewhere
+    unwritable, or somewhere a restart will erase, has to be told before they
+    start a long run rather than after.
+    """
+    text = (
+        f"Where run results are written. Currently resolved to {ws.output.path} "
+        f"(source: {ws.output.source}). Leave as-is to keep the deployment default."
+    )
+    if not ws.output.writable:
+        text += f"\n\n⚠️ That directory is not writable. {ws.output.reason or ''}".rstrip()
+    elif ws.output.is_ephemeral:
+        text += (
+            "\n\n⚠️ Container-local storage: results are lost when the application restarts. "
+            "Set a path on a mounted volume, or ask an operator to configure BIOMNI_OUTPUT_ROOT."
+        )
+    if ws.persistence_label:
+        text += f"\n\nSettings are stored in {ws.persistence_label}."
+    return text
+
+
 def _workspace_settings_widgets(ws: WorkspaceSession) -> list[InputWidget]:
     """Chat-settings controls for scope and output directory.
+
+    This dialog is also where the workspace *state* is reported, now that there
+    is no right-hand panel: the descriptions carry the active scope with its
+    file counts, anything selected that has since disappeared, and where outputs
+    resolve to. It is the one place a user opens when they want to know or
+    change any of that.
 
     The folder multi-select is omitted entirely when the workspace has no
     subdirectories - Chainlit's MultiSelect rejects an empty item list, and an
@@ -638,19 +665,30 @@ def _workspace_settings_widgets(ws: WorkspaceSession) -> list[InputWidget]:
     known = set(ws.top_level_dirs)
 
     if ws.top_level_dirs:
+        description = (
+            "Only the selected folders are scanned and described to the agent. "
+            "Selecting large folders slows every session and dilutes the agent's attention, "
+            "so prefer the specific studies you are working on. "
+            "With nothing selected, the agent is told which folders exist and looks inside "
+            "them only when a task calls for it."
+        )
+        summaries = summarize_scope(ws.scope, ws.workspace_root)
+        if summaries:
+            active = ", ".join(f"{s.label} ({s.files_label()})" for s in summaries[:8])
+            if len(summaries) > 8:
+                active += f" and {len(summaries) - 8} more"
+            description += f"\n\nCurrently active: {active}."
+        if ws.scope.missing:
+            description += (
+                "\n\n⚠️ Selected but no longer present (deleted or renamed): " + ", ".join(ws.scope.missing) + "."
+            )
         widgets.append(
             MultiSelect(
                 id="scope_folders",
                 label="Data folders the agent may use",
                 items=scope_choice_items(ws.top_level_dirs),
                 initial=[p for p in ws.prefs.scope_paths if p in known],
-                description=(
-                    "Only the selected folders are scanned and described to the agent. "
-                    "Selecting large folders slows every session and dilutes the agent's attention, "
-                    "so prefer the specific studies you are working on. "
-                    "With nothing selected, the agent is told which folders exist and looks inside "
-                    "them only when a task calls for it."
-                ),
+                description=description,
             )
         )
 
@@ -668,10 +706,7 @@ def _workspace_settings_widgets(ws: WorkspaceSession) -> list[InputWidget]:
             id="output_dir",
             label="Output directory",
             initial=ws.prefs.output_dir or ws.output.path,
-            description=(
-                f"Where run results are written. Currently resolved to {ws.output.path} "
-                f"(source: {ws.output.source}). Leave as-is to keep the deployment default."
-            ),
+            description=_output_dir_description(ws),
         )
     )
 
@@ -729,50 +764,26 @@ def _apply_workspace_settings(ws: WorkspaceSession, settings: dict) -> tuple[Wor
     return ws, persisted
 
 
-def _build_workspace_sidebar_elements(ws: WorkspaceSession) -> list[cl.Text]:
-    """Sidebar pages: the active data scope, and this user's recent runs.
-
-    Nothing else. Earlier versions also dumped the built-in data lakes here -
-    an at-a-glance file/folder census plus a full directory tree of ~290 curated
-    files - and reviewers rejected it twice, for the same reason each time: it
-    is an inventory nobody asked for, it cannot be acted on from the panel, and
-    it buries the two facts that do matter (what the agent may read, and where
-    results went). The data lakes are still fully available to the agent through
-    the retriever and the system prompt; they are simply not wallpaper.
-    """
-    return [
-        cl.Text(
-            name="Workspace",
-            content=build_scope_panel(
-                ws.scope,
-                ws.workspace_root,
-                ws.output,
-                summaries=summarize_scope(ws.scope, ws.workspace_root),
-                persistence=ws.persistence_label,
-            ),
-            display="page",
-        ),
-        cl.Text(name="Recent runs", content=build_runs_panel(ws.runs), display="page"),
-    ]
-
-
-async def _render_workspace_sidebar(ws: WorkspaceSession) -> None:
-    """Rebuild and push the sidebar. Element building is blocking, so off-loop."""
-    elements = await run_in_executor(_build_workspace_sidebar_elements, ws)
-    await cl.ElementSidebar.set_elements(elements, key=_sidebar_key(elements))
-
-
-def _sidebar_key(elements: list[cl.Text]) -> str:
-    """Content-derived key for ``ElementSidebar.set_elements``.
-
-    Chainlit skips replacing the sidebar when it is already open with the same
-    key, and the default key is ``None`` - so a second call with fresh content
-    is silently ignored and the panel keeps showing the old scope. Keying on a
-    digest of the rendered content makes an update land exactly when something
-    actually changed, and costs nothing when it has not.
-    """
-    payload = "\x00".join(f"{el.name}:{getattr(el, 'content', '')}" for el in elements)
-    return "workspace-" + hashlib.sha256(payload.encode("utf-8")).hexdigest()[:12]
+# There is deliberately no right-hand panel.
+#
+# Chainlit's element sidebar cannot be filled without being opened -
+# `ElementSidebar.set_elements` opens it on any non-empty list, and `set_title`
+# says so in its own docstring - so "show the workspace state on the right"
+# and "do not take a third of the screen on every session start" cannot both be
+# true. Between the two, the screen wins: reviewers asked three times for the
+# right side to stop appearing.
+#
+# Everything the panel carried now lives where the user is already looking when
+# they care about it:
+#
+#   * active scope and resolved output directory -> the ⚙️ Settings dialog,
+#     which is where they are changed anyway, plus the confirmation message
+#     posted to the chat on save,
+#   * where a finished run wrote its results -> the run's own completion
+#     message,
+#   * work that did not finish while the user was away -> a chat notice at
+#     session start, and only when there is some,
+#   * past conversations -> the thread list Chainlit renders on the left.
 
 
 # ---------------------------------------------------------------------------
@@ -1093,18 +1104,11 @@ async def _start_session(resumed_history: list[dict] | None = None) -> None:
         except Exception:
             logger.exception("Failed to render workspace settings (session remains usable)")
 
-    # Render the sidebar: the active data scope and this user's recent runs.
-    if ws is not None:
-        try:
-            await cl.ElementSidebar.set_title("Workspace")
-            await _render_workspace_sidebar(ws)
-        except Exception:
-            logger.exception("Failed to render the workspace sidebar (session remains usable)")
-
     # Tell the user about work that did not finish while they were away. Only
-    # unfinished runs interrupt them; completed ones wait in the sidebar. Not on
-    # a resume: the user is reopening one specific conversation, and a banner
-    # about unrelated runs would be an interruption they did not ask for.
+    # unfinished runs are worth interrupting someone with; a completed run
+    # already reported where it wrote its results, in its own conversation. Not
+    # on a resume either: the user is reopening one specific conversation, and a
+    # banner about unrelated runs would be an interruption they did not ask for.
     if ws is not None and resumed_history is None:
         try:
             notice = build_previous_runs_notice(ws.runs)
@@ -1170,11 +1174,6 @@ async def on_settings_update(settings: dict):
     if agent is not None:
         _apply_scope_to_agent(agent, ws)
 
-    try:
-        await _render_workspace_sidebar(ws)
-    except Exception:
-        logger.exception("Failed to refresh sidebar after settings update")
-
     emit_event(
         "workspace_settings_updated",
         scope_folders=len(ws.scope.roots),
@@ -1184,9 +1183,14 @@ async def on_settings_update(settings: dict):
     )
 
     if ws.scope.roots:
-        scope_text = ", ".join(f"`{label}`" for label in ws.prefs.scope_paths[:8])
-        if len(ws.prefs.scope_paths) > 8:
-            scope_text += f" and {len(ws.prefs.scope_paths) - 8} more"
+        # With no panel to consult, this message is the only place the user is
+        # told what their selection actually costs, so it carries the file
+        # counts rather than just the folder names.
+        summaries = await run_in_executor(summarize_scope, ws.scope, ws.workspace_root)
+        shown = summaries[:8]
+        scope_text = ", ".join(f"`{s.label}` ({s.files_label()})" for s in shown)
+        if len(summaries) > len(shown):
+            scope_text += f" and {len(summaries) - len(shown)} more"
         summary = f"**Data scope updated.** The agent will use {scope_text}."
     else:
         summary = "**Data scope cleared.** The agent will only look inside workspace folders a task points it to."
@@ -1421,16 +1425,6 @@ async def _process_message(message: cl.Message):
     # ------------------------------------------------------------------
     if final_state and hasattr(agent, "_save_run_artifacts"):
         await _save_run_artifacts_for_agent(agent, final_state, initial_files, topic=prompt)
-
-    # Refresh the run history so the run that just finished appears there. The
-    # panel is otherwise only built at session start, which would leave it
-    # claiming "no runs recorded yet" immediately after completing one.
-    if ws is not None and ws.registry.enabled:
-        try:
-            ws.runs = await run_in_executor(ws.registry.list_for_user, ws.prefs_key)
-            await _render_workspace_sidebar(ws)
-        except Exception:
-            logger.warning("Could not refresh run history panel", exc_info=True)
 
 
 # ---------------------------------------------------------------------------

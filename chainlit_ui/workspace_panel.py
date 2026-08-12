@@ -1,4 +1,5 @@
-"""Rendering for the workspace scope panel, inventory and run history.
+"""Text builders for the workspace scope: the agent-facing inventory, the
+Settings picker labels, and the unfinished-run notice.
 
 Everything here is a pure string/data builder: no Chainlit import, no event
 loop, no I/O beyond the bounded scanner. The Chainlit layer decides *where* to
@@ -31,7 +32,7 @@ if TYPE_CHECKING:
     from collections.abc import Iterable, Sequence
 
     from biomni.run_registry import RunRecord
-    from biomni.workspace_prefs import OutputTarget, ScopeResolution
+    from biomni.workspace_prefs import ScopeResolution
 
 logger = logging.getLogger(__name__)
 
@@ -106,6 +107,11 @@ class ScopeEntrySummary:
 
     def count_label(self) -> str:
         return f"{self.file_count}+" if self.bounded else str(self.file_count)
+
+    def files_label(self) -> str:
+        """``count_label`` with the right noun: "1 file", "4 files", "10+ files"."""
+        noun = "file" if (self.file_count == 1 and not self.bounded) else "files"
+        return f"{self.count_label()} {noun}"
 
 
 def summarize_scope(scope: ScopeResolution, workspace_root: str | None) -> list[ScopeEntrySummary]:
@@ -295,100 +301,14 @@ def build_scope_inventory(
 
 
 # --------------------------------------------------------------------------- #
-# Human-facing panels
+# Human-facing text
+#
+# There is no workspace panel any more. Chainlit's element sidebar cannot be
+# populated without being opened, and a panel that reappears on every session
+# start was rejected by reviewers three times over. What survives here is the
+# text that has somewhere better to be: a chat notice about work that did not
+# finish, and the labels for the Settings picker.
 # --------------------------------------------------------------------------- #
-
-
-def build_scope_panel(
-    scope: ScopeResolution,
-    workspace_root: str | None,
-    output: OutputTarget | None,
-    *,
-    summaries: Sequence[ScopeEntrySummary] | None = None,
-    persistence: str | None = None,
-) -> str:
-    """The sidebar page: what the agent can read, and where results will go."""
-    lines: list[str] = []
-
-    if not workspace_root:
-        lines.append("No user workspace is configured for this deployment.")
-    else:
-        lines.append(f"**Workspace**\n`{workspace_root}`")
-        lines.append("")
-        lines.append("**Active data scope**")
-        if scope.roots:
-            entries = list(summaries if summaries is not None else summarize_scope(scope, workspace_root))
-            lines.append("")
-            for entry in entries:
-                suffix = "file" if (entry.file_count == 1 and not entry.bounded) else "files"
-                lines.append(f"- 📁 `{entry.label}/` - {entry.count_label()} {suffix}")
-        else:
-            # Deliberately no folder listing here. Reviewers asked twice for the
-            # right-hand panel to stop being an inventory: a list of names the
-            # user cannot click, filter or act on is noise, and the same names
-            # are already in the ⚙️ Settings picker, where they *are* actionable.
-            # This panel answers one question - what is the agent allowed to
-            # read right now - and says nothing when the answer is "nothing".
-            lines.append("")
-            lines.append("_Nothing selected yet - the agent will look only where a task points it._")
-            lines.append("")
-            lines.append("Use ⚙️ **Settings** to pick the folders you are working with.")
-
-        # Reported whether or not anything is still selected: a scope that
-        # resolved to nothing because its folders were deleted must not read as
-        # "you never chose".
-        if scope.missing:
-            lines.append("")
-            lines.append("**Selected but missing**")
-            lines.extend(f"- ⚠️ `{name}` (deleted or renamed)" for name in scope.missing)
-
-    if output is not None:
-        lines.append("")
-        lines.append("**Outputs**")
-        lines.append(f"`{output.path}`")
-        if not output.writable:
-            lines.append("")
-            lines.append(f"⚠️ Not writable. {output.reason or ''}".rstrip())
-        elif output.is_ephemeral:
-            lines.append("")
-            lines.append(
-                "⚠️ This is container-local storage: results are lost when the application restarts. "
-                "Set an output directory in ⚙️ Settings, or ask an operator to configure "
-                "`BIOMNI_OUTPUT_ROOT`."
-            )
-
-    if persistence:
-        lines.append("")
-        lines.append(f"_Settings storage: {persistence}_")
-
-    return "\n".join(lines)
-
-
-def build_runs_panel(records: Sequence[RunRecord], *, limit: int = 10) -> str:
-    """The sidebar page listing this user's recent runs across sessions.
-
-    Carries its own heading because Chainlit stacks sidebar pages in one
-    scrolling column: without it the first run reads as part of the workspace
-    panel above.
-    """
-    heading = "---\n\n**Recent runs**\n\n"
-    if not records:
-        return (
-            heading
-            + "No runs recorded yet.\n\nCompleted runs will be listed here, including ones from earlier sessions."
-        )
-
-    lines: list[str] = [heading.rstrip("\n"), ""]
-    for record in list(records)[:limit]:
-        icon = _STATUS_ICONS.get(record.status, "•")
-        lines.append(f"{icon} **{record.label}**")
-        lines.append(f"   {record.status} · {record.created_at}")
-        if record.output_dir:
-            lines.append(f"   `{record.output_dir}`")
-        if record.error:
-            lines.append(f"   _{record.error}_")
-        lines.append("")
-    return "\n".join(lines).rstrip()
 
 
 def build_previous_runs_notice(records: Iterable[RunRecord]) -> str | None:
