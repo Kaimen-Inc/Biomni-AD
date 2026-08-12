@@ -1434,6 +1434,11 @@ async def _process_message(message: cl.Message):
         agent._current_run_dir = _current_run_dir
         os.environ["BIOMNI_OUTPUT_PATH"] = _current_run_dir
     except OSError:
+        # Reset rather than leave it pointing at a path that was never created
+        # (e.g. the outer makedirs succeeds but the run-id subdirectory fails -
+        # a stale same-named file, a quota limit) - otherwise that phantom path
+        # is what gets persisted as this run's output_dir below.
+        _current_run_dir = None
         logger.warning("Could not pre-create run directory under %s", _runs_root, exc_info=True)
         await cl.Message(
             content=(
@@ -1442,6 +1447,7 @@ async def _process_message(message: cl.Message):
             )
         ).send()
     except Exception:
+        _current_run_dir = None
         logger.warning("Could not pre-create run directory", exc_info=True)
 
     # Record the run durably before it starts, so a user who closes the tab (or
