@@ -15,7 +15,7 @@ def test_import_biomni_is_cheap() -> None:
 
     import biomni  # noqa: F401
 
-    # The agent module is heavy (pandas, langchain, langgraph) — it must
+    # The agent module is heavy (pandas, langchain, langgraph) - it must
     # only load on first attribute access.
     assert "biomni.agent.a1" not in sys.modules
 

@@ -2,8 +2,8 @@
 
 The agent runs LLM-generated code un-sandboxed, so each execution emits a
 structured ``code_execution`` event (hash + size + status + timing, never the
-raw source/output). We test the two pure pieces — status classification and the
-audit emitter — without standing up the full LangGraph agent.
+raw source/output). We test the two pure pieces - status classification and the
+audit emitter - without standing up the full LangGraph agent.
 """
 
 from __future__ import annotations

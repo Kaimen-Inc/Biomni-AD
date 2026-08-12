@@ -14,7 +14,7 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from pathlib import Path
 
-# Prompt templates keyed by dataset id — shown only when those files are
+# Prompt templates keyed by dataset id - shown only when those files are
 # locally present. Each entry is (dataset_id, prompt_text, category) where
 # `dataset_id` is matched against subdirectory names of the AD data lake
 # by exact equality (see `discover_present_dataset_ids`).
@@ -41,12 +41,12 @@ AD_DATASET_PROMPTS: list[tuple[str, str, str]] = [
     ),
     (
         "NG00105",
-        "Identify the top eQTL genes in prefrontal cortex (MFG) from NG00105 that overlap AD GWAS loci — load the cis-QTL file and filter by FDR < 0.05",
+        "Identify the top eQTL genes in prefrontal cortex (MFG) from NG00105 that overlap AD GWAS loci - load the cis-QTL file and filter by FDR < 0.05",
         "QTL",
     ),
     (
         "NG00118",
-        "Find structural variant eQTLs in ROSMAP DLPFC (NG00118) for BIN1 and CLU — do they co-localize with GWAS signals?",
+        "Find structural variant eQTLs in ROSMAP DLPFC (NG00118) for BIN1 and CLU - do they co-localize with GWAS signals?",
         "QTL",
     ),
     (
@@ -56,7 +56,7 @@ AD_DATASET_PROMPTS: list[tuple[str, str, str]] = [
     ),
     (
         "NG00133",
-        "Analyze the plasma and urine biomarker data from NG00133 — which analytes differ most between AD cases and controls?",
+        "Analyze the plasma and urine biomarker data from NG00133 - which analytes differ most between AD cases and controls?",
         "Biomarkers",
     ),
     (
@@ -66,7 +66,7 @@ AD_DATASET_PROMPTS: list[tuple[str, str, str]] = [
     ),
     (
         "NG00165",
-        "Run a gene-level burden analysis summary using the CHARGE/ADSP 5k WGS results (NG00165) — list top gene hits from SKAT and CMC tests",
+        "Run a gene-level burden analysis summary using the CHARGE/ADSP 5k WGS results (NG00165) - list top gene hits from SKAT and CMC tests",
         "Rare variants",
     ),
     (
@@ -77,7 +77,7 @@ AD_DATASET_PROMPTS: list[tuple[str, str, str]] = [
     ("NG00172", "Summarize the structural variant associations with AD risk from NG00172", "Rare variants"),
     (
         "NG00180",
-        "Identify metabolites whose MWAS weights (NG00180) are most enriched in AD-related pathways — use the EUR metabolite feature table",
+        "Identify metabolites whose MWAS weights (NG00180) are most enriched in AD-related pathways - use the EUR metabolite feature table",
         "Metabolomics",
     ),
     (
@@ -87,12 +87,12 @@ AD_DATASET_PROMPTS: list[tuple[str, str, str]] = [
     ),
     (
         "SingleBrain",
-        "Find microglia-specific eQTLs from SingleBrain that co-localize with AD GWAS loci — load the MG top-association files",
+        "Find microglia-specific eQTLs from SingleBrain that co-localize with AD GWAS loci - load the MG top-association files",
         "QTL",
     ),
     (
         "isoMiGA_QTL",
-        "Map isoMiGA microglia splicing QTLs (sQTLs) to the BIN1 and PTK2B loci — load union_leafcutter_top_assoc.tsv.gz",
+        "Map isoMiGA microglia splicing QTLs (sQTLs) to the BIN1 and PTK2B loci - load union_leafcutter_top_assoc.tsv.gz",
         "QTL",
     ),
     (

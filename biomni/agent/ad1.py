@@ -123,7 +123,7 @@ class AD1(A1):
         if len(non_ad) > 20:
             non_ad_preview += f"\n  - ... and {len(non_ad) - 20} more"
 
-        # Data root preview — prefer pre-computed inventory from Chainlit sidebar
+        # Data root preview - prefer pre-computed inventory from Chainlit sidebar
         root_preview = ""
         _precomputed = getattr(self, "user_data_inventory", None)
         if _precomputed:
@@ -145,17 +145,17 @@ class AD1(A1):
 
         return f"""
 ### AD1_LOCAL_DATA_POLICY_START
-## AD1 DATA PRIORITY RULES — ALWAYS FOLLOW IN ORDER
+## AD1 DATA PRIORITY RULES - ALWAYS FOLLOW IN ORDER
 
-1. **LOCAL FILES FIRST** — Use files already on disk. Do NOT fetch data that is already present.
+1. **LOCAL FILES FIRST** - Use files already on disk. Do NOT fetch data that is already present.
    - BiomniAD data lake: {ad_data_lake}
    - General data lake: {data_lake_dir}
    - User data dir: {data_root_dir or "not set"}
 
-2. **BiomniAD CATALOG** — If a dataset is listed below without local files, use its catalog URI to fetch.
+2. **BiomniAD CATALOG** - If a dataset is listed below without local files, use its catalog URI to fetch.
    Catalogs: biomni/know_how/resource/BiomniAD_Discovery.json, NIAGADS_datasets_with_files.json, SinaiADRD.json
 
-3. **Web / literature** — Only after checking local and catalog sources.
+3. **Web / literature** - Only after checking local and catalog sources.
 
 4. **Never fabricate data.** If a file is missing, say so explicitly.
 
@@ -665,9 +665,9 @@ class AD1(A1):
 
                 ad_instruction = f"""
 
-AD/DEMENTIA TOOL PRIORITY — ALWAYS FOLLOW THIS ORDER:
+AD/DEMENTIA TOOL PRIORITY - ALWAYS FOLLOW THIS ORDER:
 1. **Local data first**: Scan the built-in data lake ({getattr(self, "data_lake_dir", "not set")}) and user data directory ({data_root_dir}) for any locally available AD datasets.
-   Use os.listdir() on both locations — the data lake has curated datasets; the user directory may contain additional data.
+   Use os.listdir() on both locations - the data lake has curated datasets; the user directory may contain additional data.
 2. **BiomniAD catalogs second**: Load JSON catalogs from biomni/know_how/resource/ to find datasets with download URIs.
 3. **Web & literature search third**: Use advanced_web_search(), search_pubmed(), search_biorxiv() to supplement.
 4. **Code generation last**: Write custom Python/R code only when the above cannot answer directly.

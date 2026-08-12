@@ -2,8 +2,8 @@
 #
 # This is a starting point, not a turnkey production config. Review resource
 # limits, replica count, ingress, and the Secret/ConfigMap wiring for your
-# cluster before applying. The pieces that matter for *observability* — the
-# focus of this manifest — are the three probes and the log-shaping env vars.
+# cluster before applying. The pieces that matter for *observability* - the
+# focus of this manifest - are the three probes and the log-shaping env vars.
 #
 #   kubectl apply -f deploy/k8s/biomni-ad.yaml
 #
@@ -166,7 +166,7 @@ spec:
             timeoutSeconds: 3
 
           # Liveness: restart the pod only if the process is wedged. Cheap,
-          # dependency-free — never gate this on upstream (LLM) availability.
+          # dependency-free - never gate this on upstream (LLM) availability.
           livenessProbe:
             httpGet:
               path: /healthz
@@ -175,7 +175,7 @@ spec:
             timeoutSeconds: 3
             failureThreshold: 3
 
-          # Readiness: pull the pod from the Service if it can't serve — data
+          # Readiness: pull the pod from the Service if it can't serve - data
           # dir unmounted or no LLM credential. Returns 503 when not ready.
           readinessProbe:
             httpGet:

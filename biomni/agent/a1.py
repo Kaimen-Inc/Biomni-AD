@@ -67,7 +67,7 @@ if os.path.exists(".env"):
     print("Loaded environment variables from .env")
 
 
-# The only place the bucket name is spelled out — reused by the eager opt-in
+# The only place the bucket name is spelled out - reused by the eager opt-in
 # prefetch below and by the lazy per-query fetch in _ensure_data_lake_files.
 _DATA_LAKE_S3_BUCKET_URL = "https://biomni-release.s3.amazonaws.com"
 
@@ -192,7 +192,7 @@ class A1:
 
         # No bulk download here. Every dataset file is fetched lazily, per query,
         # once the retriever has decided which of them that specific query needs
-        # (see _ensure_data_lake_files, called from _prepare_resources_for_retrieval) —
+        # (see _ensure_data_lake_files, called from _prepare_resources_for_retrieval) -
         # a chat session that never touches DepMap should never pay to fetch it.
         # `expected_data_lake_files` remains as an explicit opt-in: pass a list to
         # pre-fetch those specific files right now instead of waiting for a query.
@@ -207,7 +207,7 @@ class A1:
 
         # data_root_dir = user data directory (BIOMNI_DATA_PATH) for additional user datasets
         self.data_root_dir = os.path.abspath(path)
-        self.user_data_dir = self.data_root_dir  # alias — clearly user-supplied data
+        self.user_data_dir = self.data_root_dir  # alias - clearly user-supplied data
         # data_lake_dir = built-in data lake (primary; location resolved above)
         self.path = _builtin_data_dir
         self.data_lake_dir = builtin_data_lake_dir
@@ -286,7 +286,7 @@ class A1:
         * Record token usage on every response into ``self.usage_tracker``.
         * Emit a per-call ``llm_call`` telemetry event (latency, outcome,
           finish reason, token usage) so a slow or failing provider call can be
-          attributed mid-run — the aggregate ``llm_usage`` event only fires once
+          attributed mid-run - the aggregate ``llm_usage`` event only fires once
           a run completes, which is useless when a run hangs.
 
         ``cache_system=False`` opts out for one-shot calls with unique
@@ -310,7 +310,7 @@ class A1:
         try:
             usage = self.usage_tracker.record(response)
         except Exception:
-            # Telemetry is best-effort — never let it break a run.
+            # Telemetry is best-effort - never let it break a run.
             logger.debug("usage tracking failed", exc_info=True)
         self._emit_llm_call(response, time.monotonic() - started, status="ok", usage=usage)
         return response
@@ -375,7 +375,7 @@ class A1:
     def _enforce_run_deadline(self, state: "AgentState") -> bool:
         """If the run's wall-clock budget is exhausted, stop the graph cleanly.
 
-        Returns True when the deadline has passed — the caller (the ``generate``
+        Returns True when the deadline has passed - the caller (the ``generate``
         node) then short-circuits to ``end`` with a user-facing message instead
         of starting another LLM turn. Bounds the number of ReAct turns; a single
         in-flight code/LLM step is still bounded by ``timeout_seconds`` /
@@ -432,7 +432,7 @@ class A1:
         """Emit a structured audit event for one code execution.
 
         Logs *what ran* (language, content hash, size) and *what happened*
-        (status, duration, output size) — never the raw source or output, which
+        (status, duration, output size) - never the raw source or output, which
         can contain user/biomedical data. Best-effort: never raises.
         """
         try:
@@ -816,7 +816,7 @@ For all analyses in this run:
         the catalog until files happen to be present would leave the retriever
         nothing to choose from. Each description is tagged with whether the file
         is already local (free to read) or still needs a one-time fetch, so the
-        retriever/planner can tell the two apart — and ``_ensure_data_lake_files``
+        retriever/planner can tell the two apart - and ``_ensure_data_lake_files``
         (called once a query has actually selected some of these) is what turns
         a "needs a fetch" item into a "local" one for the next query.
         """
@@ -825,7 +825,11 @@ For all analyses in this run:
 
         resources: list[dict[str, str]] = []
         for name, description in self.data_lake_dict.items():
-            tag = "downloaded locally" if name in present else "in the data lake catalog; fetched automatically the first time a query uses it"
+            tag = (
+                "downloaded locally"
+                if name in present
+                else "in the data lake catalog; fetched automatically the first time a query uses it"
+            )
             resources.append({"name": name, "description": f"{description} ({tag})"})
         return resources
 
@@ -834,8 +838,8 @@ For all analyses in this run:
 
         This is the lazy-loading half of ``_get_data_lake_resources``: that method
         lets the retriever pick from the whole catalog regardless of what is on
-        disk, and this fetches exactly the subset one query actually picked —
-        right before the agent's plan can reference them — instead of the old
+        disk, and this fetches exactly the subset one query actually picked -
+        right before the agent's plan can reference them - instead of the old
         behavior of downloading the entire ~data lake at every agent construction
         whether or not a session ever touched it.
 
@@ -851,7 +855,7 @@ For all analyses in this run:
         # BIOMNI_WORKSPACE_SCAN_TTL_S stale, which would make a file just fetched
         # by an earlier query this session look "still missing" here. A handful
         # of stat calls on named files is cheap enough not to need the cache.
-        # Only real data-lake filenames are fetchable this way — this also
+        # Only real data-lake filenames are fetchable this way - this also
         # filters out "user-data:..." VM-mounted entries the retriever may have
         # selected alongside data-lake ones, which live outside data_lake_dir
         # and were never meant to come from S3.
@@ -1683,7 +1687,7 @@ For all analyses in this run:
             for item in default_data_lake_content:
                 if isinstance(item, dict):
                     name = item.get("name", "")
-                    # Prefer whatever description the caller supplied — it may carry a
+                    # Prefer whatever description the caller supplied - it may carry a
                     # local-vs-catalog-only tag (see _get_data_lake_resources) that a
                     # blind re-lookup in data_lake_dict would silently discard.
                     description = item.get("description") or self.data_lake_dict.get(name, f"Data lake item: {name}")
@@ -1804,7 +1808,7 @@ After that, you have two options:
 2) When you think it is ready, directly provide a solution that adheres to the required format for the given task to the user. Your solution should be enclosed using "<solution>" tag, for example: The answer is <solution> A </solution>. IMPORTANT: You must end the solution block with </solution> tag.
 
 You have many chances to interact with the environment to receive the observation. So you can decompose your code into multiple steps.
-IMPORTANT: Do NOT provide <solution> until ALL steps in your plan are completed and checked off [✓]. After each <observation>, review your checklist — if unchecked steps remain, proceed to the next step with <execute>. Multi-step analyses require multiple rounds of execution.
+IMPORTANT: Do NOT provide <solution> until ALL steps in your plan are completed and checked off [✓]. After each <observation>, review your checklist - if unchecked steps remain, proceed to the next step with <execute>. Multi-step analyses require multiple rounds of execution.
 Don't overcomplicate the code. Keep it simple and easy to understand.
 When writing the code, please print out the steps and results in a clear and concise manner, like a research log.
 When calling the existing python functions in the function dictionary, YOU MUST SAVE THE OUTPUT and PRINT OUT the result.
@@ -1825,7 +1829,7 @@ You may or may not receive feedbacks from human. If so, address the feedbacks by
 
         # Add protocol generation instructions
         prompt_modifier += """
-TOOL PRIORITY — ALWAYS FOLLOW THIS ORDER:
+TOOL PRIORITY - ALWAYS FOLLOW THIS ORDER:
 1. **Web & literature search first**: Before writing any analysis code, use web/literature tools to gather information:
    - `advanced_web_search()` or `advanced_web_search_claude()` for general web searches
    - `search_pubmed()`, `search_biorxiv()` for scientific literature
@@ -1833,7 +1837,7 @@ TOOL PRIORITY — ALWAYS FOLLOW THIS ORDER:
 2. **Local data & built-in tools second**: Use data lake files, database tools, and domain-specific functions that are already available.
 3. **Code generation last**: Only write custom analysis code (Python/R/Bash) when the above tools cannot provide the answer directly. Keep code minimal and focused.
 
-This priority order is especially important — retrieving information is faster and more reliable than generating it from scratch. When in doubt, search first.
+This priority order is especially important - retrieving information is faster and more reliable than generating it from scratch. When in doubt, search first.
 
 PROTOCOL GENERATION:
 If the user requests an experimental protocol, use search_protocols(), advanced_web_search_claude(), list_local_protocols(), and read_local_protocol() to generate an accurate protocol. Include details such as reagents (with catalog numbers if available), equipment specifications, replicate requirements, error handling, and troubleshooting - but ONLY include information found in these resources. Do not make up specifications, catalog numbers, or equipment details. Prioritize accuracy over completeness.
@@ -2256,7 +2260,7 @@ Each library is listed with its description to help you understand its functiona
                     # Plots are now captured directly in the execution entry above
 
                 # Audit trail: the agent executes LLM-generated code un-sandboxed,
-                # so record what ran (hash + size, never the raw source/output —
+                # so record what ran (hash + size, never the raw source/output -
                 # those may contain biomedical data) for incident response.
                 self._audit_code_execution(
                     language=language,

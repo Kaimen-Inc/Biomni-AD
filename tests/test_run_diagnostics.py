@@ -1,4 +1,4 @@
-"""Tests for the per-run diagnostics added to A1 — per-LLM-call telemetry, the
+"""Tests for the per-run diagnostics added to A1 - per-LLM-call telemetry, the
 ReAct wall-clock deadline, and the run-lifecycle helpers.
 
 These attribute the "why did a query hang" question: an ``llm_call`` event per
@@ -51,7 +51,7 @@ def _events(stream, name):
 
 
 class _DiagAgent(A1):
-    """A1 with the heavy constructor bypassed — only the diagnostics-relevant state."""
+    """A1 with the heavy constructor bypassed - only the diagnostics-relevant state."""
 
     def __init__(self, llm, *, source="Anthropic", model="claude-x"):
         self.llm = llm

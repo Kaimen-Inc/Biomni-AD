@@ -12,7 +12,7 @@ revises, or cancels before any code executes.
 `build_planning_system_prompt` is a pure function and is unit-tested
 independently. `interactive_planning` itself uses Chainlit's async UI
 primitives (`async with cl.Step(...)`, `cl.AskActionMessage`) and is
-exercised only through a running Chainlit session — its branching is
+exercised only through a running Chainlit session - its branching is
 not currently covered by automated tests.
 """
 
@@ -357,7 +357,7 @@ async def interactive_planning(agent: A1, prompt: str, agent_type: str = "a1") -
         async with cl.Step(name="📋 Generating Research Plan", type="llm", show_input=False, default_open=True) as step:
             try:
                 # NB: asyncio.to_thread would also work but copies the caller's
-                # contextvars into the worker — the rest of chainlit_app.py
+                # contextvars into the worker - the rest of chainlit_app.py
                 # uses bare run_in_executor and we match that semantics so
                 # LangChain callback/tracing contextvars don't silently change
                 # which trace the LLM call attaches to.

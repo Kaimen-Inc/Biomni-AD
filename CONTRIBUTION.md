@@ -113,7 +113,7 @@ The Know-How Library (`biomni/know_how/`) provides curated protocols, best pract
 - Domain-specific knowledge (drug formulation, animal models, clinical trials, etc.)
 
 **Steps:**
-1. **Write a markdown file** following the format of [biomni/know_how/single_cell_annotation.md](biomni/know_how/single_cell_annotation.md) — include a metadata header (authors, affiliations, license, commercial use flag) and practical, succinct content
+1. **Write a markdown file** following the format of [biomni/know_how/single_cell_annotation.md](biomni/know_how/single_cell_annotation.md) - include a metadata header (authors, affiliations, license, commercial use flag) and practical, succinct content
 2. **Place it** in `biomni/know_how/`
 3. **Submit a pull request** with a brief description of the domain and source material
 

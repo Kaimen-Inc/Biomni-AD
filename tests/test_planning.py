@@ -1,6 +1,6 @@
 """Tests for chainlit_ui.planning.build_planning_system_prompt.
 
-Only the pure function is exercised here — `interactive_planning` itself
+Only the pure function is exercised here - `interactive_planning` itself
 calls into Chainlit's async UI primitives and isn't reachable outside a
 running Chainlit session.
 
@@ -22,7 +22,7 @@ def _stub_chainlit() -> object:
 
     Yields and removes the stub on teardown so the entry doesn't leak
     across the rest of the pytest session. We also drop the cached
-    `chainlit_ui.planning` module — once it's been imported its
+    `chainlit_ui.planning` module - once it's been imported its
     module-scope `cl` name is bound to the stub, so a later test that
     re-imports planning would still see the stub unless we force a
     fresh import.
@@ -50,7 +50,7 @@ def _import_planning():
 
 
 class _Agent:
-    """Minimal agent stub — only the attributes the function reads."""
+    """Minimal agent stub - only the attributes the function reads."""
 
     user_data_inventory: str | None = None
     data_root_dir: str | None = None

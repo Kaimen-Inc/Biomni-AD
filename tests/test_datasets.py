@@ -1,4 +1,4 @@
-"""Tests for chainlit_ui.datasets — AD dataset prompt filtering."""
+"""Tests for chainlit_ui.datasets - AD dataset prompt filtering."""
 
 from __future__ import annotations
 

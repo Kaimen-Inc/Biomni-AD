@@ -1,4 +1,4 @@
-"""Tests for biomni.observability — structured logging, correlation, redaction.
+"""Tests for biomni.observability - structured logging, correlation, redaction.
 
 These pin the behaviour the AKS deployment relies on: JSON lines with
 correlation ids, secret/PII scrubbing at the format chokepoint, idempotent
@@ -183,7 +183,7 @@ def test_setup_logging_is_idempotent():
 
 def test_setup_logging_removes_foreign_root_handlers():
     """A foreign root handler (e.g. chainlit's basicConfig StreamHandler) must be
-    dropped so records aren't emitted twice — once plain, once JSON."""
+    dropped so records aren't emitted twice - once plain, once JSON."""
     import io
 
     root = logging.getLogger()

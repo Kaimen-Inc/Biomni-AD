@@ -1,4 +1,4 @@
-"""Tests for biomni.config — env-driven default LLM resolution + resilience knobs."""
+"""Tests for biomni.config - env-driven default LLM resolution + resilience knobs."""
 
 from __future__ import annotations
 
@@ -122,7 +122,7 @@ def test_env_overrides_resilience(monkeypatch: pytest.MonkeyPatch) -> None:
 @pytest.mark.parametrize("raw", ["none", "None", "0"])
 def test_request_timeout_none_sentinels(monkeypatch: pytest.MonkeyPatch, raw: str) -> None:
     """Explicit sentinels disable the per-call timeout. Empty string ≠ disable
-    (matches shell convention — an unset/blank var falls back to the default).
+    (matches shell convention - an unset/blank var falls back to the default).
     """
     monkeypatch.setenv("BIOMNI_LLM_REQUEST_TIMEOUT", raw)
     cfg = BiomniConfig()

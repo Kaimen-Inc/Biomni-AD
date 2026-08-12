@@ -1,6 +1,6 @@
 """Tests for ``biomni.llm_resilience``: cache-control transform + usage tracker.
 
-These tests don't require any LLM provider package — the transform is pure
+These tests don't require any LLM provider package - the transform is pure
 data manipulation, and the usage tracker reads from response objects that we
 fabricate.
 """
@@ -89,7 +89,7 @@ def test_cache_transform_no_system_message_passthrough() -> None:
 
 
 def test_cache_transform_skips_empty_system_content() -> None:
-    """Empty system content shouldn't be wrapped — Anthropic rejects 0-byte cache blocks."""
+    """Empty system content shouldn't be wrapped - Anthropic rejects 0-byte cache blocks."""
     messages = [SystemMessage(content=""), HumanMessage(content="hi")]
     out = prepare_messages_for_cache(messages, "Anthropic")
     # Empty content → unchanged (passthrough), no cache markers attempted.

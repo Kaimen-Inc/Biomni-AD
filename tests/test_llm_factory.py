@@ -1,9 +1,9 @@
-"""Tests for ``biomni.llm`` — source resolution and retry/timeout plumbing.
+"""Tests for ``biomni.llm`` - source resolution and retry/timeout plumbing.
 
 We mock the optional provider packages (``langchain_anthropic``,
 ``langchain_openai``, etc.) so these tests run without those extras
 installed. The goal is to verify that ``get_llm`` passes the right
-resilience kwargs to whichever provider class it picks — not to test
+resilience kwargs to whichever provider class it picks - not to test
 the provider implementations themselves.
 """
 
@@ -55,7 +55,7 @@ def _clear_llm_env(monkeypatch: pytest.MonkeyPatch) -> None:
         ("cohere.command-text", "Bedrock"),
         ("ai21.j2-ultra", "Bedrock"),
         # Local model heuristics (substring match): wins over Bedrock for
-        # ambiguous names like ``meta.llama-3-70b`` — Bedrock users for those
+        # ambiguous names like ``meta.llama-3-70b`` - Bedrock users for those
         # should pass ``source="Bedrock"`` explicitly.
         ("llama-3-8b", "Ollama"),
         ("mistral-7b-instruct", "Ollama"),
@@ -98,7 +98,7 @@ def test_resolve_source_unknown_model_raises() -> None:
 
 
 # ---------------------------------------------------------------------------
-# get_llm — retry/timeout pass-through (provider modules stubbed)
+# get_llm - retry/timeout pass-through (provider modules stubbed)
 # ---------------------------------------------------------------------------
 
 

@@ -2,11 +2,11 @@
 
 Kubernetes distinguishes two probe kinds and they must mean different things:
 
-* **liveness** (``/healthz``) — "is the process wedged?". Must be cheap and must
+* **liveness** (``/healthz``) - "is the process wedged?". Must be cheap and must
   not depend on external systems, or a transient upstream blip triggers a
   pod restart. So ``/healthz`` returns 200 as long as the event loop can serve
   a request.
-* **readiness** (``/readyz``) — "should this pod receive traffic *right now*?".
+* **readiness** (``/readyz``) - "should this pod receive traffic *right now*?".
   Here we verify the agent could actually function: its data directory is
   mounted and an LLM credential is configured. A misconfigured pod reports 503
   and is pulled from the Service endpoints instead of failing user requests.

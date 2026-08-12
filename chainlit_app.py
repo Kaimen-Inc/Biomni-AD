@@ -48,7 +48,7 @@ if sys.version_info >= (3, 14):
     sys.exit(1)
 
 # ---------------------------------------------------------------------------
-# Environment guard — all biomni dependencies live in the biomni_e1 conda env.
+# Environment guard - all biomni dependencies live in the biomni_e1 conda env.
 # Catch the most common mistake (running from the bare .venv) early.
 # ---------------------------------------------------------------------------
 try:
@@ -147,7 +147,7 @@ def _extract_final_answer(state: dict) -> str:
 # Sidebar / planning helpers live in chainlit_ui/. `interactive_planning` is
 # aliased to the original private name so the existing call site at the bottom
 # of this file keeps working unchanged. The module-scope prompt constants are
-# intentionally not re-exported — anything that needs them should
+# intentionally not re-exported - anything that needs them should
 # `from chainlit_ui.planning import PLANNING_SYSTEM_PROMPT, AD1_PLANNING_SYSTEM_PROMPT`.
 from chainlit_ui.datasets import build_suggested_prompts_markdown
 from chainlit_ui.live_runs import LIVE_RUNS
@@ -175,7 +175,7 @@ FORCE_AGENT = os.getenv("BIOMNI_AGENT", "").lower()  # "a1" | "ad1" | ""
 SUPPORTED_IMAGE_EXTENSIONS = (".png", ".jpg", ".jpeg", ".gif", ".bmp", ".webp")
 
 CHAINLIT_MD_PATH = Path(__file__).with_name("chainlit.md")
-# ``chainlit.md`` itself is gitignored — it's rewritten on every launch with
+# ``chainlit.md`` itself is gitignored - it's rewritten on every launch with
 # the local data inventory, producing a spurious diff on every dev machine.
 # ``chainlit.md.template`` is the source of truth in git: same content with
 # the managed marker blocks empty.
@@ -187,7 +187,7 @@ _SUGGESTED_PROMPTS_BLOCK_END = "<!-- BIOMNI_SUGGESTED_PROMPTS_END -->"
 
 
 def _build_ad_suggested_prompts() -> str:
-    """Thin shim over chainlit_ui.datasets — resolves the AD lake path."""
+    """Thin shim over chainlit_ui.datasets - resolves the AD lake path."""
     ad_lake = Path(_resolve_builtin_data_lake_root()) / "biomniAD"
     return build_suggested_prompts_markdown(ad_lake)
 
@@ -767,7 +767,7 @@ async def run_in_executor(fn, *args):
 
     The caller's context is captured *here* (in the event-loop thread) and
     replayed inside the worker, so correlation ids (session_id / run_id)
-    propagate into agent-side logs — executors do not copy contextvars on their
+    propagate into agent-side logs - executors do not copy contextvars on their
     own. Capturing inside the worker would snapshot its empty context instead.
     """
     ctx = capture_context()
@@ -833,7 +833,7 @@ async def set_chat_profiles():
         cl.ChatProfile(
             name="AD1",
             markdown_description=(
-                "**Hi, I'm Biomni-AD — Your Alzheimer's Disease Co-Scientist**\n\n"
+                "**Hi, I'm Biomni-AD - Your Alzheimer's Disease Co-Scientist**\n\n"
                 "What would you like to discover about Alzheimer's today?"
             ),
             icon="/public/avatars/ad1.png",
@@ -841,7 +841,7 @@ async def set_chat_profiles():
         cl.ChatProfile(
             name="A1",
             markdown_description=(
-                "**A1 — General-Purpose Biomedical Agent**\n\n"
+                "**A1 - General-Purpose Biomedical Agent**\n\n"
                 "Broad biomedical research across genomics, proteomics, "
                 "single-cell, clinical data, and more."
             ),
@@ -1526,7 +1526,7 @@ async def _tick_step_timer(step: cl.Step, language: str, code: str, started: flo
 
     A single code execution can block for up to ``timeout_seconds`` with no
     streamed output; without this the step appears hung. Cancelled when the
-    observation arrives. Best-effort — any UI error just stops the timer.
+    observation arrives. Best-effort - any UI error just stops the timer.
     """
     try:
         while True:
@@ -1771,4 +1771,4 @@ async def _save_run_artifacts_for_agent(
 # ---------------------------------------------------------------------------
 
 # Run-id / file-snapshot helpers now live in biomni.artifact so that the agent
-# and the UI use the same exclude list — see the imports at the top of the file.
+# and the UI use the same exclude list - see the imports at the top of the file.

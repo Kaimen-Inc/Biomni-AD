@@ -1,4 +1,4 @@
-"""Biomni — biomedical AI agent toolkit.
+"""Biomni - biomedical AI agent toolkit.
 
 Public API:
 

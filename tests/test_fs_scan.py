@@ -1,4 +1,4 @@
-"""Tests for biomni.fs_scan — the bounded/cached workspace scanner.
+"""Tests for biomni.fs_scan - the bounded/cached workspace scanner.
 
 These lock in the properties that keep agent bootstrap from hanging on a large
 or network-backed workspace: a hard file-count cap, a wall-clock deadline, and a
@@ -190,7 +190,7 @@ def test_runs_dir_is_excluded(tmp_path) -> None:
     ],
 )
 def test_nonpositive_env_falls_back_to_default(monkeypatch, var, getter, default) -> None:
-    """0 / negative must NOT disable the guard — it falls back to the default."""
+    """0 / negative must NOT disable the guard - it falls back to the default."""
     for bad in ("0", "-5"):
         monkeypatch.setenv(var, bad)
         assert getter() == default
