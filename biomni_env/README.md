@@ -15,7 +15,7 @@ This directory contains scripts and configuration files to set up a comprehensiv
 
 `environment.yml` is the **single source of truth for the minimal env**. The Dockerfile defaults to it; the lightweight `pip install -e .` path in the project root provides the same core Python deps without conda. Reach for the other YAMLs only when you need the extras they layer on.
 
-**Biomni-AD** (this repository) is developed and maintained by **Kuan-lin Huang, PhD** at **[Kaimen Inc.](https://github.com/Kaimen-Inc/Biomni-AD)**, building on the foundational [Biomni](https://github.com/snap-stanford/Biomni) platform by Stanford's SNAP Lab.
+**Biomni-AD** (this repository) is maintained by **[Kaimen, Inc.](https://github.com/Kaimen-Inc/Biomni-AD)**, building on the foundational [Biomni](https://github.com/snap-stanford/Biomni) platform by Stanford's SNAP Lab.
 
 ## Branch Guide
 
@@ -33,7 +33,7 @@ pip install git+https://github.com/Kaimen-Inc/Biomni-AD.git@feat/adworkbench
 
 ## AD Data Lake
 
-Biomni-AD includes three JSON catalogs (NIAGADS, SinaiADRD, BiomniAD Discovery) covering hundreds of AD/ADRD datasets. Files ≤ 100 MB are downloaded automatically on first `AD1` initialization; larger files are accessed via catalog URIs or external portals.
+Biomni-AD includes three JSON catalogs (NIAGADS, ADRD OpenGenomics, BiomniAD Discovery) covering hundreds of AD/ADRD datasets. Files ≤ 100 MB are downloaded automatically on first `AD1` initialization; larger files are accessed via catalog URIs or external portals.
 
 See the **[AD Data Lake section in README.md](../README.md#ad-data-lake)** for full download options and catalog details.
 

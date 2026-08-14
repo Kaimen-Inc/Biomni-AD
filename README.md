@@ -2,34 +2,22 @@
   <img src="./figs/Biomni-AD_Logo_v2.png" alt="Biomni-AD Logo" width="560px" />
 </p>
 <p align="center">
-  <sub>Specialized fork of&nbsp;<a href="https://github.com/snap-stanford/Biomni"><img src="./figs/biomni_logo.png" alt="Biomni" height="18" /></a>&nbsp;·&nbsp;Stanford SNAP Lab</sub>
+  <sub>Specialized fork of <a href="https://github.com/snap-stanford/Biomni">Biomni</a> (Stanford SNAP Lab)</sub>
 </p>
-
-<p align="center">
-<a href="https://join.slack.com/t/biomnigroup/shared_invite/zt-3avks4913-dotMBt8D_apQnJ3mG~ak6Q">
-<img src="https://img.shields.io/badge/Join-Slack-4A154B?style=for-the-badge&logo=slack" alt="Join Slack" />
-</a>
-<a href="https://biomni.stanford.edu">
-<img src="https://img.shields.io/badge/Try-Web%20UI-blue?style=for-the-badge" alt="Web UI" />
-</a>
-<a href="https://x.com/ProjectBiomni">
-<img src="https://img.shields.io/badge/Follow-on%20X-black?style=for-the-badge&logo=x" alt="Follow on X" />
-</a>
-<a href="https://www.linkedin.com/company/project-biomni">
-<img src="https://img.shields.io/badge/Follow-LinkedIn-0077B5?style=for-the-badge&logo=linkedin" alt="Follow on LinkedIn" />
-</a>
-<a href="https://www.biorxiv.org/content/10.1101/2025.05.30.656746v1">
-<img src="https://img.shields.io/badge/Read-Paper-green?style=for-the-badge" alt="Paper" />
-</a>
-</p>
-
-
 
 # Biomni-AD: AI Co-Scientist for Biomedical Research, integrated with Alzheimer's Disease Datalake
 
 ## Overview
 
-**Biomni-AD** is an Alzheimer's disease-specialized extension of [Biomni](https://github.com/snap-stanford/Biomni) (Stanford SNAP Lab), developed and maintained by **Kuan-lin Huang, PhD** at **[Kaimen Inc.](https://github.com/Kaimen-Inc/Biomni-AD)** It adds the **AD1 agent** - a domain-expert variant of the general A1 agent - along with an AD-focused data lake, curated dataset catalogs (NIAGADS, SinaiADRD, CRISPRbrain), and a plan-then-approve Chainlit UI optimized for neurodegeneration research workflows.
+**Biomni-AD** is an Alzheimer's disease-specialized extension of [Biomni](https://github.com/snap-stanford/Biomni) (Stanford SNAP Lab).
+The work recognized by the 2026 Alzheimer's Insights AI Prize was carried out by a team at the Icahn School of Medicine at Mount Sinai in collaboration with Stanford University.
+This repository is maintained by **[Kaimen, Inc.](https://github.com/Kaimen-Inc/Biomni-AD)**, which received the prize award and continues development of the AD1 agent and associated tooling.
+
+Kaimen, Inc. is an independent company.
+It is not owned by, affiliated with, or endorsed by the Icahn School of Medicine at Mount Sinai or Stanford University.
+Institutional names appear here to credit prior work, not to indicate sponsorship.
+
+Biomni-AD adds the **AD1 agent** - a domain-expert variant of the general A1 agent - along with an AD-focused data lake, curated catalogs for publicly available Alzheimer's and neurodegeneration data resources (NIAGADS, CRISPRbrain, ADRD OpenGenomics), and a plan-then-approve Chainlit UI optimized for neurodegeneration research workflows.
 
 The underlying **Biomni** platform is a general-purpose biomedical AI agent that integrates LLM reasoning with retrieval-augmented planning and code-based execution to help scientists enhance research productivity and generate testable hypotheses.
 
@@ -207,12 +195,12 @@ Some Python packages are not installed by default in the Biomni environment due 
 
 ### AD Data Lake
 
-Biomni-AD ships three JSON catalogs - **NIAGADS**, **SinaiADRD**, and **BiomniAD Discovery** - that describe hundreds of AD/ADRD datasets. Files ≤ 100 MB are downloaded automatically to disk; larger or controlled-access files are referenced by catalog URI for on-demand access.
+Biomni-AD ships three JSON catalogs - **NIAGADS**, **ADRD OpenGenomics**, and **BiomniAD Discovery** - that describe hundreds of publicly available AD/ADRD datasets. Files ≤ 100 MB are downloaded automatically to disk; larger or controlled-access files are referenced by catalog URI for on-demand access.
 
 | Catalog | Contents | Access |
 |---------|----------|--------|
 | NIAGADS (`NG*`) | Genetics, omics, biomarkers - ADSP WGS/WES, pQTL, eQTL, CSF sumstats | Controlled + open |
-| SinaiADRD | Rare variants (RADR), single-nucleus eQTL (SingleBrain), microglia expression (isoMiGA) | Open |
+| ADRD OpenGenomics | Rare variants (RADR), single-nucleus eQTL (SingleBrain), microglia expression (isoMiGA) - all public Zenodo deposits | Open |
 | BiomniAD Discovery | SEA-AD, ssREAD, OASIS-4, HCP, ABC Atlas | Open |
 | CRISPRbrain | CRISPR screens in neurons and microglia | Open API |
 
@@ -241,6 +229,15 @@ download_ad_catalog_data("/path/to/your/data_lake")
 ```
 
 The agent still references catalog URIs in its system prompt and can fetch data on demand or direct you to the relevant portal (e.g., NIAGADS DAC for controlled-access datasets).
+
+### Data access
+
+This repository contains catalog definitions and configuration only.
+It does not distribute datasets.
+Each referenced resource is governed by its own access terms.
+Controlled-access resources such as NIAGADS require an approved Data Use Certification held by the user or the user's institution.
+Authorization granted to one institution does not extend to Kaimen, Inc. or to other users of this software.
+Users are responsible for obtaining their own access before use.
 
 ### Basic Usage & Agent Selection
 
@@ -441,6 +438,8 @@ Biomni-AD is a specialized fork of [Biomni](https://github.com/snap-stanford/Bio
 
 For general-purpose biomedical AI agent use not focused on Alzheimer's disease, use the upstream [Biomni project](https://github.com/snap-stanford/Biomni) directly.
 
+The following community resources are run by the upstream Biomni project, not by this repository: the [Biomni Slack](https://join.slack.com/t/biomnigroup/shared_invite/zt-3avks4913-dotMBt8D_apQnJ3mG~ak6Q), the hosted [web UI](https://biomni.stanford.edu), the [X](https://x.com/ProjectBiomni) and [LinkedIn](https://www.linkedin.com/company/project-biomni) accounts, and the [Biomni paper](https://www.biorxiv.org/content/10.1101/2025.05.30.656746v1).
+
 ## Tutorials
 
 **[Biomni 101](./tutorials/biomni_101.ipynb)** - basic concepts and first steps (upstream Biomni).
@@ -449,7 +448,7 @@ AD-specific tutorials and example notebooks live alongside the AD1 agent in this
 
 ## Maintainership, Scope, and Contributions
 
-Biomni-AD is maintained by **Kuan-lin Huang, PhD** at **[Kaimen Inc.](https://github.com/Kaimen-Inc/Biomni-AD)** (`https://github.com/Kaimen-Inc/Biomni-AD.git`) as a focused, AD-specific extension of upstream Biomni.
+Biomni-AD is maintained by **[Kaimen, Inc.](https://github.com/Kaimen-Inc/Biomni-AD)** (maintainer: **Kuan-lin Huang, PhD**) as a focused, AD-specific extension of upstream Biomni.
 
 **Open source and access commitments:**
 - The Biomni-AD codebase, AD1 agent, data lake catalogs, and Chainlit UI will remain fully open source.
@@ -462,8 +461,14 @@ Bug reports and targeted pull requests against the AD-specific code paths (AD1 a
 ## Important Notes
 
 - **Security warning**: Biomni-AD executes LLM-generated code with full system privileges. For production or shared use, run inside an isolated/sandboxed environment. The agent can access files, the network, and system commands - be careful with sensitive data or credentials.
-- **Controlled-access data**: NIAGADS and other catalog entries marked as controlled-access require independent authorization (e.g., NIAGADS DAC). Biomni-AD does not bypass access controls; the agent will reference catalog URIs and direct you to the appropriate portal.
-- **Licensing**: Biomni-AD inherits upstream Biomni's Apache 2.0 license, but certain integrated tools, databases, or software may carry more restrictive licenses. Review each component before any commercial use.
+- **Controlled-access data**: NIAGADS and other catalog entries marked as controlled-access require independent authorization (e.g., NIAGADS DAC). Biomni-AD does not bypass access controls; the agent will reference catalog URIs and direct you to the appropriate portal. See [Data access](#data-access).
+
+### Licensing and commercial use
+
+Biomni-AD inherits upstream Biomni's Apache 2.0 license.
+Certain integrated tools, databases, and datasets carry more restrictive terms, including licenses that permit non-commercial use only (see [license_info.md](license_info.md)).
+Upstream Biomni provides a `commercial_mode` configuration flag that excludes datasets not licensed for commercial use; AD1 inherits this flag from A1.
+Any commercial deployment requires a component-level license review.
 
 ## Citation
 
@@ -480,4 +485,4 @@ Biomni-AD builds on upstream Biomni. Please cite the original Biomni paper:
 }
 ```
 
-If you use Biomni-AD specifically (AD1 agent, AD data lake, or Chainlit workflow), please also credit this repository: *Biomni-AD, Kuan-lin Huang, Kaimen Inc. - https://github.com/Kaimen-Inc/Biomni-AD*
+If you use Biomni-AD specifically (AD1 agent, AD data lake, or Chainlit workflow), please also credit this repository: *Biomni-AD, Kaimen, Inc. - https://github.com/Kaimen-Inc/Biomni-AD*
