@@ -30,7 +30,31 @@ Biomni is a general-purpose biomedical AI agent designed to autonomously execute
 
 ## Biomni-AD
 
-**Biomni-AD** is an Alzheimer's disease-specialized extension of [Biomni](https://github.com/snap-stanford/Biomni) (Stanford SNAP Lab), additionally developed by **Kuan-lin Huang, PhD**. It adds the **AD1 agent** — a domain-expert variant of the general A1 agent — along with an AD-focused data lake, curated dataset catalogs (NIAGADS, SinaiADRD, CRISPRbrain), and a plan-then-approve Chainlit UI optimized for neurodegeneration research workflows.
+**Biomni-AD** is an Alzheimer's disease-specialized extension of [Biomni](https://github.com/snap-stanford/Biomni) (Stanford SNAP Lab).
+The work recognized by the 2026 Alzheimer's Insights AI Prize was carried out by a team at the Icahn School of Medicine at Mount Sinai in collaboration with Stanford University.
+This repository is maintained by **[Kaimen, Inc.](https://github.com/Kaimen-Inc/Biomni-AD)**, which received the prize award and continues development of the AD1 agent and associated tooling.
+
+Kaimen, Inc. is an independent company.
+It is not owned by, affiliated with, or endorsed by the Icahn School of Medicine at Mount Sinai or Stanford University.
+Institutional names appear here to credit prior work, not to indicate sponsorship.
+
+Biomni-AD adds the **AD1 agent** - a domain-expert variant of the general A1 agent - along with an AD-focused data lake, curated catalogs for publicly available Alzheimer's and neurodegeneration data resources (NIAGADS, CRISPRbrain, ADRD OpenGenomics), and a plan-then-approve Chainlit UI optimized for neurodegeneration research workflows.
+
+### Data access
+
+This repository contains catalog definitions and configuration only.
+It does not distribute datasets.
+Each referenced resource is governed by its own access terms.
+Controlled-access resources such as NIAGADS require an approved Data Use Certification held by the user or the user's institution.
+Authorization granted to one institution does not extend to Kaimen, Inc. or to other users of this software.
+Users are responsible for obtaining their own access before use.
+
+### Licensing and commercial use
+
+Biomni-AD inherits upstream Biomni's Apache 2.0 license.
+Certain integrated tools, databases, and datasets carry more restrictive terms, including licenses that permit non-commercial use only (see [license_info.md](license_info.md)).
+Upstream Biomni provides a `commercial_mode` configuration flag that excludes datasets not licensed for commercial use; AD1 inherits this flag from A1.
+Any commercial deployment requires a component-level license review.
 
 ## Documentation Index
 

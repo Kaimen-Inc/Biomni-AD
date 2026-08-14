@@ -426,7 +426,7 @@ Data lake files: {len(local_items)}
         if not os.path.isdir(resource_dir):
             return "BiomniAD catalogs: resource directory not found."
 
-        patterns = ["BiomniAD*.json", "NIAGADS*.json", "SinaiADRD.json"]
+        patterns = ["BiomniAD*.json", "NIAGADS*.json", "ADRD_OpenGenomics.json"]
         catalog_paths = []
         for pat in patterns:
             catalog_paths.extend(glob.glob(os.path.join(resource_dir, pat)))

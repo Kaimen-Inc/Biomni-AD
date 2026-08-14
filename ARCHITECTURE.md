@@ -283,7 +283,7 @@ biomni/know_how/
 ├── biomniAD_data_sourcing.md   # AD data access guide
 └── resource/
     ├── NIAGADS_datasets_with_files.json  # 27 AD datasets
-    ├── SinaiADRD.json                     # 5 Sinai AD datasets
+    ├── ADRD_OpenGenomics.json            # open ADRD genomics datasets (RADR, SingleBrain, isoMiGA)
     ├── CRISPick_download_links.txt        # CRISPR resources
     └── addgene_grna_sequences.csv         # gRNA library
 ```
@@ -337,7 +337,7 @@ agent.go("Analyze APOE variants in Alzheimer's disease")
 | NG00169-172 | PSP Summary Statistics | Progressive supranuclear palsy |
 | NG00175-182 | Multi-Omic Endophenotypes | Proteomics, metabolomics QTLs |
 
-#### Sinai/Other AD Datasets (5 Studies)
+#### Open ADRD Genomics & Other Datasets (5 Studies)
 
 | ID | Title | Data Type |
 |----|-------|-----------|
@@ -483,7 +483,7 @@ class BaseTask:
 
 ## License & Citation
 
-Biomni is **Apache 2.0 licensed**, but individual tools and datasets may carry more restrictive licenses.
+Biomni is **Apache 2.0 licensed**, but individual tools and datasets may carry more restrictive licenses, including licenses that permit non-commercial use only; upstream Biomni's `commercial_mode` flag excludes datasets not licensed for commercial use.
 
 ```bibtex
 @article{huang2025biomni,

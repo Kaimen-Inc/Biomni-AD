@@ -80,7 +80,7 @@ Biomni/
 │   │   ├── biomniAD_data_sourcing.md    # AD data access guide
 │   │   └── resource/
 │   │       ├── NIAGADS_datasets_with_files.json  # 27 AD genetics datasets
-│   │       ├── SinaiADRD.json                     # 5 Sinai AD datasets
+│   │       ├── ADRD_OpenGenomics.json            # open ADRD genomics datasets (RADR, SingleBrain, isoMiGA)
 │   │       ├── CRISPick_download_links.txt        # CRISPR resources
 │   │       └── addgene_grna_sequences.csv         # sgRNA library
 │   ├── config.py                  # Centralized configuration (BiomniConfig dataclass)
@@ -143,9 +143,9 @@ The primary agent class (~3000 lines). Manages the full task lifecycle:
 
 ### `biomni/agent/ad1.py` — AD1 Alzheimer's Agent
 
-Extends A1 with AD-specific capabilities (developed by Kuan-lin Huang, PhD):
+Extends A1 with AD-specific capabilities:
 - Detects AD-related keywords (Alzheimer, dementia, MCI, amyloid, tau, etc.)
-- Injects curated AD dataset catalogs into the system prompt (NIAGADS, SinaiADRD, CRISPRbrain)
+- Injects curated AD dataset catalogs into the system prompt (NIAGADS, ADRD OpenGenomics, CRISPRbrain)
 - Enforces local-data-first policy via `_enforce_local_data_priority()`
 - Downloads AD-specific data subsets to `data/biomniad/`
 - Provides `launch_ui()` for the Chainlit plan-then-approve interface

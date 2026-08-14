@@ -578,7 +578,7 @@ AD1_STARTERS = [
         label="Scan local AD data & catalogs",
         message=(
             "Scan my local BIOMNI_USER_DATA_PATH (or BIOMNI_DATA_PATH) directory and the BiomniAD catalogs "
-            "(BiomniAD*.json, NIAGADS*.json, SinaiADRD.json) in your know-how resources. "
+            "(BiomniAD*.json, NIAGADS*.json, ADRD_OpenGenomics.json) in your know-how resources. "
             "List every locally available dataset with its modality, then suggest the 3 most "
             "impactful quick analyses I could run right now using only local files."
         ),
@@ -608,7 +608,7 @@ AD1_STARTERS = [
     cl.Starter(
         label="AD variant lookup via RADR",
         message=(
-            "From the local SinaiADRD catalog, download the RADR variant table (RADR_V3.xlsx). "
+            "From the local ADRD OpenGenomics catalog, download the RADR variant table (RADR_V3.xlsx). "
             "Summarise how many rare variants are classified as pathogenic vs. likely-pathogenic "
             "per AD gene (APP, PSEN1, PSEN2, TREM2, SORL1, ABCA7). "
             "Produce a stacked bar chart of variant pathogenicity by gene and list the top 10 "

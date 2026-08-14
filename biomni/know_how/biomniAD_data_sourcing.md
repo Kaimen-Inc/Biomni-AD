@@ -11,7 +11,7 @@ Trigger keywords: "Alzheimer", "AD", "dementia", "MCI", "amyloid", "tau", "neuro
 ## Step-by-step agent instructions
 
 1. **Scan BIOMNI_DATA_PATH first** — List the root of the configured data directory. Datasets may live directly under it (e.g. `/mnt/dataset1/files`). Print what you find.
-2. **Scan local JSON catalogs** — Load every JSON file matching `resource/BiomniAD*.json`, `resource/NIAGADS*.json`, and `resource/SinaiADRD.json` from the know-how resource directory. Each entry has: `id`, `title`, `dataset_url`, `open_access_portal_url`, optional `manifest_url`, and `files[]` with per-file `uri` download links.
+2. **Scan local JSON catalogs** — Load every JSON file matching `resource/BiomniAD*.json`, `resource/NIAGADS*.json`, and `resource/ADRD_OpenGenomics.json` from the know-how resource directory. Each entry has: `id`, `title`, `dataset_url`, `open_access_portal_url`, optional `manifest_url`, and `files[]` with per-file `uri` download links.
 3. **Summarise** — Print relevant dataset names, modality, and a one-line recommendation for the current task.
 4. **Download only what is needed** — If a dataset materially improves the task, download the smallest useful subset to the data path. Cache the path and reference it in subsequent tool calls.
 5. **Never fabricate data.** If local data is missing, explicitly state the gap.
@@ -24,7 +24,7 @@ resource_dir = os.path.join(os.path.dirname(__file__), "resource")
 catalog_paths = (
     glob.glob(os.path.join(resource_dir, "BiomniAD*.json"))
     + glob.glob(os.path.join(resource_dir, "NIAGADS*.json"))
-    + glob.glob(os.path.join(resource_dir, "SinaiADRD.json"))
+    + glob.glob(os.path.join(resource_dir, "ADRD_OpenGenomics.json"))
 )
 datasets = []
 for p in catalog_paths:
@@ -71,7 +71,7 @@ for d in datasets:
 | NG00180 | Four Plasma pQTL and mQTL Atlases | pQTL / mQTL |
 | NG00182 | CSF/Plasma ATN Biomarkers Multi-Ancestry | Biomarker GWAS |
 
-### Sinai
+### ADRD OpenGenomics (RADR / SingleBrain / isoMiGA)
 
 | ID | Title | Modality |
 |----|-------|----------|
