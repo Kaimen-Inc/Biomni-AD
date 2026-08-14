@@ -325,8 +325,8 @@ def download_ad_catalog_data(
 ) -> dict[str, Any]:
     max_size_bytes = max_size_mb * 1024 * 1024
     resource_dir = _get_resource_dir()
-    # SinaiADRD and BiomniAD_Discovery first (Zenodo-based, fast), NIAGADS last
-    catalog_patterns = catalog_patterns or ["SinaiADRD.json", "BiomniAD*.json", "NIAGADS*.json"]
+    # ADRD_OpenGenomics and BiomniAD_Discovery first (Zenodo-based, fast), NIAGADS last
+    catalog_patterns = catalog_patterns or ["ADRD_OpenGenomics.json", "BiomniAD*.json", "NIAGADS*.json"]
     catalog_paths = []
     for pat in catalog_patterns:
         catalog_paths.extend(glob.glob(os.path.join(resource_dir, pat)))

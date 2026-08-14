@@ -2,7 +2,7 @@
 
 ## Overview
 
-**Biomni-AD** is the Alzheimer's disease-specialized fork of [Biomni](https://github.com/snap-stanford/Biomni) (Stanford SNAP Lab), maintained by Kuan-lin Huang, PhD at **[Kaimen Inc.](https://github.com/Kaimen-Inc/Biomni-AD)**. It introduces the AD1 agent, AD-specific data catalogs, and an interactive Chainlit UI with a plan-then-approve workflow.
+**Biomni-AD** is the Alzheimer's disease-specialized fork of [Biomni](https://github.com/snap-stanford/Biomni) (Stanford SNAP Lab), maintained by Kuan-lin Huang, PhD at **[Kaimen, Inc.](https://github.com/Kaimen-Inc/Biomni-AD)**. It introduces the AD1 agent, AD-specific data catalogs, and an interactive Chainlit UI with a plan-then-approve workflow.
 
 The underlying **Biomni** platform is a general-purpose biomedical AI agent that enables autonomous execution of complex research tasks by integrating LLM reasoning with retrieval-augmented planning and code-based execution.
 
@@ -88,7 +88,7 @@ graph TB
 |-----------|----------|-------------|
 | **A1 Agent** | `biomni/agent/a1.py` | Main agent class with full tooling, MCP support, and the LangGraph ReAct state machine |
 | **AD1 Agent** | `biomni/agent/ad1.py` | AD-specialized variant with AD-context injection and dataset catalog awareness |
-| **AD Data Downloader** | `biomni/agent/ad_data_downloader.py` | Catalog-driven download of NIAGADS / SinaiADRD / BiomniAD Discovery files (≤100 MB) |
+| **AD Data Downloader** | `biomni/agent/ad_data_downloader.py` | Catalog-driven download of NIAGADS / ADRD OpenGenomics / BiomniAD Discovery files (≤100 MB) |
 | **Chainlit App** | `chainlit_app.py`, `chainlit_ui/` | Plan-then-approve web UI used as the default interactive front-end |
 | **Tool Registry** | `biomni/tool/tool_registry.py` | Dynamic tool registration and discovery |
 | **Tool Retriever** | `biomni/model/retriever.py` | LLM-powered resource selection |
@@ -297,7 +297,7 @@ biomni/know_how/
 ├── biomniAD_data_sourcing.md   # AD data access guide
 └── resource/
     ├── NIAGADS_datasets_with_files.json  # 27 AD datasets
-    ├── SinaiADRD.json                     # 5 Sinai AD datasets
+    ├── ADRD_OpenGenomics.json            # open ADRD genomics datasets (RADR, SingleBrain, isoMiGA)
     ├── CRISPick_download_links.txt        # CRISPR resources
     └── addgene_grna_sequences.csv         # gRNA library
 ```
@@ -325,7 +325,7 @@ agent.go("Analyze APOE variants in Alzheimer's disease")
 
 **Key Features:**
 - Automatic AD context injection when queries match AD/ADRD keywords
-- Pre-loaded NIAGADS / SinaiADRD / BiomniAD Discovery / CRISPRbrain catalogs
+- Pre-loaded NIAGADS / ADRD OpenGenomics / BiomniAD Discovery / CRISPRbrain catalogs
 - Chainlit plan-then-approve UI with run history tracking
 - Per-run artifact snapshots and PDF / notebook export
 
@@ -351,7 +351,7 @@ agent.go("Analyze APOE variants in Alzheimer's disease")
 | NG00169-172 | PSP Summary Statistics | Progressive supranuclear palsy |
 | NG00175-182 | Multi-Omic Endophenotypes | Proteomics, metabolomics QTLs |
 
-#### Sinai/Other AD Datasets (5 Studies)
+#### Open ADRD Genomics & Other Datasets (5 Studies)
 
 | ID | Title | Data Type |
 |----|-------|-----------|
@@ -700,7 +700,9 @@ ContainerLogV2
 
 ## License & Citation
 
-Biomni-AD inherits the upstream Biomni **Apache 2.0** license; individual tools and datasets may carry more restrictive licenses (review each before commercial use). Biomni-AD is maintained at **[Kaimen-Inc/Biomni-AD](https://github.com/Kaimen-Inc/Biomni-AD)**.
+Biomni-AD inherits the upstream Biomni **Apache 2.0** license.
+Certain integrated tools, databases, and datasets carry more restrictive terms, including licenses that permit non-commercial use only; upstream Biomni's `commercial_mode` flag excludes datasets not licensed for commercial use, and any commercial deployment requires a component-level license review.
+Biomni-AD is maintained at **[Kaimen-Inc/Biomni-AD](https://github.com/Kaimen-Inc/Biomni-AD)**.
 
 ```bibtex
 @article{huang2025biomni,
@@ -711,7 +713,7 @@ Biomni-AD inherits the upstream Biomni **Apache 2.0** license; individual tools 
 }
 ```
 
-If you use Biomni-AD specifically (AD1 agent, AD data lake, or Chainlit workflow), please also credit: *Biomni-AD, Kuan-lin Huang, Kaimen Inc. - https://github.com/Kaimen-Inc/Biomni-AD*
+If you use Biomni-AD specifically (AD1 agent, AD data lake, or Chainlit workflow), please also credit: *Biomni-AD, Kaimen, Inc. - https://github.com/Kaimen-Inc/Biomni-AD*
 
 ---
 

@@ -153,7 +153,7 @@ class AD1(A1):
    - User data dir: {data_root_dir or "not set"}
 
 2. **BiomniAD CATALOG** - If a dataset is listed below without local files, use its catalog URI to fetch.
-   Catalogs: biomni/know_how/resource/BiomniAD_Discovery.json, NIAGADS_datasets_with_files.json, SinaiADRD.json
+   Catalogs: biomni/know_how/resource/BiomniAD_Discovery.json, NIAGADS_datasets_with_files.json, ADRD_OpenGenomics.json
 
 3. **Web / literature** - Only after checking local and catalog sources.
 
@@ -186,7 +186,7 @@ class AD1(A1):
         current_dir = os.path.dirname(os.path.abspath(__file__))
         resource_dir = os.path.join(current_dir, "..", "know_how", "resource")
         datasets: dict[str, dict] = {}
-        for pat in ["BiomniAD*.json", "NIAGADS*.json", "SinaiADRD.json"]:
+        for pat in ["BiomniAD*.json", "NIAGADS*.json", "ADRD_OpenGenomics.json"]:
             for catalog_path in glob.glob(os.path.join(resource_dir, pat)):
                 try:
                     with open(catalog_path) as f:
@@ -591,7 +591,7 @@ class AD1(A1):
         if not os.path.isdir(resource_dir):
             return "BiomniAD catalogs: resource directory not found."
 
-        patterns = ["BiomniAD*.json", "NIAGADS*.json", "SinaiADRD.json"]
+        patterns = ["BiomniAD*.json", "NIAGADS*.json", "ADRD_OpenGenomics.json"]
         catalog_paths = []
         for pat in patterns:
             catalog_paths.extend(glob.glob(os.path.join(resource_dir, pat)))
@@ -1236,8 +1236,6 @@ ALZHEIMER'S & DEMENTIA DATA SOURCING PROTOCOL
         with gr.Blocks(title="Biomni AD1", theme=gr.themes.Soft(), css=custom_css) as demo:
             # AD1 Logo
             logo_path = Path(__file__).resolve().parents[2] / "figs" / "Biomni-AD_Logo_v2.png"
-            if not logo_path.exists():
-                logo_path = Path(__file__).resolve().parents[2] / "figs" / "biomni_logo.png"
 
             verification_container = gr.Group(visible=require_verification)
             main_interface_container = gr.Group(visible=not require_verification)
