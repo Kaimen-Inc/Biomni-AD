@@ -131,21 +131,34 @@ spec:
             # Identity from the authentication gateway. Left OFF here on
             # purpose: this manifest exposes the app through a plain Service
             # with no gateway, and with the flag on anyone able to reach the
-            # pod could send `x-user-id: <someone else>` and read or overwrite
-            # that person's settings and run history. Turn it on in the same
-            # change that puts a gateway in front - and make sure that gateway
-            # strips client-supplied copies of these headers.
+            # pod could send `Ai-App-User-Context: sub=<someone else>` and read
+            # or overwrite that person's settings and run history. Turn it on in
+            # the same change that puts a gateway in front - and make sure that
+            # gateway strips client-supplied copies of these headers.
             # - name: BIOMNI_TRUST_AUTH_HEADERS
             #   value: "true"
             #
-            # Header names. The defaults cover the common conventions; set
-            # these only when the gateway uses different ones.
+            # Header names. The defaults are GRIP's composite context headers
+            # (Ai-App-User-Context, carrying sub/email/given_name/family_name,
+            # and Ai-App-Workspace-Context, carrying uuid), plus the usual
+            # single-value headers for other gateways. Set these only when the
+            # gateway in front uses different names.
+            # - name: BIOMNI_AUTH_USER_CONTEXT_HEADER
+            #   value: "ai-app-user-context"
+            # - name: BIOMNI_AUTH_WORKSPACE_CONTEXT_HEADER
+            #   value: "ai-app-workspace-context"
             # - name: BIOMNI_AUTH_USER_ID_HEADER
             #   value: "x-auth-request-user-id"
             # - name: BIOMNI_AUTH_EMAIL_HEADER
             #   value: "x-auth-request-email"
             # - name: BIOMNI_AUTH_WORKSPACE_HEADER
             #   value: "x-workspace-id"
+
+            # How long GET /status keeps reporting active after the last
+            # activity (default 4 hours). Work in flight always reports active,
+            # however long it runs, so this only governs idle time.
+            # - name: BIOMNI_STATUS_INACTIVITY_SECONDS
+            #   value: "14400"
           envFrom:
             - secretRef:
                 name: biomni-ad-secrets

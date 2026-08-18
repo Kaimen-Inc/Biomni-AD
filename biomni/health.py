@@ -98,6 +98,28 @@ def readiness_report() -> tuple[bool, dict[str, Any]]:
     return ok, report
 
 
+def register_routes_first(app: Any, handlers: list[tuple[str, Callable]]) -> None:
+    """Put ``handlers`` (``[(path, endpoint), ...]``) ahead of every other route.
+
+    Shared by every operational endpoint this app exposes, because they all face
+    the same two problems: Chainlit's catch-all ``GET /{full_path:path}`` would
+    otherwise answer them with the SPA, and the entry module is re-imported on
+    dev reload, which would append a second copy of each route.
+
+    Registration is therefore idempotent - any existing route on one of these
+    paths is dropped first - and order is preserved, so the caller's first
+    handler ends up first in the router.
+    """
+    from starlette.routing import Route
+
+    paths = {path for path, _ in handlers}
+    app.router.routes[:] = [r for r in app.router.routes if getattr(r, "path", None) not in paths]
+
+    # insert(0, ...) per route, reversed so the final order matches ``handlers``.
+    for path, handler in reversed(handlers):
+        app.router.routes.insert(0, Route(path, handler, methods=["GET"]))
+
+
 def register_health_routes(
     app: Any,
     *,
@@ -107,12 +129,8 @@ def register_health_routes(
     """Register liveness/readiness routes at the front of ``app``'s router.
 
     ``app`` is the Starlette/FastAPI application (``chainlit.server.app``).
-    Routes are inserted ahead of Chainlit's catch-all so they are not shadowed.
-    Idempotent: re-registration replaces any previously inserted health routes
-    (Chainlit may re-import the entry module on dev reload).
     """
     from starlette.responses import JSONResponse
-    from starlette.routing import Route
 
     async def healthz(_request: Request) -> JSONResponse:
         payload: dict[str, Any] = {"status": "ok"}
@@ -125,17 +143,7 @@ def register_health_routes(
         ok, report = readiness_report()
         return JSONResponse(report, status_code=200 if ok else 503)
 
-    paths = {liveness_path, readiness_path}
-    # Drop any prior health routes (idempotent re-registration).
-    app.router.routes[:] = [r for r in app.router.routes if getattr(r, "path", None) not in paths]
-
-    handlers: list[tuple[str, Callable]] = [
-        (liveness_path, healthz),
-        (readiness_path, readyz),
-    ]
-    # insert(0, ...) per route, reversed so final order is [liveness, readiness, ...].
-    for path, handler in reversed(handlers):
-        app.router.routes.insert(0, Route(path, handler, methods=["GET"]))
+    register_routes_first(app, [(liveness_path, healthz), (readiness_path, readyz)])
 
 
-__all__ = ["build_info", "readiness_report", "register_health_routes"]
+__all__ = ["build_info", "readiness_report", "register_health_routes", "register_routes_first"]
