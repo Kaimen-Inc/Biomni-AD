@@ -10,8 +10,8 @@
 ## Overview
 
 **Biomni-AD** is an Alzheimer's disease-specialized extension of [Biomni](https://github.com/snap-stanford/Biomni) (Stanford SNAP Lab).
-The work recognized by the 2026 Alzheimer's Insights AI Prize was carried out by a team at the Icahn School of Medicine at Mount Sinai in collaboration with Stanford University.
-This repository is maintained by **[Kaimen, Inc.](https://github.com/Kaimen-Inc/Biomni-AD)**, which received the prize award and continues development of the AD1 agent and associated tooling.
+The work recognized by the 2026 Alzheimer's Insights AI Prize.
+This repository is maintained by **[Kaimen, Inc.](https://github.com/Kaimen-Inc/Biomni-AD)**, which continues development of the AD1 agent and associated tooling.
 
 Kaimen, Inc. is an independent company.
 It is not owned by, affiliated with, or endorsed by the Icahn School of Medicine at Mount Sinai or Stanford University.
@@ -21,7 +21,7 @@ Biomni-AD adds the **AD1 agent** - a domain-expert variant of the general A1 age
 
 The underlying **Biomni** platform is a general-purpose biomedical AI agent that integrates LLM reasoning with retrieval-augmented planning and code-based execution to help scientists enhance research productivity and generate testable hypotheses.
 
-**Our commitment.** Biomni-AD will remain fully open source, and we are working to deploy it on the **Alzheimer's Disease Data Initiative (ADDI)** platform so it can serve as many AD researchers as possible and accelerate progress against Alzheimer's disease and related dementias.
+**Our commitment.** Biomni-AD will remain fully open source for anyone's adoption and use, and we are working to deploy it on the **Alzheimer's Disease Data Initiative (ADDI)** platform so it can serve as many AD researchers as possible and accelerate progress against Alzheimer's disease and related dementias.
 
 ## Branch Guide
 
