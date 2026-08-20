@@ -1,18 +1,29 @@
 """Caller identity, as supplied by the deployment's authentication gateway.
 
 On the GRIP platform Biomni sits behind an authentication gateway that validates
-access and forwards the caller's details as HTTP headers (user id, e-mail and
-workspace id). Nothing in this module talks to an identity provider itself - it
-only *reads* what the gateway asserts, which is the whole point: the trust
-boundary is the gateway, and the app must never accept these headers from a
+access and forwards the caller's details as HTTP headers (subject id, e-mail,
+name and workspace id). Nothing in this module talks to an identity provider
+itself - it only *reads* what the gateway asserts, which is the whole point: the
+trust boundary is the gateway, and the app must never accept these headers from a
 client that reached it directly.
 
-Three things make this safe to land before the gateway spec is final:
+Four things keep this robust across deployments:
 
-* **Header names are configurable.** Each field is looked up through a list of
-  candidate names, overridable per-deployment via ``BIOMNI_AUTH_*_HEADER``
-  (comma-separated). When GRIP publishes its final header names, that is a
-  values change in the manifest, not a code change.
+* **GRIP's context headers are the primary source.** The gateway sends two
+  composite headers whose value is a comma-separated list of ``key=value``
+  pairs::
+
+      Ai-App-User-Context: email=jane@grip.org,given_name=Jane,family_name=Doe,sub=abc-123
+      Ai-App-Workspace-Context: uuid=6f1c0e9e-...
+
+  ``sub`` is the stable subject id, and is what preferences, run records and
+  chat threads are keyed by; ``uuid`` scopes that user to one workspace.
+* **Other gateways still work, and header names stay configurable.** Every
+  field also has a list of single-value header names (oauth2-proxy,
+  Envoy/ext_authz, generic reverse proxies), consulted for whatever the context
+  headers did not supply and overridable per-deployment via
+  ``BIOMNI_AUTH_*_HEADER`` (comma-separated). A renamed header is therefore a
+  values change in the manifest, never a code change.
 * **Header shape is normalised.** ``extract_headers`` accepts a plain mapping,
   a WSGI/socket.io ``environ`` (``HTTP_X_FOO`` keys) or a raw ASGI scope
   (list of byte pairs), because Chainlit hands a different shape depending on
@@ -41,9 +52,22 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-# Candidate header names per field, tried in order. The defaults cover the
-# conventions of the common gateways (oauth2-proxy, Envoy/ext_authz, generic
-# reverse proxies) so a deployment usually needs no override at all.
+# GRIP's composite context headers. Each carries several fields as a
+# comma-separated list of key=value pairs, so they are parsed rather than read.
+_DEFAULT_USER_CONTEXT_HEADERS = ("ai-app-user-context",)
+_DEFAULT_WORKSPACE_CONTEXT_HEADERS = ("ai-app-workspace-context",)
+
+# Keys inside those headers, per the GRIP specification.
+_CONTEXT_SUBJECT_KEY = "sub"
+_CONTEXT_EMAIL_KEY = "email"
+_CONTEXT_GIVEN_NAME_KEY = "given_name"
+_CONTEXT_FAMILY_NAME_KEY = "family_name"
+_CONTEXT_WORKSPACE_KEY = "uuid"
+
+# Candidate header names per field, tried in order, for gateways that send one
+# value per header instead. The defaults cover the conventions of the common
+# gateways (oauth2-proxy, Envoy/ext_authz, generic reverse proxies) so a
+# deployment usually needs no override at all.
 _DEFAULT_USER_ID_HEADERS = (
     "x-auth-request-user-id",
     "x-auth-request-user",
@@ -157,20 +181,82 @@ def _first_present(headers: Mapping[str, str], names: Iterable[str]) -> str | No
     return None
 
 
+def _split_context_pairs(value: str) -> list[str]:
+    """Split a context header on commas, ignoring commas inside double quotes.
+
+    The specification gives no escaping rule, but a family name legitimately
+    contains a comma ("Smith, Jr."), and a gateway that quotes such a value
+    would otherwise have it silently truncated. Unquoted values behave exactly
+    like a plain ``split(",")``, so this costs nothing in the ordinary case.
+    """
+    parts: list[str] = []
+    current: list[str] = []
+    in_quotes = False
+    for char in value:
+        if char == '"':
+            in_quotes = not in_quotes
+            current.append(char)
+        elif char == "," and not in_quotes:
+            parts.append("".join(current))
+            current = []
+        else:
+            current.append(char)
+    parts.append("".join(current))
+    return parts
+
+
+def parse_context_header(value: str | None) -> dict[str, str]:
+    """Parse ``key=value,key=value`` into a lowercase-keyed mapping.
+
+    Tolerant by design - this is untrusted input from another team's service,
+    and one malformed field must not cost us the rest of the identity:
+
+    * whitespace around keys, values and separators is stripped (the published
+      example has a space after one of the commas);
+    * a value may itself contain ``=`` (base64-ish subject ids do), so only the
+      first one separates key from value;
+    * optional surrounding double quotes are removed;
+    * fragments with no ``=``, or with an empty key or value, are dropped.
+    """
+    if not value:
+        return {}
+
+    fields: dict[str, str] = {}
+    for fragment in _split_context_pairs(value):
+        key, separator, raw = fragment.partition("=")
+        if not separator:
+            continue
+        name = key.strip().lower()
+        item = raw.strip()
+        if len(item) >= 2 and item[0] == '"' and item[-1] == '"':
+            item = item[1:-1].strip()
+        if name and item:
+            fields[name] = item
+    return fields
+
+
+def _context_fields(headers: Mapping[str, str], env_name: str, defaults: tuple[str, ...]) -> dict[str, str]:
+    """Parsed contents of the first context header present, or an empty dict."""
+    return parse_context_header(_first_present(headers, _header_candidates(env_name, defaults)))
+
+
 @dataclass(frozen=True)
 class UserIdentity:
     """Who the gateway says is calling.
 
-    ``user_id`` is the stable subject to key preferences by. ``email`` is for
-    display only - never build storage paths from it directly (see
-    :meth:`storage_key`). ``workspace_id`` scopes a user's preferences to one
-    workspace, so the same person working in two GRIP workspaces gets the data
-    scope and output directory appropriate to each.
+    ``user_id`` is the stable subject to key preferences by - GRIP's ``sub``.
+    ``email``, ``given_name`` and ``family_name`` are for display only; never
+    build storage paths from them directly (see :meth:`storage_key`).
+    ``workspace_id`` - GRIP's workspace ``uuid`` - scopes a user's preferences to
+    one workspace, so the same person working in two GRIP workspaces gets the
+    data scope and output directory appropriate to each.
     """
 
     user_id: str | None = None
     email: str | None = None
     workspace_id: str | None = None
+    given_name: str | None = None
+    family_name: str | None = None
     source: str = "anonymous"  # "headers" | "local" | "anonymous"
 
     @property
@@ -184,9 +270,19 @@ class UserIdentity:
         return self.source not in {"anonymous", "local"} and bool(self.user_id or self.email)
 
     @property
+    def full_name(self) -> str:
+        """The caller's name as the gateway spells it, or an empty string."""
+        return " ".join(part for part in (self.given_name, self.family_name) if part).strip()
+
+    @property
     def display_name(self) -> str:
-        """Human label for the UI. Prefers e-mail; never returns an empty string."""
-        return self.email or self.user_id or "anonymous"
+        """Human label for the UI; never returns an empty string.
+
+        A name when the gateway supplies one, because that is what a person
+        recognises as themselves in the corner of a page, then e-mail, then the
+        opaque subject id as a last resort.
+        """
+        return self.full_name or self.email or self.user_id or "anonymous"
 
     def storage_key(self) -> str:
         """Filesystem-safe, stable key for this user's stored preferences.
@@ -234,16 +330,37 @@ def identity_from_headers(source: Any) -> UserIdentity | None:
     if not headers:
         return None
 
-    user_id = _first_present(headers, _header_candidates("BIOMNI_AUTH_USER_ID_HEADER", _DEFAULT_USER_ID_HEADERS))
-    email = _first_present(headers, _header_candidates("BIOMNI_AUTH_EMAIL_HEADER", _DEFAULT_EMAIL_HEADERS))
-    workspace_id = _first_present(
+    # GRIP's composite headers first; a gateway that sends them is authoritative
+    # about every field it carries.
+    user_context = _context_fields(headers, "BIOMNI_AUTH_USER_CONTEXT_HEADER", _DEFAULT_USER_CONTEXT_HEADERS)
+    workspace_context = _context_fields(
+        headers, "BIOMNI_AUTH_WORKSPACE_CONTEXT_HEADER", _DEFAULT_WORKSPACE_CONTEXT_HEADERS
+    )
+
+    # Single-value headers fill in whatever the context headers did not carry,
+    # which is how non-GRIP gateways (and a partially populated context) keep
+    # working unchanged.
+    user_id = user_context.get(_CONTEXT_SUBJECT_KEY) or _first_present(
+        headers, _header_candidates("BIOMNI_AUTH_USER_ID_HEADER", _DEFAULT_USER_ID_HEADERS)
+    )
+    email = user_context.get(_CONTEXT_EMAIL_KEY) or _first_present(
+        headers, _header_candidates("BIOMNI_AUTH_EMAIL_HEADER", _DEFAULT_EMAIL_HEADERS)
+    )
+    workspace_id = workspace_context.get(_CONTEXT_WORKSPACE_KEY) or _first_present(
         headers, _header_candidates("BIOMNI_AUTH_WORKSPACE_HEADER", _DEFAULT_WORKSPACE_HEADERS)
     )
 
     if not (user_id or email):
         return None
 
-    return UserIdentity(user_id=user_id, email=email, workspace_id=workspace_id, source="headers")
+    return UserIdentity(
+        user_id=user_id,
+        email=email,
+        workspace_id=workspace_id,
+        given_name=user_context.get(_CONTEXT_GIVEN_NAME_KEY),
+        family_name=user_context.get(_CONTEXT_FAMILY_NAME_KEY),
+        source="headers",
+    )
 
 
 def trust_auth_headers() -> bool:
@@ -253,8 +370,8 @@ def trust_auth_headers() -> bool:
     that only an authentication gateway is entitled to make: if the app is
     reachable without one in front - which is true of the shipped manifest, of
     local development, and of any misrouted ingress - then anyone can send
-    ``x-user-id: <someone else>`` and read or overwrite that person's stored
-    preferences and run history.
+    ``Ai-App-User-Context: sub=<someone else>`` and read or overwrite that
+    person's stored preferences and run history.
 
     So a deployment must state explicitly that it sits behind a gateway which
     strips client-supplied copies of these headers. Until it does, headers are

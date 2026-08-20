@@ -575,7 +575,7 @@ graph LR
 | Concern | Azure Service | Maps to in Biomni-AD |
 |---------|---------------|----------------------|
 | **Edge / TLS / WAF** | Azure Front Door + WAF policy | Public ingress, OWASP rule set, DDoS Standard |
-| **Identity** | Authentication gateway (GRIP) | **[Implemented]** The gateway validates access and forwards the caller as HTTP headers (user id, e-mail, workspace id); `biomni/identity.py` reads them and keys per-user preferences and run records off the asserted subject. Header names are configurable via `BIOMNI_AUTH_*_HEADER`, and the headers are ignored unless `BIOMNI_TRUST_AUTH_HEADERS` is set - it fails closed so an unprotected deployment cannot be impersonated. The app never authenticates anyone itself, so the gateway **must** strip client-supplied copies of these headers. The same identity is registered as Chainlit's `header_auth_callback`, so preferences, run records and chat threads all key off one string. With no gateway in front, identity falls back to a per-session anonymous key and nothing persists across sessions - unless `BIOMNI_ALLOW_ANONYMOUS_PERSISTENCE` declares the deployment single-user, which makes every session one shared local user. |
+| **Identity** | Authentication gateway (GRIP) | **[Implemented]** The gateway validates access and forwards the caller as HTTP headers; `biomni/identity.py` reads them and keys per-user preferences and run records off the asserted subject. GRIP sends two composite headers, each a comma-separated `key=value` list - `Ai-App-User-Context` (`sub`, `email`, `given_name`, `family_name`) and `Ai-App-Workspace-Context` (`uuid`) - and `sub` is the stable subject everything is keyed by. Single-value headers from other gateways (oauth2-proxy, Envoy/ext_authz) fill in anything the context headers did not carry, so a non-GRIP deployment keeps working. Header names are configurable via `BIOMNI_AUTH_*_HEADER`, and the headers are ignored unless `BIOMNI_TRUST_AUTH_HEADERS` is set - it fails closed so an unprotected deployment cannot be impersonated. The app never authenticates anyone itself, so the gateway **must** strip client-supplied copies of these headers. The same identity is registered as Chainlit's `header_auth_callback`, so preferences, run records and chat threads all key off one string. With no gateway in front, identity falls back to a per-session anonymous key and nothing persists across sessions - unless `BIOMNI_ALLOW_ANONYMOUS_PERSISTENCE` declares the deployment single-user, which makes every session one shared local user. |
 | **App runtime** | **Azure Container Apps** (preferred) or AKS | Runs the existing `Dockerfile` (micromamba + `chainlit run`) unmodified; per-revision rollouts |
 | **Image registry** | Azure Container Registry (mirror of GHCR) | **[Implemented]** `.github/workflows/docker.yml` builds the `Dockerfile` on every PR and publishes to GHCR (`ghcr.io/kaimen-inc/biomni-ad`) on push to `main` / `feat/adworkbench` / tags. Tags: `:<sha>`, `:<branch>`, plus semver aliases for git tags. For ACR-based deployments, mirror from GHCR rather than rebuilding. |
 | **Secrets** | Azure Key Vault + Container Apps secret refs | `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `AZURE_*` keys, DB password - never baked into the image |
@@ -683,6 +683,29 @@ The app is built to be operable as many pods behind a managed Kubernetes/Contain
 **Perceived liveness.** While a code step blocks, the Chainlit UI ticks an elapsed-time line on the running step (so it doesn't look frozen), and the backend `run_heartbeat` provides the same signal in the log pipeline.
 
 **Health probes.** `GET /healthz` (liveness: process up, dependency-free) and `GET /readyz` (readiness: data dir mounted + an LLM credential present → `503` otherwise) are registered ahead of Chainlit's SPA catch-all. See [`deploy/k8s/biomni-ad.yaml`](deploy/k8s/biomni-ad.yaml) for probe wiring.
+
+**Platform status endpoint.** `GET /status` answers the platform monitoring framework's question - is this application doing anything? - in its agreed schema:
+
+```json
+{
+  "active": true,
+  "last_activity": 1786000000,
+  "schema_version": 1,
+  "background_jobs": 1,
+  "open_sessions": 2,
+  "internal_processes": {"active_threads": 12, "database_connections": 4}
+}
+```
+
+`biomni/status.py` holds the process-wide `ActivityTracker` behind it.
+Activity means a user action (chat start or resume, a message, a settings change) or an agent run in flight; the monitoring poll and the Kubernetes probes are deliberately excluded, since counting them would pin `active` to `true` forever and report nothing.
+`active` is `true` while any run is in flight - however long it runs - and for `BIOMNI_STATUS_INACTIVITY_SECONDS` (default 4 hours) after the last activity, which spans the pauses in a working session without keeping an abandoned pod alive all week.
+An idle open browser tab on its own does not count as work.
+The elapsed-time check uses a monotonic clock so a wall-clock correction cannot make a busy pod look idle, while `last_activity` is still reported as an epoch timestamp.
+`open_sessions` and `database_connections` come from Chainlit's own session registry and the chat-history connection pool (wired in `chainlit_ui/status_gauges.py`); a number the deployment cannot measure - for instance connections when chat history is disabled - is omitted rather than reported as zero.
+The registry is used rather than a counter of our own because Chainlit restores a reconnecting session without re-running the chat-start handler, so a hand-kept counter would drift down and never recover; a disconnected session keeps counting for its resume window because the process is still holding that user's agent and workspace state.
+Counts are per pod, which is what the endpoint describes: with several replicas the framework sees several statuses and the application is busy if any of them says so.
+The payload carries no user data.
 
 **Troubleshooting a slow/hung query.** Filter Log Analytics by the run's `run_id`, order by time, and read the event sequence: a long `llm_call` `latency_ms` points at the provider (or 429 retries); a `code_execution` with `status: timeout` or a large `duration_ms` points at a slow data/compute step; gaps between events with only `run_heartbeat` ticks mean a single step is taking the time. Example:
 

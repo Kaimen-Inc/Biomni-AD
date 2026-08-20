@@ -87,6 +87,7 @@ from biomni.observability import (
     setup_logging,
 )
 from biomni.run_registry import RunRecord, RunRegistry, build_run_registry
+from biomni.status import ACTIVITY, register_status_route
 from biomni.workspace_prefs import (
     NullPrefsStore,
     OutputTarget,
@@ -159,6 +160,7 @@ from chainlit_ui.planning import (
 from chainlit_ui.planning import (
     quick_answer as _quick_answer,
 )
+from chainlit_ui.status_gauges import register_database_gauge, register_session_gauge
 from chainlit_ui.uploads import store_uploads, uploads_dir
 from chainlit_ui.workspace_panel import (
     build_scope_inventory,
@@ -166,6 +168,18 @@ from chainlit_ui.workspace_panel import (
     scope_choice_items,
     summarize_scope,
 )
+
+# Register the platform's monitoring endpoint (/status) and tell it how to count
+# the websocket sessions Chainlit is holding. Separate from the probe block
+# above only because it needs the chainlit_ui imports; same rule applies - a
+# wiring failure must never block startup.
+try:
+    from chainlit.server import app as _status_app
+
+    register_status_route(_status_app)
+    register_session_gauge(ACTIVITY)
+except Exception:  # pragma: no cover - defensive: monitoring is non-critical to boot
+    logger.warning("Could not register the status endpoint", exc_info=True)
 
 DEFAULT_LLM = resolve_default_llm()
 DEFAULT_PATH = os.getenv("BIOMNI_PATH", "./data")
@@ -733,6 +747,8 @@ def header_auth_callback(headers) -> cl.User | None:
             "source": identity.source,
             "email": identity.email or "",
             "workspace_id": identity.workspace_id or "",
+            "given_name": identity.given_name or "",
+            "family_name": identity.family_name or "",
         },
     )
 
@@ -754,7 +770,11 @@ def data_layer():
             "BIOMNI_ALLOW_ANONYMOUS_PERSISTENCE (single-user deployments) to enable it."
         )
         return None
-    return build_data_layer(_resolve_workspace_root())
+    layer = build_data_layer(_resolve_workspace_root())
+    # Only now is there a connection pool to report on; with history disabled the
+    # field is left out of /status entirely rather than reported as zero.
+    register_database_gauge(ACTIVITY, layer)
+    return layer
 
 
 # ---------------------------------------------------------------------------
@@ -923,6 +943,19 @@ async def on_chat_start():
     await _start_session()
 
 
+@cl.on_chat_end
+async def on_chat_end():
+    """Note a session ending in the activity record used by /status.
+
+    Chainlit calls this on every websocket disconnect - a closed tab, but also a
+    reload that is about to reconnect - which is why the count /status reports
+    comes from Chainlit's own session registry rather than from this handler's
+    counter. What this is really for is the timestamp: a user leaving is the
+    last thing that happened, and the idle window should run from it.
+    """
+    ACTIVITY.session_closed("chat")
+
+
 @cl.on_chat_resume
 async def on_chat_resume(thread: dict):
     """Reopen a stored conversation and make it live again.
@@ -1022,6 +1055,10 @@ async def _start_session(resumed_history: list[dict] | None = None) -> None:
     # a log line can be traced back to the conversation the user can reopen.
     thread_id = _chainlit_thread_id() or uuid.uuid4().hex
     set_session_id(thread_id)
+
+    # Somebody is here: this counts as activity for /status, whether the session
+    # is new or a reopened conversation.
+    ACTIVITY.session_opened("chat")
 
     # Determine agent type: CLI env var > chat profile selection > default AD1
     if FORCE_AGENT in ("a1", "ad1"):
@@ -1168,6 +1205,7 @@ for _plan_action_name, _ in PLAN_ACTIONS:
 @cl.on_settings_update
 async def on_settings_update(settings: dict):
     """Apply a scope / output-directory change and re-render everything from it."""
+    ACTIVITY.record_activity("workspace_settings_updated")
     ws = cl.user_session.get("workspace")
     agent = cl.user_session.get("agent")
     if ws is None:
@@ -1299,7 +1337,10 @@ async def on_message(message: cl.Message):
     agent = cl.user_session.get("agent")
     usage_before = _usage_snapshot(agent)
     started = time.monotonic()
-    with bind_run(session_id=thread_id, run_id=run_id):
+    # An agent run is the work /status exists to report: it holds the process
+    # for minutes, and the monitoring framework must never see the pod as idle
+    # while one is in flight.
+    with bind_run(session_id=thread_id, run_id=run_id), ACTIVITY.track_job("agent_run"):
         try:
             await _process_message(message)
         finally:
