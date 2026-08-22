@@ -153,12 +153,29 @@ spec:
             #   value: "x-auth-request-email"
             # - name: BIOMNI_AUTH_WORKSPACE_HEADER
             #   value: "x-workspace-id"
+            # - name: BIOMNI_AUTH_ISSUER_HEADER
+            #   value: "x-auth-request-issuer"
+            #
+            # The OIDC issuer (`iss` inside Ai-App-User-Context, or the header
+            # above) is folded into the storage key when present: a subject id
+            # is unique within an IdP realm, not globally. It must be sent from
+            # the first deployment or not at all - starting to send it later
+            # re-keys every existing user, who then finds an empty history.
 
             # How long GET /status keeps reporting active after the last
             # activity (default 4 hours). Work in flight always reports active,
             # however long it runs, so this only governs idle time.
             # - name: BIOMNI_STATUS_INACTIVITY_SECONDS
             #   value: "14400"
+            #
+            # The same, while a browser session is connected (default 12 hours).
+            # Longer on purpose: the platform reclaims pods that report
+            # inactive, and reclaiming one out from under a connected user
+            # destroys the in-memory REPL state their analysis is built on
+            # (preferences, run records and threads are on the volume and
+            # survive). Never applied as shorter than the window above.
+            # - name: BIOMNI_STATUS_OPEN_SESSION_INACTIVITY_SECONDS
+            #   value: "43200"
           envFrom:
             - secretRef:
                 name: biomni-ad-secrets

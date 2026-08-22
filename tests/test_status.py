@@ -175,13 +175,55 @@ def test_sessions_are_counted(tracker):
     assert tracker.snapshot()["open_sessions"] == 1
 
 
-def test_an_open_session_alone_does_not_mean_active(tracker, clock):
-    """A tab left open for days is not work; a tab in use generates activity."""
+def test_an_open_session_widens_the_window(tracker, clock):
+    """A connected user gets the longer grace period.
+
+    ``active: false`` will reclaim the pod, and a reclaim destroys the REPL
+    state a connected researcher's analysis has been building up, so the base
+    window on its own is not a safe answer while someone is still attached.
+    """
     tracker.session_opened()
     clock.advance(status.DEFAULT_INACTIVITY_SECONDS + 1)
+
+    snapshot = tracker.snapshot()
+    assert snapshot["open_sessions"] == 1
+    assert snapshot["active"] is True
+
+
+def test_an_open_session_does_not_pin_the_pod_forever(tracker, clock):
+    """A tab left open since Tuesday is not work in progress."""
+    tracker.session_opened()
+    clock.advance(status.DEFAULT_OPEN_SESSION_INACTIVITY_SECONDS + 1)
+
     snapshot = tracker.snapshot()
     assert snapshot["open_sessions"] == 1
     assert snapshot["active"] is False
+
+
+def test_the_shorter_window_applies_once_everyone_disconnects(tracker, clock):
+    tracker.session_opened()
+    tracker.session_closed()
+    clock.advance(status.DEFAULT_INACTIVITY_SECONDS + 1)
+
+    snapshot = tracker.snapshot()
+    assert snapshot["open_sessions"] == 0
+    assert snapshot["active"] is False
+
+
+def test_open_session_window_is_never_shorter_than_the_base(monkeypatch):
+    """Raising only the base window must not penalise a connected user."""
+    monkeypatch.setenv("BIOMNI_STATUS_INACTIVITY_SECONDS", str(24 * 60 * 60))
+    monkeypatch.delenv("BIOMNI_STATUS_OPEN_SESSION_INACTIVITY_SECONDS", raising=False)
+
+    assert status.open_session_window_seconds() == status.inactivity_window_seconds()
+
+
+def test_a_run_in_flight_outlasts_both_windows(tracker, clock):
+    """No window can interrupt work: a long run reports active however long it takes."""
+    tracker.job_started()
+    clock.advance(status.DEFAULT_OPEN_SESSION_INACTIVITY_SECONDS * 10)
+
+    assert tracker.snapshot()["active"] is True
 
 
 # --------------------------------------------------------------------------- #

@@ -13,11 +13,19 @@ Four things keep this robust across deployments:
   composite headers whose value is a comma-separated list of ``key=value``
   pairs::
 
-      Ai-App-User-Context: email=jane@grip.org,given_name=Jane,family_name=Doe,sub=abc-123
+      Ai-App-User-Context: email=jane@grip.org,given_name=Jane,family_name=Doe,sub=abc-123,iss=https://keycloak/realms/grip
       Ai-App-Workspace-Context: uuid=6f1c0e9e-...
 
   ``sub`` is the stable subject id, and is what preferences, run records and
   chat threads are keyed by; ``uuid`` scopes that user to one workspace.
+  ``iss`` is optional and, when sent, is folded into the storage key: a subject
+  id is unique within an issuer's realm rather than globally, so the pair is
+  what survives an IdP change. It must be sent from the first deployment or not
+  at all - introducing it later re-keys every existing user (see
+  :meth:`UserIdentity.storage_key`).
+
+  Values are read as CSV: a value containing a comma may be quoted, and a
+  literal quote inside a quoted value is doubled per RFC 4180.
 * **Other gateways still work, and header names stay configurable.** Every
   field also has a list of single-value header names (oauth2-proxy,
   Envoy/ext_authz, generic reverse proxies), consulted for whatever the context
@@ -59,6 +67,7 @@ _DEFAULT_WORKSPACE_CONTEXT_HEADERS = ("ai-app-workspace-context",)
 
 # Keys inside those headers, per the GRIP specification.
 _CONTEXT_SUBJECT_KEY = "sub"
+_CONTEXT_ISSUER_KEY = "iss"
 _CONTEXT_EMAIL_KEY = "email"
 _CONTEXT_GIVEN_NAME_KEY = "given_name"
 _CONTEXT_FAMILY_NAME_KEY = "family_name"
@@ -83,6 +92,12 @@ _DEFAULT_WORKSPACE_HEADERS = (
     "x-workspace-id",
     "x-auth-request-workspace-id",
     "x-grip-workspace-id",
+)
+# The OIDC issuer. ``sub`` is unique only within one issuer's realm, so a
+# deployment that may ever change IdP needs both to key storage safely.
+_DEFAULT_ISSUER_HEADERS = (
+    "x-auth-request-issuer",
+    "x-auth-issuer",
 )
 
 _EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
@@ -184,16 +199,29 @@ def _first_present(headers: Mapping[str, str], names: Iterable[str]) -> str | No
 def _split_context_pairs(value: str) -> list[str]:
     """Split a context header on commas, ignoring commas inside double quotes.
 
-    The specification gives no escaping rule, but a family name legitimately
-    contains a comma ("Smith, Jr."), and a gateway that quotes such a value
-    would otherwise have it silently truncated. Unquoted values behave exactly
-    like a plain ``split(",")``, so this costs nothing in the ordinary case.
+    A family name legitimately contains a comma ("Smith, Jr."), and a gateway
+    that quotes such a value would otherwise have it silently truncated.
+    Unquoted values behave exactly like a plain ``split(",")``, so this costs
+    nothing in the ordinary case.
+
+    The gateway states it emits valid CSV, so a literal quote inside a quoted
+    value arrives doubled per RFC 4180 (``"Smith ""Bud"", Jr."``). A doubled
+    quote is consumed as one character and does not end the quoting; the pair is
+    collapsed in :func:`parse_context_header` once the surrounding quotes come
+    off. If the gateway settles on backslash escaping instead, this is the one
+    function that changes.
     """
     parts: list[str] = []
     current: list[str] = []
     in_quotes = False
-    for char in value:
+    index = 0
+    while index < len(value):
+        char = value[index]
         if char == '"':
+            if in_quotes and value[index + 1 : index + 2] == '"':
+                current.append('""')
+                index += 2
+                continue
             in_quotes = not in_quotes
             current.append(char)
         elif char == "," and not in_quotes:
@@ -201,6 +229,7 @@ def _split_context_pairs(value: str) -> list[str]:
             current = []
         else:
             current.append(char)
+        index += 1
     parts.append("".join(current))
     return parts
 
@@ -215,7 +244,8 @@ def parse_context_header(value: str | None) -> dict[str, str]:
       example has a space after one of the commas);
     * a value may itself contain ``=`` (base64-ish subject ids do), so only the
       first one separates key from value;
-    * optional surrounding double quotes are removed;
+    * optional surrounding double quotes are removed, and a doubled quote inside
+      them collapses to one (RFC 4180 - see :func:`_split_context_pairs`);
     * fragments with no ``=``, or with an empty key or value, are dropped.
     """
     if not value:
@@ -229,7 +259,7 @@ def parse_context_header(value: str | None) -> dict[str, str]:
         name = key.strip().lower()
         item = raw.strip()
         if len(item) >= 2 and item[0] == '"' and item[-1] == '"':
-            item = item[1:-1].strip()
+            item = item[1:-1].replace('""', '"').strip()
         if name and item:
             fields[name] = item
     return fields
@@ -245,6 +275,9 @@ class UserIdentity:
     """Who the gateway says is calling.
 
     ``user_id`` is the stable subject to key preferences by - GRIP's ``sub``.
+    ``issuer`` is the OIDC ``iss`` that minted it; ``sub`` is unique only within
+    one issuer's realm, so the pair is what actually identifies a person across
+    an IdP change (see :meth:`storage_key`).
     ``email``, ``given_name`` and ``family_name`` are for display only; never
     build storage paths from them directly (see :meth:`storage_key`).
     ``workspace_id`` - GRIP's workspace ``uuid`` - scopes a user's preferences to
@@ -257,6 +290,7 @@ class UserIdentity:
     workspace_id: str | None = None
     given_name: str | None = None
     family_name: str | None = None
+    issuer: str | None = None
     source: str = "anonymous"  # "headers" | "local" | "anonymous"
 
     @property
@@ -303,10 +337,21 @@ class UserIdentity:
         if not raw:
             return "anonymous"
 
-        digest = hashlib.sha256(raw.encode("utf-8")).hexdigest()[:10]
+        # Scoped to the issuer when the gateway names one: a subject id is
+        # unique within an IdP realm, not globally, so two realms could
+        # otherwise mint the same ``sub`` for two different people and hand one
+        # the other's preferences and run history.
+        #
+        # Note this changes the key. A gateway that starts sending ``iss`` after
+        # go-live re-keys every existing user, who then silently finds an empty
+        # history - so it must be sent from the first deployment or not at all.
+        keyed = f"{self.issuer}|{raw}" if self.issuer else raw
+        digest = hashlib.sha256(keyed.encode("utf-8")).hexdigest()[:10]
         if _EMAIL_RE.match(raw):
             return f"u-{digest}"
 
+        # The readable half stays derived from the subject alone: it is there to
+        # make a directory listing navigable, and issuer URLs slug into noise.
         slug = _SLUG_UNSAFE_RE.sub("-", raw.lower()).strip("-._")[:40]
         return f"{slug}-{digest}" if slug else f"u-{digest}"
 
@@ -349,6 +394,9 @@ def identity_from_headers(source: Any) -> UserIdentity | None:
     workspace_id = workspace_context.get(_CONTEXT_WORKSPACE_KEY) or _first_present(
         headers, _header_candidates("BIOMNI_AUTH_WORKSPACE_HEADER", _DEFAULT_WORKSPACE_HEADERS)
     )
+    issuer = user_context.get(_CONTEXT_ISSUER_KEY) or _first_present(
+        headers, _header_candidates("BIOMNI_AUTH_ISSUER_HEADER", _DEFAULT_ISSUER_HEADERS)
+    )
 
     if not (user_id or email):
         return None
@@ -359,6 +407,7 @@ def identity_from_headers(source: Any) -> UserIdentity | None:
         workspace_id=workspace_id,
         given_name=user_context.get(_CONTEXT_GIVEN_NAME_KEY),
         family_name=user_context.get(_CONTEXT_FAMILY_NAME_KEY),
+        issuer=issuer,
         source="headers",
     )
 

@@ -422,3 +422,75 @@ def test_a_real_gateway_identity_still_wins_over_single_user_mode(monkeypatch):
     who = identity.resolve_identity({"x-user-id": "u1"}, session_id="s1")
     assert who.source == "headers"
     assert who.user_id == "u1"
+
+
+# --------------------------------------------------------------------------- #
+# Issuer scoping and CSV escaping (confirmed with the GRIP gateway team)
+# --------------------------------------------------------------------------- #
+
+
+def test_issuer_is_read_from_the_user_context_header():
+    ident = identity.identity_from_headers(
+        {"ai-app-user-context": "sub=abc-123,iss=https://keycloak/realms/grip,email=jane@grip.org"}
+    )
+    assert ident is not None
+    assert ident.user_id == "abc-123"
+    assert ident.issuer == "https://keycloak/realms/grip"
+
+
+def test_issuer_falls_back_to_a_single_value_header():
+    ident = identity.identity_from_headers(
+        {"x-auth-request-user-id": "abc-123", "x-auth-request-issuer": "https://idp.example/realms/r"}
+    )
+    assert ident is not None
+    assert ident.issuer == "https://idp.example/realms/r"
+
+
+def test_the_same_subject_from_two_issuers_gets_different_keys():
+    """``sub`` is unique within a realm, not globally.
+
+    Without this, changing IdP could hand one person another person's stored
+    preferences and run history.
+    """
+    one = identity.UserIdentity(user_id="abc-123", issuer="https://idp-a/realms/r", source="headers")
+    two = identity.UserIdentity(user_id="abc-123", issuer="https://idp-b/realms/r", source="headers")
+
+    assert one.storage_key() != two.storage_key()
+    # The readable half still names the subject; only the digest diverges.
+    assert one.storage_key().startswith("abc-123-")
+    assert two.storage_key().startswith("abc-123-")
+
+
+def test_adding_an_issuer_changes_the_key():
+    """Documents the migration hazard: send ``iss`` from day one or not at all."""
+    without = identity.UserIdentity(user_id="abc-123", source="headers").storage_key()
+    with_iss = identity.UserIdentity(user_id="abc-123", issuer="https://idp/realms/r", source="headers").storage_key()
+
+    assert without != with_iss
+
+
+def test_issuer_does_not_leak_into_the_key_when_absent():
+    assert (
+        identity.UserIdentity(user_id="abc-123", source="headers").storage_key()
+        == identity.UserIdentity(user_id="abc-123", issuer=None, source="headers").storage_key()
+    )
+
+
+def test_quoted_value_keeps_its_comma():
+    fields = identity.parse_context_header('sub=abc-123,family_name="Smith, Jr.",email=j@grip.org')
+    assert fields["family_name"] == "Smith, Jr."
+    assert fields["sub"] == "abc-123"
+    assert fields["email"] == "j@grip.org"
+
+
+def test_doubled_quote_inside_a_quoted_value_collapses():
+    """RFC 4180 escaping, which is what "valid CSV" from the gateway means."""
+    fields = identity.parse_context_header('sub=abc-123,given_name="Smith ""Bud"", Jr."')
+    assert fields["given_name"] == 'Smith "Bud", Jr.'
+    assert fields["sub"] == "abc-123"
+
+
+def test_a_quoted_value_containing_an_equals_survives():
+    fields = identity.parse_context_header('sub="a=b,c=d",email=j@grip.org')
+    assert fields["sub"] == "a=b,c=d"
+    assert fields["email"] == "j@grip.org"
