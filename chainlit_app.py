@@ -23,6 +23,7 @@ import sys
 import threading
 import time
 import uuid
+import zipfile
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field, replace
 from pathlib import Path
@@ -1839,6 +1840,59 @@ async def _save_ad1_artifacts(agent, final_state: dict, initial_files: set):
     await _save_run_artifacts_for_agent(agent, final_state, initial_files)
 
 
+# How large a run may be before it is offered as a path rather than a download.
+# A single run can write a multi-GB intermediate; zipping and serving that would
+# stall the app and the browser rather than help anyone.
+MAX_PACKAGE_BYTES = max(1, int(os.getenv("BIOMNI_MAX_PACKAGE_MB", "200"))) * 1024 * 1024
+
+
+def _package_run_dir(run_dir: str, run_id: str) -> tuple[str | None, str]:
+    """Zip a finished run so the user can take it away. Returns ``(path, note)``.
+
+    The run directory lives on the server, so telling somebody its path is only
+    useful if they have a shell there - which a demo attendee, or anyone on the
+    hosted deployment, does not. This turns the same directory into one download.
+
+    The archive is written to a hidden ``.packages`` sibling rather than inside
+    the run directory, so it never ends up inside the next archive of itself and
+    never shows up in the run's own file listing (``get_all_files`` skips dotted
+    directories).
+    """
+    if not run_dir or not os.path.isdir(run_dir):
+        return None, "no run directory"
+
+    files: list[str] = []
+    total = 0
+    for root, dirs, names in os.walk(run_dir):
+        dirs[:] = [d for d in dirs if not d.startswith(".")]
+        for name in names:
+            if name.startswith("."):
+                continue
+            path = os.path.join(root, name)
+            try:
+                total += os.path.getsize(path)
+            except OSError:
+                continue
+            files.append(path)
+
+    if not files:
+        return None, "the run produced no files"
+    if total > MAX_PACKAGE_BYTES:
+        return None, f"{len(files)} files, {total / 1e6:.0f} MB - too large to package"
+
+    packages_dir = os.path.join(os.path.dirname(run_dir), ".packages")
+    os.makedirs(packages_dir, exist_ok=True)
+    archive = os.path.join(packages_dir, f"{run_id}.zip")
+    try:
+        with zipfile.ZipFile(archive, "w", zipfile.ZIP_DEFLATED) as bundle:
+            for path in files:
+                bundle.write(path, arcname=os.path.join(run_id, os.path.relpath(path, run_dir)))
+    except Exception:
+        logger.exception("could not package run %s", run_id)
+        return None, "packaging failed"
+    return archive, f"{len(files)} files, {os.path.getsize(archive) / 1e6:.1f} MB"
+
+
 async def _save_run_artifacts_for_agent(
     agent,
     final_state: dict,
@@ -1872,7 +1926,19 @@ async def _save_run_artifacts_for_agent(
             logger.exception("Artifact saving failed for run %s", run_id)
             step.output = f"⚠️ Artifact saving failed: {exc}"
 
-    await cl.Message(content=f"**Run complete.** Artifacts saved to:\n`{current_run_dir}`").send()
+    # Offer the whole run as one download. The path below is on the server, so
+    # for anyone without a shell there the attachment is the only way to get the
+    # report, the notebook and the generated files off the box.
+    archive, note = await run_in_executor(_package_run_dir, current_run_dir, run_id)
+    if archive:
+        await cl.Message(
+            content=f"**Run complete.** Download everything this run produced ({note}), or find it on the server at `{current_run_dir}`.",
+            elements=[cl.File(name=f"{run_id}.zip", path=archive, display="inline")],
+        ).send()
+    else:
+        await cl.Message(
+            content=f"**Run complete.** Artifacts saved to:\n`{current_run_dir}`\n\n_No download offered: {note}._"
+        ).send()
 
 
 # ---------------------------------------------------------------------------
