@@ -16,6 +16,31 @@ import threading
 import pytest
 from biomni import credentials
 
+
+@pytest.fixture(autouse=True)
+def _reset_override_cache() -> None:
+    """The allow/extra lists are cached on first read; start every test cold.
+
+    They are cached deliberately - see is_credential - so that generated code
+    cannot set BIOMNI_SCRUB_ENV_ALLOW inside one window and read the key in the
+    next. That makes them process state, and process state has to be reset
+    between tests or the first one to touch them decides for the rest.
+    """
+    # Snapshot the override variables too: they are deliberately *not*
+    # credential-shaped (that is the hazard one test below exercises), so a test
+    # simulating generated code writes them directly and monkeypatch cannot undo
+    # what it did not set.
+    saved = {name: os.environ.get(name) for name in (credentials._ALLOW_ENV, credentials._EXTRA_ENV)}
+    credentials._name_set.cache_clear()
+    yield
+    for name, value in saved.items():
+        if value is None:
+            os.environ.pop(name, None)
+        else:
+            os.environ[name] = value
+    credentials._name_set.cache_clear()
+
+
 # --------------------------------------------------------------------------- #
 # Classification
 # --------------------------------------------------------------------------- #
@@ -34,7 +59,6 @@ from biomni import credentials
         "AWS_ACCESS_KEY_ID",
         "AWS_SECRET_ACCESS_KEY",
         "SYNAPSE_AUTH_TOKEN",
-        "CHAINLIT_AUTH_SECRET",
         "PROTOCOLS_IO_ACCESS_TOKEN",
         "BIOMNI_CUSTOM_API_KEY",
         "DB_PASSWORD",
@@ -64,6 +88,118 @@ def test_credential_shaped_names_are_scrubbed(name: str) -> None:
 )
 def test_non_secret_names_stay_visible(name: str) -> None:
     assert not credentials.is_credential(name)
+
+
+def test_the_session_signing_secret_is_never_hidden() -> None:
+    """Chainlit re-reads it on every JWT operation.
+
+    Hiding it does not protect it - chainlit_ui/persistence.py writes it to
+    $BIOMNI_STATE_DIR/threads/auth_secret, so generated code can read it off disk
+    either way - but it does break the process: while one chat ran a code step,
+    every other user reconnecting or resuming a thread hit `assert secret` and
+    got a 500.
+    """
+    assert not credentials.is_credential("CHAINLIT_AUTH_SECRET")
+
+
+def test_an_exempt_name_stays_in_the_environment(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("CHAINLIT_AUTH_SECRET", "signing-key")
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-secret")
+
+    with credentials.scrubbed_environ():
+        assert os.environ.get("CHAINLIT_AUTH_SECRET") == "signing-key"
+        assert os.environ.get("ANTHROPIC_API_KEY") is None
+
+
+def test_the_allowlist_cannot_be_re_armed_at_run_time(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A snippet must not be able to disable the scrub for everyone else.
+
+    Neither override variable is credential-shaped, so both stay writable from
+    inside a window. Reading them once is what stops
+    `os.environ['BIOMNI_SCRUB_ENV_ALLOW']='ANTHROPIC_API_KEY'` in one execution
+    from exposing the key in the next - process-wide, for every other chat.
+    """
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-secret")
+    assert credentials.is_credential("ANTHROPIC_API_KEY")
+
+    # what generated code would attempt, mid-window
+    with credentials.scrubbed_environ():
+        os.environ["BIOMNI_SCRUB_ENV_ALLOW"] = "ANTHROPIC_API_KEY"
+
+    assert credentials.is_credential("ANTHROPIC_API_KEY"), "the allowlist was re-armed from inside a window"
+    with credentials.scrubbed_environ():
+        assert os.environ.get("ANTHROPIC_API_KEY") is None
+
+
+def test_a_timed_out_execution_cannot_leak_the_window_open(monkeypatch: pytest.MonkeyPatch) -> None:
+    """run_with_timeout abandons threads it cannot kill.
+
+    A nested window in an abandoned thread never runs its finally, so a plain
+    decrement would leave the process permanently stripped of its credentials -
+    including the ones the server itself needs.
+    """
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-secret")
+
+    opened = threading.Event()
+
+    def abandoned() -> None:
+        # A thread that enters a window and never leaves - what run_with_timeout
+        # gives up on when a snippet blocks in C and PyThreadState_SetAsyncExc
+        # cannot reach it.
+        # Bound to a local, not left as a temporary: an unreferenced context
+        # manager is collected as soon as __enter__ returns, and closing the
+        # generator runs the very finally this test needs not to run. The frame
+        # stays alive while the thread blocks, which is what keeps it open.
+        window = credentials.scrubbed_environ()
+        window.__enter__()
+        opened.set()
+        threading.Event().wait(30)
+        del window
+
+    worker = threading.Thread(target=abandoned, daemon=True)
+    worker.start()
+    opened.wait(5)
+
+    assert credentials.scrub_active()
+    assert os.environ.get("ANTHROPIC_API_KEY") is None
+
+    released = credentials.release_thread(worker.ident)
+
+    assert released == 1
+    assert not credentials.scrub_active(), "window stayed open after the thread was abandoned"
+    assert os.environ["ANTHROPIC_API_KEY"] == "sk-ant-secret"
+
+
+def test_releasing_one_thread_leaves_another_thread_window_intact(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Two chats, one times out: the other must stay protected.
+
+    Resetting the global depth would have restored the credentials underneath a
+    chat still executing model-written code.
+    """
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-secret")
+    opened = threading.Event()
+
+    def abandoned() -> None:
+        # Bound to a local, not left as a temporary: an unreferenced context
+        # manager is collected as soon as __enter__ returns, and closing the
+        # generator runs the very finally this test needs not to run. The frame
+        # stays alive while the thread blocks, which is what keeps it open.
+        window = credentials.scrubbed_environ()
+        window.__enter__()
+        opened.set()
+        threading.Event().wait(30)
+        del window
+
+    worker = threading.Thread(target=abandoned, daemon=True)
+    worker.start()
+    opened.wait(5)
+
+    with credentials.scrubbed_environ():
+        credentials.release_thread(worker.ident)
+        assert credentials.scrub_active(), "the surviving window was closed by the other thread's cleanup"
+        assert os.environ.get("ANTHROPIC_API_KEY") is None
+
+    assert os.environ["ANTHROPIC_API_KEY"] == "sk-ant-secret"
 
 
 def test_extra_and_allow_overrides(monkeypatch: pytest.MonkeyPatch) -> None:

@@ -56,6 +56,7 @@ changes.
 from __future__ import annotations
 
 import contextlib
+import functools
 import logging
 import os
 import threading
@@ -94,12 +95,29 @@ _CREDENTIAL_NAMES = frozenset(
     }
 )
 
+# Secrets the server itself re-reads at request time. Hiding these does not
+# protect them - CHAINLIT_AUTH_SECRET is persisted to
+# ``$BIOMNI_STATE_DIR/threads/auth_secret`` by chainlit_ui/persistence.py, so
+# generated code can read it off disk whatever the environment says - but it
+# does break the process: Chainlit calls ``get_jwt_secret()`` on every JWT
+# operation, so while one chat ran a code step, every other user reconnecting or
+# resuming a thread hit ``assert secret`` and got a 500.
+_NEVER_SCRUBBED = frozenset({"CHAINLIT_AUTH_SECRET"})
+
 _EXTRA_ENV = "BIOMNI_SCRUB_ENV_EXTRA"
 _ALLOW_ENV = "BIOMNI_SCRUB_ENV_ALLOW"
 
 
+@functools.lru_cache(maxsize=4)
 def _name_set(env_name: str) -> frozenset[str]:
-    """Parse a comma-separated env override into a set of upper-cased names."""
+    """Parse a comma-separated env override into a set of upper-cased names.
+
+    Cached on first read, and deliberately so. Neither override name is itself
+    credential-shaped, so without this a snippet could set
+    ``BIOMNI_SCRUB_ENV_ALLOW=ANTHROPIC_API_KEY`` inside one window and read the
+    key in the next - process-wide, disabling the scrub for every other chat.
+    Configuration is a deployment decision, not something a prompt gets to make.
+    """
     raw = os.getenv(env_name, "")
     return frozenset(part.strip().upper() for part in raw.split(",") if part.strip())
 
@@ -114,7 +132,7 @@ def is_credential(name: str) -> bool:
     the scrub wholesale.
     """
     upper = name.upper()
-    if upper in _name_set(_ALLOW_ENV):
+    if upper in _NEVER_SCRUBBED or upper in _name_set(_ALLOW_ENV):
         return False
     if upper in _CREDENTIAL_NAMES or upper in _name_set(_EXTRA_ENV):
         return True
@@ -125,7 +143,21 @@ def is_credential(name: str) -> bool:
 # is never held across the caller's block - only across the strip and restore.
 _lock = threading.Lock()
 _depth = 0
+# Windows currently open per thread. Reference counting alone is correct while
+# every window is closed by the thread that opened it, but ``run_with_timeout``
+# abandons threads it cannot kill, and an abandoned increment would leave the
+# process permanently stripped. :func:`release_thread` lets the survivor drop
+# exactly the abandoned thread's share - resetting the global count instead
+# would clobber a window another chat still has open.
+_thread_depth: dict[int, int] = {}
 _stashed: dict[str, str] = {}
+
+
+def _restore_locked() -> None:
+    """Put the credentials back. Caller holds the lock and has seen depth reach 0."""
+    for name, value in _stashed.items():
+        os.environ[name] = value
+    _stashed.clear()
 
 
 @contextlib.contextmanager
@@ -138,6 +170,7 @@ def scrubbed_environ() -> Iterator[frozenset[str]]:
     """
     global _depth
 
+    ident = threading.get_ident()
     with _lock:
         hidden: frozenset[str] = frozenset()
         if _depth == 0:
@@ -147,16 +180,21 @@ def scrubbed_environ() -> Iterator[frozenset[str]]:
             if hidden:
                 logger.debug("scrubbed %d credential variable(s) for code execution", len(hidden))
         _depth += 1
+        _thread_depth[ident] = _thread_depth.get(ident, 0) + 1
 
     try:
         yield hidden
     finally:
         with _lock:
             _depth -= 1
-            if _depth == 0:
-                for name, value in _stashed.items():
-                    os.environ[name] = value
-                _stashed.clear()
+            remaining = _thread_depth.get(ident, 1) - 1
+            if remaining > 0:
+                _thread_depth[ident] = remaining
+            else:
+                _thread_depth.pop(ident, None)
+            if _depth <= 0:
+                _depth = 0
+                _restore_locked()
 
 
 def getenv(name: str, default: str | None = None) -> str | None:
@@ -172,10 +210,32 @@ def getenv(name: str, default: str | None = None) -> str | None:
     return os.environ.get(name, default)
 
 
+def release_thread(ident: int | None) -> int:
+    """Drop any windows left open by thread ``ident``. Returns how many.
+
+    Called by :func:`biomni.utils.run_with_timeout` after a timeout, because the
+    thread it gave up on may have been inside a window and will never run its
+    own ``finally``. Only that thread's share is released, so a window another
+    chat is still inside is untouched.
+    """
+    global _depth
+    if ident is None:
+        return 0
+    with _lock:
+        orphaned = _thread_depth.pop(ident, 0)
+        if not orphaned:
+            return 0
+        _depth = max(0, _depth - orphaned)
+        if _depth == 0:
+            _restore_locked()
+    logger.warning("released %d credential scrub window(s) left open by an abandoned thread", orphaned)
+    return orphaned
+
+
 def scrub_active() -> bool:
     """Whether a scrub window is currently open. Diagnostics and tests only."""
     with _lock:
         return _depth > 0
 
 
-__all__ = ["getenv", "is_credential", "scrub_active", "scrubbed_environ"]
+__all__ = ["getenv", "is_credential", "release_thread", "scrub_active", "scrubbed_environ"]

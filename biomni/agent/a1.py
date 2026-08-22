@@ -30,6 +30,7 @@ from biomni.artifact import (
     summarize_topic_for_run_id as _shared_summarize_topic_for_run_id,
 )
 from biomni.config import default_config, resolve_data_lake_root
+from biomni.credentials import scrubbed_environ
 from biomni.env_probe import filter_library_catalog
 from biomni.fs_scan import scan_directory
 from biomni.know_how import KnowHowLoader
@@ -136,7 +137,12 @@ class A1:
             print("🎓 Academic mode: Using all datasets (including non-commercial)")
 
         # Store as instance attributes for later use
-        self.data_lake_dict = data_lake_dict
+        # Copied for the same reason as the catalogue below: A1 mutates this
+        # dict (add_data / remove_data, upload registration), and it comes
+        # straight from biomni.env_desc - so aliasing it let one chat's
+        # uploaded filenames leak into the system prompt of every agent built
+        # afterwards in the process.
+        self.data_lake_dict = dict(data_lake_dict)
         # Narrowed to what this deployment actually has. The catalogue describes
         # the reference environment, and the system prompt tells the model to
         # prefer locally installed libraries - so anything advertised but absent
@@ -2222,7 +2228,13 @@ Each library is listed with its description to help you understand its functiona
                 executed_code = code
                 _exec_started = time.monotonic()
 
-                # Check if the code is R code
+                # Every language path below runs inside scrubbed_environ(), not
+                # just Python: the model only has to prefix a snippet with #!CLI
+                # to get a shell, and `printenv ANTHROPIC_API_KEY` would
+                # otherwise hand the key straight back in the tool result. The
+                # window is opened here rather than inside the executor because
+                # run_with_timeout abandons a thread it cannot kill - a window
+                # opened in that thread would never be closed.
                 if (
                     code.strip().startswith("#!R")
                     or code.strip().startswith("# R code")
@@ -2232,7 +2244,8 @@ Each library is listed with its description to help you understand its functiona
                     # Remove the R marker and run as R code
                     r_code = re.sub(r"^#!R|^# R code|^# R script", "", code, count=1).strip()
                     executed_code = r_code
-                    result = run_with_timeout(run_r_code, [r_code], timeout=timeout)
+                    with scrubbed_environ():
+                        result = run_with_timeout(run_r_code, [r_code], timeout=timeout)
                 # Check if the code is a Bash script or CLI command
                 elif (
                     code.strip().startswith("#!BASH")
@@ -2247,13 +2260,15 @@ Each library is listed with its description to help you understand its functiona
                         # Remove any newlines to ensure it's a single command
                         cli_command = cli_command.replace("\n", " ")
                         executed_code = cli_command
-                        result = run_with_timeout(run_bash_script, [cli_command], timeout=timeout)
+                        with scrubbed_environ():
+                            result = run_with_timeout(run_bash_script, [cli_command], timeout=timeout)
                     else:
                         language = "bash"
                         # For Bash scripts, remove the marker and run as a bash script
                         bash_script = re.sub(r"^#!BASH|^# Bash script", "", code, count=1).strip()
                         executed_code = bash_script
-                        result = run_with_timeout(run_bash_script, [bash_script], timeout=timeout)
+                        with scrubbed_environ():
+                            result = run_with_timeout(run_bash_script, [bash_script], timeout=timeout)
                 # Otherwise, run as Python code
                 else:
                     language = "python"
@@ -2262,7 +2277,8 @@ Each library is listed with its description to help you understand its functiona
 
                     # Inject custom functions into the Python execution environment
                     self._inject_custom_functions_to_repl()
-                    result = run_with_timeout(run_python_repl, [code], timeout=timeout)
+                    with scrubbed_environ():
+                        result = run_with_timeout(run_python_repl, [code], timeout=timeout)
 
                     # Plots are now captured directly in the execution entry above
 

@@ -43,8 +43,24 @@ rm -rf "$PREFIX"/share/gcc-* 2>/dev/null || true
 # objdump, ...) is deliberately left alone: it is small next to gcc, and
 # ``ctypes.util.find_library`` shells out to ``ld``/``objdump`` on Linux, so
 # removing it would change how some packages locate shared libraries.
+#
+# That exemption has to be spelled out here, because binutils_linux-64 ships its
+# tools *as* triple-prefixed binaries - ``x86_64-conda-linux-gnu-ld`` is the real
+# file and ``ld`` is a symlink to it. Deleting everything matching the triple
+# would therefore leave ``ld``, ``ar``, ``nm`` and ``objdump`` as dangling
+# symlinks: still present, so a naive existence check passes, and broken.
+# Matched in bash rather than through a `find | grep` pipeline: under
+# `set -o pipefail`, grep exits 1 when find matches nothing, which is the normal
+# case for an environment that never had compilers - and that would abort the
+# script instead of doing nothing.
 if [ -d "$PREFIX/bin" ]; then
-    find "$PREFIX/bin" -maxdepth 1 -name '*-conda-linux-gnu-*' -delete
+    while IFS= read -r f; do
+        case "${f##*-conda-linux-gnu-}" in
+            ld|ar|as|nm|ranlib|strip|objcopy|objdump|readelf|size|strings) continue ;;
+            addr2line|c++filt|elfedit|gprof|ld.bfd|ld.gold|dwp|gp-display-html) continue ;;
+        esac
+        rm -f "$f"
+    done < <(find "$PREFIX/bin" -maxdepth 1 -name '*-conda-linux-gnu-*')
     for tool in cc c++ cpp gcc g++ gfortran; do
         rm -f "$PREFIX/bin/$tool"
     done

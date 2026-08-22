@@ -174,20 +174,37 @@ def test_env_flag_disables_filtering(monkeypatch: pytest.MonkeyPatch) -> None:
     assert env_probe.filter_library_catalog(CATALOG) == CATALOG
 
 
-def test_detecting_nothing_leaves_the_catalogue_alone(
+def test_an_implausibly_small_result_leaves_the_catalogue_alone(
     monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
 ) -> None:
-    """A probe that resolves nothing is broken, not proof of an empty image.
+    """A probe that resolves almost nothing is broken, not proof of an empty image.
 
-    Handing the agent an empty toolbox would be a worse failure than
-    over-advertising, so the filter fails open and says so.
+    The guard is a proportion rather than "zero" deliberately: numpy, pandas and
+    pyarrow are hard dependencies of the package and are catalogue entries, so
+    anything able to import biomni resolves at least those three and an
+    is-it-empty check could never fire. Handing the agent a near-empty toolbox
+    would be a worse failure than over-advertising, so the filter fails open.
     """
     monkeypatch.setattr(env_probe, "is_available", lambda name: False)
 
     with caplog.at_level("WARNING", logger="biomni.env_probe"):
         assert env_probe.filter_library_catalog(CATALOG) == CATALOG
 
-    assert any("no advertised library could be detected" in r.message for r in caplog.records)
+    assert any("looks like a broken probe" in r.message for r in caplog.records)
+
+
+def test_the_guard_fires_even_when_the_hard_dependencies_resolve(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """The case an is-it-empty guard would have missed entirely."""
+    catalog = {f"lib{i}": "x" for i in range(113)} | {"numpy": "core", "pandas": "core", "pyarrow": "core"}
+    monkeypatch.setattr(env_probe, "is_available", lambda name: name in {"numpy", "pandas", "pyarrow"})
+
+    with caplog.at_level("WARNING", logger="biomni.env_probe"):
+        result = env_probe.filter_library_catalog(catalog)
+
+    assert result == catalog, "3 of 116 should trip the guard, not silently hide 113 entries"
+    assert any("looks like a broken probe" in r.message for r in caplog.records)
 
 
 def test_empty_catalogue_is_returned_unchanged() -> None:

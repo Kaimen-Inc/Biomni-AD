@@ -35,6 +35,7 @@ import logging
 import os
 import sys
 import threading
+import time
 from collections import OrderedDict
 from io import StringIO
 
@@ -49,22 +50,54 @@ logger = logging.getLogger(__name__)
 # "variables persist between calls" contract those callers rely on.
 _DEFAULT_SESSION = "__default__"
 
+
 # Upper bound on retained session state. Chat sessions end without a reliable
 # callback (a closed tab never says goodbye), so the registry evicts the least
 # recently used entry instead of trusting a teardown hook to fire. On any real
 # deployment the cap is never reached; it exists so a long-lived server cannot
 # grow a namespace per visitor forever.
-_MAX_SESSIONS = max(1, int(os.getenv("BIOMNI_MAX_REPL_SESSIONS", "32")))
+def _positive_int(env_name: str, default: int) -> int:
+    """An int from the environment, never fatal.
+
+    Parsed at import, so an unparseable value - a typo, or a ConfigMap key with
+    an empty value - would otherwise raise on ``import biomni.tool.support_tools``
+    and the app would never boot. Matching the guards biomni/status.py already
+    has for its own windows.
+    """
+    raw = os.getenv(env_name, "").strip()
+    if not raw:
+        return default
+    try:
+        value = int(raw)
+    except ValueError:
+        logger.warning("ignoring invalid %s=%r; using %d", env_name, raw, default)
+        return default
+    if value < 1:
+        logger.warning("ignoring non-positive %s=%r; using %d", env_name, raw, default)
+        return default
+    return value
+
+
+_MAX_SESSIONS = _positive_int("BIOMNI_MAX_REPL_SESSIONS", 32)
+
+
+# How long a session's state is protected from eviction, regardless of how many
+# other chats have run since. The cap below bounds memory; this bounds the
+# damage, because eviction is silent from the user's side: their next step comes
+# back "name 'adata' is not defined" for a frame they correctly believe they
+# loaded.
+_SESSION_TTL_SECONDS = max(0.0, float(os.getenv("BIOMNI_REPL_SESSION_TTL_SECONDS", str(6 * 60 * 60))))
 
 
 class _ReplSession:
     """Per-chat execution state: the exec namespace and captured plots."""
 
-    __slots__ = ("namespace", "plots")
+    __slots__ = ("last_used", "namespace", "plots")
 
-    def __init__(self) -> None:
+    def __init__(self, now: float) -> None:
         self.namespace: dict = {}
         self.plots: list[str] = []
+        self.last_used: float = now
 
 
 _sessions: OrderedDict[str, _ReplSession] = OrderedDict()
@@ -81,17 +114,48 @@ def current_session_key() -> str:
     return session_id_var.get() or _DEFAULT_SESSION
 
 
+def _evict_locked(now: float) -> None:
+    """Bring the registry back under the cap. Caller holds the lock.
+
+    Idle entries go first, oldest first. A session is "idle" only once it has
+    gone ``_SESSION_TTL_SECONDS`` without being touched, so a researcher reading
+    a result for twenty minutes is not evicted merely because a busy deployment
+    ran thirty other chats meanwhile - which is the same user the status
+    endpoint's open-session window exists to protect, and evicting them here
+    would undo that protection one layer down.
+
+    If nothing is idle the cap still has to hold, so the least-recently-used
+    live session is dropped - but at WARNING, because that one costs somebody
+    their working state and means the cap is set too low for the deployment.
+    """
+    while len(_sessions) > _MAX_SESSIONS:
+        key, session = next(iter(_sessions.items()))
+        idle_for = now - session.last_used
+        if idle_for >= _SESSION_TTL_SECONDS:
+            _sessions.pop(key)
+            logger.info("released idle REPL session state (key=%s, idle=%.0fs)", key, idle_for)
+        else:
+            _sessions.pop(key)
+            logger.warning(
+                "evicted REPL session state that was still in use (key=%s, idle=%.0fs); "
+                "raise BIOMNI_MAX_REPL_SESSIONS above %d - that chat's variables are gone",
+                key,
+                idle_for,
+                _MAX_SESSIONS,
+            )
+
+
 def _session() -> _ReplSession:
     key = current_session_key()
+    now = time.monotonic()
     with _sessions_lock:
         session = _sessions.get(key)
         if session is None:
-            session = _ReplSession()
+            session = _ReplSession(now)
             _sessions[key] = session
-            while len(_sessions) > _MAX_SESSIONS:
-                evicted, _ = _sessions.popitem(last=False)
-                logger.info("evicted least-recently-used REPL session state (key=%s)", evicted)
+            _evict_locked(now)
         else:
+            session.last_used = now
             _sessions.move_to_end(key)
         return session
 
@@ -153,15 +217,33 @@ class _StdoutRouter(io.TextIOBase):
         return True
 
 
+_router_lock = threading.Lock()
+
+
 def _ensure_stdout_router() -> None:
     """Install the router, re-wrapping if something else replaced ``sys.stdout``.
 
     Self-healing rather than install-once: Chainlit, uvicorn or a notebook may
     install their own stream after we do, and a router still pointing at a
     superseded fallback would send output nowhere.
+
+    Locked because concurrent chats reach this at the same moment, and an
+    unguarded check-then-set lets both see a foreign stream and wrap it twice -
+    ``router(router(real))``, which observability's single-level ``fallback``
+    unwrap cannot see through, so log records would be captured into whichever
+    snippet happened to be running.
     """
-    if not isinstance(sys.stdout, _StdoutRouter):
-        sys.stdout = _StdoutRouter(sys.stdout)
+    with _router_lock:
+        current = sys.stdout
+        if isinstance(current, _StdoutRouter):
+            return
+        # Unwrap any router already buried under a foreign wrapper so the chain
+        # never nests: routing through a stale router would send output to a
+        # fallback that is no longer the real stream.
+        inner = getattr(current, "fallback", None)
+        while isinstance(inner, _StdoutRouter):
+            current, inner = inner, getattr(inner, "fallback", None)
+        sys.stdout = _StdoutRouter(current)
 
 
 def run_python_repl(command: str) -> str:

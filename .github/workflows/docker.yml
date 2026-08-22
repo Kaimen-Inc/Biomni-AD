@@ -65,9 +65,9 @@ env:
 jobs:
   scope:
     name: Decide build scope
-    # Only consumed by the PR build job, so there is no reason to pay for a
-    # full-history checkout on every push.
-    if: github.event_name == 'pull_request'
+    # Skipped on push, where publish builds the real thing anyway and there is
+    # no reason to pay for a full-history checkout.
+    if: github.event_name != 'push'
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -90,14 +90,19 @@ jobs:
           set -euo pipefail
           if [ "$EVENT" != "pull_request" ]; then
             env_file="$FULL_ENV"; heavy=true
-            reason="push or manual run - building what actually ships"
-          elif git diff --name-only "$BASE_SHA"...HEAD \
-               | grep -qE '^(biomni_env/|docker/|Dockerfile$)'; then
-            env_file="$FULL_ENV"; heavy=true
-            reason="this change can affect the shipped environment"
+            reason="manual run - building what actually ships"
           else
-            env_file="$MINIMAL_ENV"; heavy=false
-            reason="ordinary change - fast canary on the minimal environment"
+            # Collected first rather than piped into grep: `git diff | grep -q`
+            # takes SIGPIPE on a large diff once grep exits early, and pipefail
+            # turns that into a failed step (141).
+            changed=$(git diff --name-only "$BASE_SHA"...HEAD)
+            if printf '%s\n' "$changed" | grep -E '^(biomni_env/|docker/|Dockerfile$|pyproject.toml$)' >/dev/null; then
+              env_file="$FULL_ENV"; heavy=true
+              reason="this change can affect the shipped environment"
+            else
+              env_file="$MINIMAL_ENV"; heavy=false
+              reason="ordinary change - fast canary on the minimal environment"
+            fi
           fi
           echo "env_file=$env_file" >> "$GITHUB_OUTPUT"
           echo "heavy=$heavy" >> "$GITHUB_OUTPUT"
@@ -105,11 +110,11 @@ jobs:
 
   build:
     name: Build (verify Dockerfile)
-    # PRs only. On push the publish job below builds the same image and pushes
-    # it, so running both would build a multi-GB image twice for one commit; a
-    # build failure there fails the job and publishes nothing, which is the
-    # protection this job used to provide.
-    if: github.event_name == 'pull_request'
+    # PRs and manual runs. On push the publish job below builds the same image
+    # and pushes it, so running both would build a multi-GB image twice for one
+    # commit; a build failure there fails the job and publishes nothing, which is
+    # the protection this job used to provide.
+    if: github.event_name != 'push'
     needs: scope
     runs-on: ubuntu-latest
     permissions:

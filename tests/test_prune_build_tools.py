@@ -40,11 +40,8 @@ MUST_SURVIVE = [
     "lib/libgcc_s.so.1",
     "lib/libstdc++.so.6",
     "lib/libgfortran.so.5",
-    "bin/ld",
-    "bin/objdump",
-    "bin/nm",
-    "bin/ar",
 ]
+BINUTILS = ["ld", "ar", "nm", "objdump"]
 
 
 def _make_env(root: Path) -> Path:
@@ -81,6 +78,18 @@ def prefix(tmp_path: Path) -> Path:
         (root / rel).parent.mkdir(parents=True, exist_ok=True)
         (root / rel).write_text("keep me")
 
+    # binutils_linux-64 ships its tools as triple-prefixed binaries and makes the
+    # bare names symlinks to them. Modelling that matters: writing plain files
+    # here hid a prune that deleted the real binaries and left every bare name
+    # dangling - present enough to pass an existence check, and broken.
+    for tool in BINUTILS:
+        real = root / "bin" / f"x86_64-conda-linux-gnu-{tool}"
+        real.write_text("#!/bin/sh\n")
+        link = root / "bin" / tool
+        if link.exists() or link.is_symlink():
+            link.unlink()
+        link.symlink_to(real.name)
+
     return root
 
 
@@ -111,6 +120,13 @@ def test_keeps_the_runtime_libraries_and_binutils(prefix: Path) -> None:
 
     for rel in MUST_SURVIVE:
         assert (prefix / rel).exists(), f"{rel} was removed - compiled extensions would break"
+
+    for tool in BINUTILS:
+        link = prefix / "bin" / tool
+        # .exists() follows the symlink, so this fails on a dangling link - which
+        # is exactly the shape of the bug this guards.
+        assert link.exists(), f"bin/{tool} is gone or dangling - ctypes.util.find_library would break"
+        assert (prefix / "bin" / f"x86_64-conda-linux-gnu-{tool}").exists(), f"binutils {tool} binary was deleted"
 
 
 def test_removes_static_archives(prefix: Path) -> None:

@@ -61,6 +61,11 @@ _ALIASES: dict[str, tuple[str, ...]] = {
     "PyMassSpec": ("PyMassSpec", "pyms"),
 }
 
+# Below this share of the catalogue, assume the probe is broken rather than the
+# environment bare, and fail open. The minimal environment resolves ~9% (10 of
+# 113), so the threshold has to sit under that.
+_MIN_PLAUSIBLE_FRACTION = 0.05
+
 # Probed through R rather than Python. Listed explicitly because there is no way
 # to tell an R package from a Python one by name alone.
 _R_PACKAGES = frozenset(
@@ -193,10 +198,18 @@ def filter_library_catalog(catalog: dict[str, str]) -> dict[str, str]:
         return dict(catalog)
 
     available = _available_names(tuple(catalog))
-    if not available:
+    # A proportion, not "zero". numpy, pandas and pyarrow are hard dependencies
+    # of the package itself and are catalogue entries, so anything that can
+    # import biomni resolves at least those three - an "is it empty" guard could
+    # never fire, and a systemic probe failure would quietly leave the agent with
+    # a handful of tools instead of tripping the safety valve.
+    if len(available) < _MIN_PLAUSIBLE_FRACTION * len(catalog):
         logger.warning(
-            "no advertised library could be detected; leaving the catalogue unfiltered. "
-            "Set BIOMNI_ADVERTISE_ALL_LIBRARIES=true to silence this."
+            "only %d of %d advertised libraries were detected, which looks like a broken probe "
+            "rather than a bare environment; leaving the catalogue unfiltered. "
+            "Set BIOMNI_ADVERTISE_ALL_LIBRARIES=true to silence this.",
+            len(available),
+            len(catalog),
         )
         return dict(catalog)
 

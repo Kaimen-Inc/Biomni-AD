@@ -242,6 +242,14 @@ def run_with_timeout(func, args=None, kwargs=None, timeout=600):
         except Exception as e:
             print(f"Error trying to terminate thread: {e}")
 
+        # The thread is abandoned, not stopped, so anything it left open stays
+        # open. A credential scrub window is the one that matters: nobody will
+        # run its finally, and the process would keep running with its
+        # credentials stripped out of os.environ.
+        from biomni.credentials import release_thread
+
+        release_thread(thread_id)
+
         return f"ERROR: Code execution timed out after {timeout} seconds. Please try with simpler inputs or break your task into smaller steps."
 
     # Get the result from the queue if available

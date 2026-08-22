@@ -22,10 +22,24 @@ except Exception:
 # API Configuration
 PROTOCOLS_IO_API_BASE = "https://www.protocols.io/api/v3"
 
-# Resolve access token from env or config (no hardcoded defaults)
-ACCESS_TOKEN = credentials.getenv("PROTOCOLS_IO_ACCESS_TOKEN") or credentials.getenv("BIOMNI_PROTOCOLS_IO_ACCESS_TOKEN")
-if not ACCESS_TOKEN and default_config is not None:
-    ACCESS_TOKEN = getattr(default_config, "protocols_io_access_token", None)
+
+def _access_token() -> str | None:
+    """Resolve the access token from env or config (no hardcoded defaults).
+
+    Resolved per call rather than into a module global. This module is not
+    imported eagerly - ``read_module2api`` only loads ``tool_description.*`` -
+    so its first import is the one model-written code performs inside
+    ``run_python_repl``. A module-level constant would therefore be computed
+    inside :func:`biomni.credentials.scrubbed_environ`, which deliberately reads
+    past the scrub, and would then sit in a module attribute for the rest of the
+    process, readable by any later snippet. Keeping it in a function does not
+    make the process a sandbox (see biomni/credentials.py) but it stops this
+    module handing out a long-lived copy of a value the scrub exists to hide.
+    """
+    token = credentials.getenv("PROTOCOLS_IO_ACCESS_TOKEN") or credentials.getenv("BIOMNI_PROTOCOLS_IO_ACCESS_TOKEN")
+    if not token and default_config is not None:
+        token = getattr(default_config, "protocols_io_access_token", None)
+    return token
 
 
 def search_protocols(
@@ -57,7 +71,8 @@ def search_protocols(
     if not query or not query.strip():
         raise ValueError("Query cannot be empty")
     # Ensure access token is configured
-    if not ACCESS_TOKEN:
+    access_token = _access_token()
+    if not access_token:
         raise ValueError(
             "Protocols.io access token is not configured. Set PROTOCOLS_IO_ACCESS_TOKEN or BIOMNI_PROTOCOLS_IO_ACCESS_TOKEN env var, or configure BiomniConfig.protocols_io_access_token."
         )
@@ -65,7 +80,7 @@ def search_protocols(
     # Construct API request
     url = "https://www.protocols.io/api/v3/protocols"
 
-    headers = {"Authorization": f"Bearer {ACCESS_TOKEN}", "Content-Type": "application/json"}
+    headers = {"Authorization": f"Bearer {access_token}", "Content-Type": "application/json"}
 
     # Prepare search query - wrap in quotes for exact match if requested
     search_key = query.strip()
@@ -148,14 +163,15 @@ def get_protocol_details(protocol_id: int, timeout: int = 30) -> dict[str, Any]:
         requests.RequestException: If API request fails
     """
     # Ensure access token is configured
-    if not ACCESS_TOKEN:
+    access_token = _access_token()
+    if not access_token:
         raise ValueError(
             "Protocols.io access token is not configured. Set PROTOCOLS_IO_ACCESS_TOKEN or BIOMNI_PROTOCOLS_IO_ACCESS_TOKEN env var, or configure BiomniConfig.protocols_io_access_token."
         )
 
     url = f"https://www.protocols.io/api/v3/protocols/{protocol_id}"
 
-    headers = {"Authorization": f"Bearer {ACCESS_TOKEN}", "Content-Type": "application/json"}
+    headers = {"Authorization": f"Bearer {access_token}", "Content-Type": "application/json"}
 
     try:
         response = requests.get(url, headers=headers, timeout=timeout)
