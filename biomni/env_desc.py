@@ -128,6 +128,7 @@ library_content_dict = {
     "umap-learn": "[Python Package] Uniform Manifold Approximation and Projection, a dimension reduction technique.",
     "faiss-cpu": "[Python Package] A library for efficient similarity search and clustering of dense vectors.",
     "harmony-pytorch": "[Python Package] A PyTorch implementation of the Harmony algorithm for integrating single-cell data.",
+    "harmonypy": "[Python Package] The Harmony algorithm for integrating single-cell data across batches, with a C++ backend and no deep-learning dependency. Reachable directly or via scanpy.external.pp.harmony_integrate.",
     # General Bioinformatics & Computational Utilities (Python)
     "tiledb": "[Python Package] A powerful engine for storing and analyzing large-scale genomic data.",
     "tiledbsoma": "[Python Package] A library for working with the SOMA (Stack of Matrices) format using TileDB.",
