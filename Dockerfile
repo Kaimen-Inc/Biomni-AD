@@ -20,7 +20,16 @@
 # ──────────────────────────────────────────────────────────────────────────
 FROM mambaorg/micromamba:1.5.10@sha256:e3797091302382ea841498bc93a7b0a50f7c1448333d5e946d2d1608d0c5f43d AS builder
 
-ARG BIOMNI_ENV_FILE=biomni_env/environment.yml
+# The AD Workbench environment is the default because it is the one that
+# matches what the agent is *told* it has: biomni/env_desc.py advertises ~113
+# libraries to the model and instructs it to prefer locally installed ones.
+# The minimal environment.yml supplies only ten of them, so the agent would
+# routinely write scanpy / gseapy / biopython code that fails at the import.
+# This file costs image size and buys correctness; override it for a small
+# deployment that only needs the chat and pandas-level analysis:
+#
+#   docker build --build-arg BIOMNI_ENV_FILE=biomni_env/environment.yml .
+ARG BIOMNI_ENV_FILE=biomni_env/adworkbench_env.yml
 
 # Run install steps as root inside the builder so cache mounts at
 # system paths work without uid plumbing; the runtime stage drops back

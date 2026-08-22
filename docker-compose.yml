@@ -4,7 +4,8 @@ services:
       context: .
       dockerfile: Dockerfile
       args:
-        BIOMNI_ENV_FILE: biomni_env/environment.yml
+        # Keep in step with the Dockerfile's ARG default; see docs/docker_vm_deployment.md.
+        BIOMNI_ENV_FILE: biomni_env/adworkbench_env.yml
     image: biomni:latest
     env_file:
       - .env

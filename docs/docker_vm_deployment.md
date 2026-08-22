@@ -135,14 +135,25 @@ docker compose up -d
 
 First build can take significant time because the image installs a large Conda stack.
 
-By default, Docker builds with `biomni_env/environment.yml` (more reliable on cloud VMs).
+By default, Docker builds with `biomni_env/adworkbench_env.yml`.
 
-To use the larger `fixed_env.yml` variant instead:
+That is the environment the agent is actually described as having. `biomni/env_desc.py`
+advertises ~113 libraries to the model and the system prompt tells it to prefer locally
+installed ones, so building from the minimal `environment.yml` - which supplies ten of
+them - leaves the agent writing `scanpy` / `gseapy` / `biopython` code that fails at the
+import. The trade is image size for correctness.
+
+For a deployment that only needs the chat and pandas-level analysis, the minimal
+environment is a legitimate choice and builds much faster:
 
 ```bash
-docker-compose build --build-arg BIOMNI_ENV_FILE=biomni_env/adworkbench_env.yml
+docker compose build --build-arg BIOMNI_ENV_FILE=biomni_env/environment.yml
 docker compose up -d
 ```
+
+If you do that, be aware of the mismatch above: consider narrowing
+`library_content_dict` to what you actually ship, or the agent will keep proposing
+libraries that are not there.
 
 ### Common Azure VM build failure (pip wheel build errors)
 
@@ -151,9 +162,10 @@ If you see errors like:
 - `Failed to build annoy biom-format fanc macs2 pybedtools`
 - `critical libmamba pip failed to install packages`
 
-this means the selected Conda env file includes pip packages that are difficult to compile in your VM image.
-
-Use the VM-stable default env explicitly:
+this means the selected Conda env file includes pip packages that need a compiler
+toolchain your VM image does not have. `adworkbench_env.yml` pins conda-forge's
+`compilers` metapackage for exactly this reason, so the default build should be fine;
+if you hit it anyway, fall back to the minimal environment:
 
 ```bash
 docker compose build --no-cache --build-arg BIOMNI_ENV_FILE=biomni_env/environment.yml
