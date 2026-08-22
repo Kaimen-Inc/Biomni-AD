@@ -108,6 +108,30 @@ spec:
             - name: BIOMNI_LOG_REDACT_EMAILS
               value: "true"
 
+            # A finished run is offered to the user as one downloadable archive.
+            # The archives live in a hidden .packages directory beside the runs,
+            # on the same volume, and each roughly duplicates the run it came
+            # from - so they are capped rather than kept forever. Raise only with
+            # the PVC size in mind.
+            - name: BIOMNI_MAX_PACKAGES
+              value: "20"
+            # Runs larger than this are reported by size instead of packaged.
+            - name: BIOMNI_MAX_PACKAGE_MB
+              value: "200"
+
+            # Per-chat REPL state (namespaces holding the user's dataframes) is
+            # held in memory and capped. Each retained session costs whatever
+            # that conversation loaded, so keep it well under the memory limit
+            # below rather than raising it freely.
+            - name: BIOMNI_MAX_REPL_SESSIONS
+              value: "32"
+
+            # NOT set on purpose: BIOMNI_DEMO_PASSWORD. Setting it puts
+            # Chainlit's own login form in front of the app, which is for a
+            # deployment with no gateway. Here the gateway authenticates and
+            # BIOMNI_TRUST_AUTH_HEADERS below is the mechanism; a password would
+            # add a second, weaker door in front of a real one.
+
             # Run artifacts. Without this the app writes to a container-local
             # ./runs and every result is lost on restart. Points at the PVC
             # mounted below; users can override per session in the UI.

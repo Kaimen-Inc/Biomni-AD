@@ -1845,6 +1845,34 @@ async def _save_ad1_artifacts(agent, final_state: dict, initial_files: set):
 # stall the app and the browser rather than help anyone.
 MAX_PACKAGE_BYTES = max(1, int(os.getenv("BIOMNI_MAX_PACKAGE_MB", "200"))) * 1024 * 1024
 
+# How many archives to keep. Each one roughly duplicates the run it came from,
+# and the run directory itself is never deleted, so without a bound the output
+# volume fills about twice as fast forever - on the shipped Kubernetes manifest
+# that is a 20Gi PVC. Archives are pure derived data: dropping an old one costs
+# nothing but regenerating it, and the files it held are still on disk.
+MAX_RETAINED_PACKAGES = max(1, int(os.getenv("BIOMNI_MAX_PACKAGES", "20")))
+
+
+def _prune_packages(packages_dir: str, keep: int) -> int:
+    """Drop all but the ``keep`` newest archives. Returns how many were removed."""
+    try:
+        archives = [os.path.join(packages_dir, name) for name in os.listdir(packages_dir) if name.endswith(".zip")]
+    except OSError:
+        return 0
+    if len(archives) <= keep:
+        return 0
+    archives.sort(key=lambda path: os.path.getmtime(path), reverse=True)
+    removed = 0
+    for stale in archives[keep:]:
+        try:
+            os.remove(stale)
+            removed += 1
+        except OSError:
+            logger.debug("could not remove stale run package %s", stale, exc_info=True)
+    if removed:
+        logger.info("removed %d run package(s) beyond the %d most recent", removed, keep)
+    return removed
+
 
 def _package_run_dir(run_dir: str, run_id: str) -> tuple[str | None, str]:
     """Zip a finished run so the user can take it away. Returns ``(path, note)``.
@@ -1890,6 +1918,7 @@ def _package_run_dir(run_dir: str, run_id: str) -> tuple[str | None, str]:
     except Exception:
         logger.exception("could not package run %s", run_id)
         return None, "packaging failed"
+    _prune_packages(packages_dir, MAX_RETAINED_PACKAGES)
     return archive, f"{len(files)} files, {os.path.getsize(archive) / 1e6:.1f} MB"
 
 

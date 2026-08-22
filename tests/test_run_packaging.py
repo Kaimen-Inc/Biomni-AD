@@ -105,3 +105,42 @@ def test_hidden_files_are_left_out(run_dir: Path) -> None:
 
     with zipfile.ZipFile(archive) as z:
         assert not any(".DS_Store" in n or ".cache" in n for n in z.namelist())
+
+
+def test_old_packages_are_pruned(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Archives duplicate runs that are never deleted, so they must be bounded.
+
+    The shipped Kubernetes manifest points BIOMNI_OUTPUT_ROOT at a 20Gi PVC;
+    unbounded archives would fill it roughly twice as fast as the runs alone.
+    """
+    monkeypatch.setattr(chainlit_app, "MAX_RETAINED_PACKAGES", 3)
+    runs = tmp_path / "runs"
+    made = []
+    for i in range(6):
+        d = runs / f"run_{i:02d}"
+        d.mkdir(parents=True)
+        (d / "report.md").write_text(f"run {i}")
+        archive, _ = chainlit_app._package_run_dir(str(d), d.name)
+        assert archive is not None
+        os.utime(archive, (1_700_000_000 + i, 1_700_000_000 + i))
+        made.append(Path(archive).name)
+
+    kept = sorted(p.name for p in (runs / ".packages").glob("*.zip"))
+
+    assert len(kept) == 3, f"expected 3 retained, got {kept}"
+    assert kept == sorted(made[-3:]), "the newest archives must be the ones kept"
+
+
+def test_pruning_never_removes_the_archive_just_created(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(chainlit_app, "MAX_RETAINED_PACKAGES", 1)
+    runs = tmp_path / "runs"
+    for i in range(3):
+        d = runs / f"run_{i}"
+        d.mkdir(parents=True)
+        (d / "f.txt").write_text("x")
+        archive, _ = chainlit_app._package_run_dir(str(d), d.name)
+        assert Path(archive).exists(), "the run's own package was pruned out from under it"
+
+
+def test_pruning_tolerates_a_missing_directory() -> None:
+    assert chainlit_app._prune_packages("/nonexistent/packages", 5) == 0
