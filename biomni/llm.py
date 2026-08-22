@@ -1,6 +1,6 @@
 import logging
 import os
-from typing import TYPE_CHECKING, Literal, Optional, cast, get_args
+from typing import TYPE_CHECKING, Any, Literal, Optional, cast, get_args
 
 from dotenv import load_dotenv
 from langchain_core.language_models.chat_models import BaseChatModel
@@ -18,7 +18,7 @@ SourceType = Literal["OpenAI", "AzureOpenAI", "Anthropic", "Ollama", "Gemini", "
 ALLOWED_SOURCES: set[str] = set(get_args(SourceType))
 
 
-def _openai_key_kwargs() -> dict[str, object]:
+def _openai_key_kwargs() -> dict[str, Any]:
     """``api_key`` for the OpenAI client, sourced through the credential vault.
 
     The SDK's own fallback reads ``OPENAI_API_KEY`` from ``os.environ``, which is
@@ -29,7 +29,8 @@ def _openai_key_kwargs() -> dict[str, object]:
     deployments that populate it by some other means.
     """
     key = credentials.getenv("OPENAI_API_KEY")
-    return {"api_key": key} if key else {}
+    kwargs: dict[str, Any] = {"api_key": key} if key else {}
+    return kwargs
 
 
 def resolve_source(
@@ -282,7 +283,7 @@ def get_llm(
         # credentials are stripped from the environment while generated code
         # runs, so a chat starting during another chat's code step would
         # otherwise build a client with no key.
-        anthropic_kwargs: dict[str, object] = {}
+        anthropic_kwargs: dict[str, Any] = {}
         if anthropic_key:
             anthropic_kwargs["api_key"] = anthropic_key
         if anthropic_base_url:

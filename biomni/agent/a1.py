@@ -30,6 +30,7 @@ from biomni.artifact import (
     summarize_topic_for_run_id as _shared_summarize_topic_for_run_id,
 )
 from biomni.config import default_config, resolve_data_lake_root
+from biomni.env_probe import filter_library_catalog
 from biomni.fs_scan import scan_directory
 from biomni.know_how import KnowHowLoader
 from biomni.llm import SourceType, get_llm, resolve_source
@@ -136,7 +137,13 @@ class A1:
 
         # Store as instance attributes for later use
         self.data_lake_dict = data_lake_dict
-        self.library_content_dict = library_content_dict
+        # Narrowed to what this deployment actually has. The catalogue describes
+        # the reference environment, and the system prompt tells the model to
+        # prefer locally installed libraries - so anything advertised but absent
+        # becomes a plan the agent cannot execute. Unlike a data lake file, a
+        # library cannot be fetched on demand, so it is hidden rather than
+        # tagged. See biomni/env_probe.py.
+        self.library_content_dict = filter_library_catalog(library_content_dict)
         self.commercial_mode = commercial_mode
 
         # Display configuration in a nice, readable format

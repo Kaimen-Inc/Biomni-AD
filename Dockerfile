@@ -55,6 +55,14 @@ COPY biomni /app/biomni
 RUN --mount=type=cache,target=/root/.cache/pip,sharing=locked \
     micromamba run -n biomni_e1 pip install -e /app
 
+# Drop the compiler toolchain now that everything needing it has been built.
+# The runtime stage copies this environment wholesale, so anything left here
+# ships. Must be the last builder step for that reason. The script verifies its
+# own work - every module still on disk has to still import - so a bad prune
+# fails the build rather than producing an image that dies on first use.
+COPY docker/prune-build-tools.sh /tmp/prune-build-tools.sh
+RUN bash /tmp/prune-build-tools.sh /opt/conda/envs/biomni_e1
+
 # ──────────────────────────────────────────────────────────────────────────
 # Stage 2: runtime
 # ──────────────────────────────────────────────────────────────────────────
