@@ -9,6 +9,8 @@ import requests
 from bs4 import BeautifulSoup
 from googlesearch import search
 
+from biomni import credentials
+
 
 def fetch_supplementary_info_from_doi(doi: str, output_dir: str = "supplementary_info"):
     """Fetches supplementary information for a paper given its DOI and returns a research log.
@@ -248,10 +250,10 @@ def advanced_web_search_claude(
         model = default_config.llm
         api_key = default_config.api_key
         if not api_key:
-            api_key = os.getenv("ANTHROPIC_API_KEY")
+            api_key = credentials.getenv("ANTHROPIC_API_KEY")
     except ImportError:
         model = "claude-4-sonnet-latest"
-        api_key = os.getenv("ANTHROPIC_API_KEY")
+        api_key = credentials.getenv("ANTHROPIC_API_KEY")
 
     if "claude" not in model:
         raise ValueError("Model must be a Claude model.")

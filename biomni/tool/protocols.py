@@ -10,6 +10,8 @@ from typing import Any
 
 import requests
 
+from biomni import credentials
+
 try:
     # Optional import to read from central config if available
     from biomni.config import default_config  # type: ignore
@@ -21,7 +23,7 @@ except Exception:
 PROTOCOLS_IO_API_BASE = "https://www.protocols.io/api/v3"
 
 # Resolve access token from env or config (no hardcoded defaults)
-ACCESS_TOKEN = os.getenv("PROTOCOLS_IO_ACCESS_TOKEN") or os.getenv("BIOMNI_PROTOCOLS_IO_ACCESS_TOKEN")
+ACCESS_TOKEN = credentials.getenv("PROTOCOLS_IO_ACCESS_TOKEN") or credentials.getenv("BIOMNI_PROTOCOLS_IO_ACCESS_TOKEN")
 if not ACCESS_TOKEN and default_config is not None:
     ACCESS_TOKEN = getattr(default_config, "protocols_io_access_token", None)
 

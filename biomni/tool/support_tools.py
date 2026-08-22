@@ -1,13 +1,167 @@
+"""Execution environment for LLM-generated code, isolated per chat session.
+
+The REPL state here used to be three module-level globals shared by the whole
+process. That is correct for a notebook and wrong for a server: the Chainlit app
+runs one chat per session and several sessions at once, so two people asking a
+question at the same moment executed against the same namespace, the same plot
+list and - worst of all - the same ``sys.stdout``. Concretely, run A would
+receive run B's printed output and B's ``OUTPUT_DIR``, so A's generated files
+landed in B's run directory; and because each execution restored whatever
+``sys.stdout`` happened to be installed when it started, a single overlap left
+the process writing to a discarded buffer, silently swallowing every subsequent
+print.
+
+State is therefore keyed by the chat session (``biomni.observability.session_id_var``,
+which the Chainlit app binds per chat and which :func:`biomni.utils.run_with_timeout`
+propagates into the execution thread). Outside a bound session - notebooks, the
+CLI, tests - every caller shares one default session, which is exactly the old
+single-namespace behaviour.
+
+Stdout is routed rather than swapped: one installed router dispatches each write
+to the buffer of the execution that is running in the calling context, falling
+back to the real stream. Nothing restores a stale handle, so concurrent
+executions cannot corrupt each other's capture or the process's stdout.
+
+**Known residual.** ``matplotlib.pyplot``'s figure manager is process-global, so
+two sessions plotting at the same instant can still capture each other's
+figures. Fixing that means driving generated code to the object-oriented API,
+which is not something this layer can impose.
+"""
+
 import base64
+import contextvars
 import io
+import logging
+import os
 import sys
+import threading
+from collections import OrderedDict
 from io import StringIO
 
-# Create a persistent namespace that will be shared across all executions
-_persistent_namespace = {}
+from biomni import credentials
+from biomni.credentials import scrubbed_environ
+from biomni.observability import session_id_var
 
-# Global list to store captured plots
-_captured_plots = []
+logger = logging.getLogger(__name__)
+
+# Session used by every caller that has not bound a session id: notebooks, the
+# CLI, direct library use. Keeping them on one shared session preserves the
+# "variables persist between calls" contract those callers rely on.
+_DEFAULT_SESSION = "__default__"
+
+# Upper bound on retained session state. Chat sessions end without a reliable
+# callback (a closed tab never says goodbye), so the registry evicts the least
+# recently used entry instead of trusting a teardown hook to fire. On any real
+# deployment the cap is never reached; it exists so a long-lived server cannot
+# grow a namespace per visitor forever.
+_MAX_SESSIONS = max(1, int(os.getenv("BIOMNI_MAX_REPL_SESSIONS", "32")))
+
+
+class _ReplSession:
+    """Per-chat execution state: the exec namespace and captured plots."""
+
+    __slots__ = ("namespace", "plots")
+
+    def __init__(self) -> None:
+        self.namespace: dict = {}
+        self.plots: list[str] = []
+
+
+_sessions: OrderedDict[str, _ReplSession] = OrderedDict()
+_sessions_lock = threading.Lock()
+
+# Buffer for the execution running in the current context. Set for the duration
+# of one ``run_python_repl`` call; ``None`` means "not inside an execution", and
+# writes fall through to the real stream.
+_active_buffer: contextvars.ContextVar[StringIO | None] = contextvars.ContextVar("biomni_repl_stdout", default=None)
+
+
+def current_session_key() -> str:
+    """Session key for the calling context, or the shared default."""
+    return session_id_var.get() or _DEFAULT_SESSION
+
+
+def _session() -> _ReplSession:
+    key = current_session_key()
+    with _sessions_lock:
+        session = _sessions.get(key)
+        if session is None:
+            session = _ReplSession()
+            _sessions[key] = session
+            while len(_sessions) > _MAX_SESSIONS:
+                evicted, _ = _sessions.popitem(last=False)
+                logger.info("evicted least-recently-used REPL session state (key=%s)", evicted)
+        else:
+            _sessions.move_to_end(key)
+        return session
+
+
+def get_repl_namespace() -> dict:
+    """The ``exec`` namespace for the calling session.
+
+    This is what callers inject into (custom tools, ``OUTPUT_DIR``); mutating
+    the returned dict mutates the live namespace.
+    """
+    return _session().namespace
+
+
+def discard_repl_session(session_key: str | None = None) -> None:
+    """Drop one session's REPL state. Defaults to the calling session."""
+    key = session_key or current_session_key()
+    with _sessions_lock:
+        _sessions.pop(key, None)
+
+
+class _StdoutRouter(io.TextIOBase):
+    """Dispatches writes to the running execution's buffer, else to ``fallback``.
+
+    Installed once on ``sys.stdout`` and left there. The alternative - swapping
+    ``sys.stdout`` per execution - is what made concurrent runs cross-capture
+    and permanently break the stream, because each execution restored the handle
+    it found rather than the one it replaced.
+    """
+
+    def __init__(self, fallback):
+        self._fallback = fallback
+
+    @property
+    def fallback(self):
+        return self._fallback
+
+    def _target(self):
+        return _active_buffer.get() or self._fallback
+
+    def write(self, s) -> int:
+        return self._target().write(s)
+
+    def flush(self) -> None:
+        target = self._target()
+        if hasattr(target, "flush"):
+            target.flush()
+
+    def isatty(self) -> bool:
+        return getattr(self._fallback, "isatty", lambda: False)()
+
+    def fileno(self) -> int:
+        return self._fallback.fileno()
+
+    @property
+    def encoding(self):
+        return getattr(self._fallback, "encoding", "utf-8")
+
+    def writable(self) -> bool:
+        return True
+
+
+def _ensure_stdout_router() -> None:
+    """Install the router, re-wrapping if something else replaced ``sys.stdout``.
+
+    Self-healing rather than install-once: Chainlit, uvicorn or a notebook may
+    install their own stream after we do, and a router still pointing at a
+    superseded fallback would send output nowhere.
+    """
+    if not isinstance(sys.stdout, _StdoutRouter):
+        sys.stdout = _StdoutRouter(sys.stdout)
 
 
 def run_python_repl(command: str) -> str:
@@ -16,28 +170,34 @@ def run_python_repl(command: str) -> str:
     """
 
     def execute_in_repl(command: str) -> str:
-        """Helper function to execute the command in the persistent environment."""
-        old_stdout = sys.stdout
-        sys.stdout = mystdout = StringIO()
-
-        # Use the persistent namespace
-        global _persistent_namespace
+        """Execute the command in this session's namespace, capturing its output."""
+        namespace = get_repl_namespace()
+        buffer = StringIO()
+        _ensure_stdout_router()
+        token = _active_buffer.set(buffer)
 
         try:
             # Apply matplotlib monkey patches before execution
             _apply_matplotlib_patches()
 
-            # Execute the command in the persistent namespace
-            exec(command, _persistent_namespace)
-            output = mystdout.getvalue()
+            # Provider credentials are stripped from os.environ for the duration
+            # of the call: this code is written by the model, from a prompt any
+            # user can supply, and it runs un-sandboxed in this process.
+            with scrubbed_environ():
+                exec(command, namespace)
+            output = buffer.getvalue()
 
             # Capture any matplotlib plots that were generated
             # _capture_matplotlib_plots()
 
         except Exception as e:
-            output = f"Error: {str(e)}"
+            # Keep whatever the snippet printed before it failed - the agent
+            # uses it to work out which step broke, and discarding it turns an
+            # informative traceback into a bare error string.
+            partial = buffer.getvalue()
+            output = f"{partial}Error: {str(e)}" if partial else f"Error: {str(e)}"
         finally:
-            sys.stdout = old_stdout
+            _active_buffer.reset(token)
         return output
 
     command = command.strip("```").strip()
@@ -46,7 +206,7 @@ def run_python_repl(command: str) -> str:
 
 def _capture_matplotlib_plots():
     """Capture any matplotlib plots that might have been generated during execution."""
-    global _captured_plots
+    plots = _session().plots
     try:
         import matplotlib
 
@@ -70,8 +230,8 @@ def _capture_matplotlib_plots():
                 plot_data = f"data:image/png;base64,{image_data}"
 
                 # Add to captured plots if not already there
-                if plot_data not in _captured_plots:
-                    _captured_plots.append(plot_data)
+                if plot_data not in plots:
+                    plots.append(plot_data)
 
                 # Close the figure to free memory
                 plt.close(fig)
@@ -138,15 +298,13 @@ def _apply_matplotlib_patches():
 
 
 def get_captured_plots():
-    """Get all captured matplotlib plots."""
-    global _captured_plots
-    return _captured_plots.copy()
+    """Get the plots captured for the calling session."""
+    return _session().plots.copy()
 
 
 def clear_captured_plots():
-    """Clear all captured matplotlib plots."""
-    global _captured_plots
-    _captured_plots = []
+    """Clear the plots captured for the calling session."""
+    _session().plots.clear()
 
 
 def read_function_source_code(function_name: str) -> str:
@@ -285,7 +443,7 @@ def download_synapse_data(
     import subprocess
 
     # Check for required authentication token
-    synapse_token = os.environ.get("SYNAPSE_AUTH_TOKEN")
+    synapse_token = credentials.getenv("SYNAPSE_AUTH_TOKEN")
     if not synapse_token:
         return {
             "success": False,

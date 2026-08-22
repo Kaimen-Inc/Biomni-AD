@@ -12,6 +12,7 @@ from __future__ import annotations
 import logging
 import os
 import re
+import secrets
 from datetime import datetime
 from typing import TYPE_CHECKING
 
@@ -133,16 +134,31 @@ def build_run_id(
     *,
     llm_summarizer: Callable[[str], str] | None = None,
     now: Callable[[], datetime] = datetime.now,
+    token: str | None = None,
 ) -> str:
-    """Build a run directory ID of the form `run_YYYYMMDD_HHMMSS[_topic_slug]`.
+    """Build a run directory ID of the form `run_YYYYMMDD_HHMMSS_xxxxxx[_topic_slug]`.
 
     If `llm_summarizer` is provided it is called first to produce a slug;
     a falsy or empty return falls back to the deterministic
     `summarize_topic_for_run_id` heuristic.
+
+    ``xxxxxx`` is random, and it is what makes the id unique. Timestamp plus
+    slug is not: the app serves several chats at once, every caller creates the
+    directory with ``exist_ok=True``, and two runs started in the same second
+    from the same prompt therefore *shared* one directory and silently
+    overwrote each other's ``report.md`` and ``trace.ipynb``. Identical prompts
+    in the same second is not a contrived case - the UI's starter buttons send
+    fixed text, so a room full of people clicking the same one is exactly it.
+
+    The token sits after the timestamp rather than at the end so directory
+    listings still sort chronologically and still read as the topic.
+    ``token`` is injectable for tests; leave it unset in application code.
     """
     timestamp = now().strftime("%Y%m%d_%H%M%S")
+    unique = token if token is not None else secrets.token_hex(3)
+    stem = f"run_{timestamp}_{unique}" if unique else f"run_{timestamp}"
     if not topic:
-        return f"run_{timestamp}"
+        return stem
 
     topic_slug = ""
     if llm_summarizer is not None:
@@ -154,6 +170,6 @@ def build_run_id(
     if not topic_slug:
         topic_slug = summarize_topic_for_run_id(topic)
     if not topic_slug:
-        return f"run_{timestamp}"
+        return stem
 
-    return f"run_{timestamp}_{topic_slug}"
+    return f"{stem}_{topic_slug}"

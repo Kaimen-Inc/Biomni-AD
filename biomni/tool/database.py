@@ -9,6 +9,7 @@ from Bio.Blast import NCBIWWW, NCBIXML
 from Bio.Seq import Seq
 from langchain_core.messages import HumanMessage, SystemMessage
 
+from biomni import credentials
 from biomni.llm import get_llm
 from biomni.utils import parse_hpo_obo
 
@@ -3941,7 +3942,7 @@ def query_synapse(
 
     # Check for optional authentication
     headers = {"Content-Type": "application/json"}
-    synapse_token = os.environ.get("SYNAPSE_AUTH_TOKEN")
+    synapse_token = credentials.getenv("SYNAPSE_AUTH_TOKEN")
     if synapse_token:
         headers["Authorization"] = f"Bearer {synapse_token}"
 

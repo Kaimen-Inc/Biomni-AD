@@ -2886,11 +2886,15 @@ Each library is listed with its description to help you understand its functiona
         inject_custom_functions_to_repl(custom_functions)
 
         # Inject OUTPUT_DIR so agent-generated code saves outputs to the run folder.
+        # This goes into the calling session's namespace, not a process-wide one:
+        # with a shared namespace a concurrent run would overwrite it and this
+        # run's generated files would be written into the other user's run
+        # directory. See biomni/tool/support_tools.py.
         run_dir = getattr(self, "_current_run_dir", None)
         if run_dir:
-            from biomni.tool.support_tools import _persistent_namespace
+            from biomni.tool.support_tools import get_repl_namespace
 
-            _persistent_namespace["OUTPUT_DIR"] = run_dir
+            get_repl_namespace()["OUTPUT_DIR"] = run_dir
             os.environ["BIOMNI_OUTPUT_PATH"] = run_dir
 
     def create_mcp_server(self, tool_modules=None):

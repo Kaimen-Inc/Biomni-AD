@@ -59,11 +59,36 @@ def test_summarize_topic_strips_punctuation() -> None:
 # --- build_run_id --------------------------------------------------------------
 
 
-def test_build_run_id_empty_topic_returns_timestamp_only() -> None:
+def test_build_run_id_empty_topic_returns_timestamp_and_token() -> None:
     rid = build_run_id(None)
     assert rid.startswith("run_")
-    # exactly one underscore after "run" → run_YYYYMMDD_HHMMSS
-    assert rid.count("_") == 2
+    # run_YYYYMMDD_HHMMSS_xxxxxx
+    assert rid.count("_") == 3
+
+
+def test_build_run_id_is_unique_for_the_same_second_and_topic() -> None:
+    """Two chats running the same starter prompt must not share a directory.
+
+    Every caller creates the run directory with ``exist_ok=True``, so a repeated
+    id is not an error - it is two runs silently overwriting each other's
+    report and trace.
+    """
+    fixed = datetime(2025, 1, 2, 3, 4, 5)
+    ids = {build_run_id("Multi-omics AD risk gene portrait", now=lambda: fixed) for _ in range(200)}
+    assert len(ids) == 200
+
+
+def test_build_run_id_token_is_injectable() -> None:
+    fixed = datetime(2025, 1, 2, 3, 4, 5)
+    rid = build_run_id("Map AD GWAS loci", now=lambda: fixed, token="abc123")
+    assert rid == "run_20250102_030405_abc123_map_gwas_loci"
+
+
+def test_build_run_id_keeps_chronological_sort_order() -> None:
+    """The token sits after the timestamp, so a listing still sorts by time."""
+    earlier = build_run_id("topic one", now=lambda: datetime(2025, 1, 2, 3, 4, 5))
+    later = build_run_id("topic two", now=lambda: datetime(2025, 1, 2, 3, 4, 6))
+    assert sorted([later, earlier]) == [earlier, later]
 
 
 def test_build_run_id_includes_topic_slug() -> None:
