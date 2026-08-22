@@ -32,7 +32,13 @@ services:
       BIOMNI_STATE_DIR: /app/state
       MPLBACKEND: Agg
     ports:
-      - "${HOST_PORT:-8000}:8000"
+      # Bind address is configurable so a deployment can put a TLS proxy in
+      # front and stop publishing the app itself. Set BIOMNI_BIND_ADDRESS to
+      # 127.0.0.1 and the container is reachable only from the host, which is
+      # the only reliable way to close it: a `ufw deny` does NOT block a
+      # Docker-published port, because Docker writes its own iptables rules
+      # ahead of ufw's chain.
+      - "${BIOMNI_BIND_ADDRESS:-0.0.0.0}:${HOST_PORT:-8000}:8000"
     volumes:
       - ${BIOMNI_APP_DATA_HOST_PATH:-./data}:/app/data
       - ${BIOMNI_RUNS_HOST_PATH:-./runs}:/app/runs
