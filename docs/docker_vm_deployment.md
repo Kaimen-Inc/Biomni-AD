@@ -155,6 +155,25 @@ If you do that, be aware of the mismatch above: consider narrowing
 `library_content_dict` to what you actually ship, or the agent will keep proposing
 libraries that are not there.
 
+### The image is linux/amd64
+
+Build and deploy on x86-64. The AD Workbench environment does not build on
+linux/arm64: `scikit-misc` (pulled in for scanpy's
+`highly_variable_genes(flavor="seurat_v3")`) publishes no aarch64 wheel, so pip
+falls back to a source build and its meson step fails. That is the first
+blocker, not necessarily the only one.
+
+This matters mainly if you build on an Apple Silicon laptop, where Docker
+defaults to the native architecture - pass `--platform linux/amd64` explicitly:
+
+```bash
+docker build --platform linux/amd64 -t biomni-ad:local .
+```
+
+Hetzner Cloud, Azure and the GitHub Actions ubuntu runners are all x86-64, so
+they need nothing special. The minimal `environment.yml` has no such
+constraint and builds on both architectures.
+
 ### Common Azure VM build failure (pip wheel build errors)
 
 If you see errors like:

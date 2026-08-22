@@ -29,6 +29,11 @@ FROM mambaorg/micromamba:1.5.10@sha256:e3797091302382ea841498bc93a7b0a50f7c14483
 # deployment that only needs the chat and pandas-level analysis:
 #
 #   docker build --build-arg BIOMNI_ENV_FILE=biomni_env/environment.yml .
+#
+# This environment is linux/amd64 only: scikit-misc, which scanpy needs for
+# highly_variable_genes(flavor="seurat_v3"), ships no aarch64 wheel and its
+# source build fails. Pass --platform linux/amd64 when building on an Apple
+# Silicon machine. The minimal environment builds on both architectures.
 ARG BIOMNI_ENV_FILE=biomni_env/adworkbench_env.yml
 
 # Run install steps as root inside the builder so cache mounts at
