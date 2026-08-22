@@ -14,6 +14,7 @@ Environment variables:
 """
 
 import asyncio
+import hmac
 import inspect
 import logging
 import os
@@ -75,7 +76,13 @@ import chainlit as cl
 from biomni.artifact import build_run_id, get_all_files
 from biomni.config import default_config, resolve_data_lake_root, resolve_default_llm
 from biomni.health import register_health_routes
-from biomni.identity import UserIdentity, resolve_identity, single_user_mode, trust_auth_headers
+from biomni.identity import (
+    UserIdentity,
+    password_identity,
+    resolve_identity,
+    single_user_mode,
+    trust_auth_headers,
+)
 from biomni.observability import (
     RunHeartbeat,
     bind_run,
@@ -717,6 +724,37 @@ def _apply_workspace_settings(ws: WorkspaceSession, settings: dict) -> tuple[Wor
 os.environ.setdefault("CHAINLIT_AUTH_SECRET", ensure_auth_secret(_resolve_workspace_root()))
 
 
+def demo_password() -> str:
+    """The shared sign-in password, or empty when none is configured.
+
+    Set ``BIOMNI_DEMO_PASSWORD`` to put a login in front of a deployment that
+    has no authentication gateway - a demo box on a public IP being the case it
+    exists for. It is deliberately the *only* knob: one password, any username,
+    and the username becomes the identity, so people get separate conversation
+    histories without anyone administering accounts.
+    """
+    return os.getenv("BIOMNI_DEMO_PASSWORD", "").strip()
+
+
+def _user_from_identity(identity: UserIdentity) -> cl.User:
+    """One place that turns a resolved identity into Chainlit's user.
+
+    Shared by both auth paths so preferences, run records and chat threads
+    always key off the same string, whichever way the caller signed in.
+    """
+    return cl.User(
+        identifier=identity.scoped_key(),
+        display_name=identity.display_name,
+        metadata={
+            "source": identity.source,
+            "email": identity.email or "",
+            "workspace_id": identity.workspace_id or "",
+            "given_name": identity.given_name or "",
+            "family_name": identity.family_name or "",
+        },
+    )
+
+
 @cl.header_auth_callback
 def header_auth_callback(headers) -> cl.User | None:
     """Identify the caller from the authentication gateway's headers.
@@ -740,17 +778,39 @@ def header_auth_callback(headers) -> cl.User | None:
     if not identity.is_authenticated and trust_auth_headers():
         logger.warning("rejecting a session with no gateway identity headers (BIOMNI_TRUST_AUTH_HEADERS is on)")
         return None
-    return cl.User(
-        identifier=identity.scoped_key(),
-        display_name=identity.display_name,
-        metadata={
-            "source": identity.source,
-            "email": identity.email or "",
-            "workspace_id": identity.workspace_id or "",
-            "given_name": identity.given_name or "",
-            "family_name": identity.family_name or "",
-        },
-    )
+    if not identity.is_authenticated and demo_password():
+        # A password is configured, so the anonymous fallback below must not
+        # apply - it would hand every caller a session without ever asking, and
+        # the login form would be decorative. Returning None sends them to it.
+        return None
+    return _user_from_identity(identity)
+
+
+def password_auth_callback(username: str, password: str) -> cl.User | None:
+    """Check the shared password and turn the username into an identity.
+
+    Registered only when ``BIOMNI_DEMO_PASSWORD`` is set (see below), so a
+    deployment behind a real gateway never grows a second way in.
+    """
+    expected = demo_password()
+    if not expected or not hmac.compare_digest(password or "", expected):
+        logger.warning("rejected a sign-in attempt for username=%r", (username or "")[:32])
+        return None
+    identity = password_identity(username)
+    if not identity.is_authenticated:
+        logger.warning("rejected a sign-in with an unusable username")
+        return None
+    logger.info("password sign-in accepted (identity=%s)", identity.storage_key())
+    return _user_from_identity(identity)
+
+
+# Registered conditionally rather than with a decorator: Chainlit renders a
+# login form whenever a password callback exists, so an unconditional
+# registration would put one in front of gateway deployments that already
+# authenticate upstream.
+if demo_password():
+    cl.password_auth_callback(password_auth_callback)
+    logger.info("password sign-in enabled (BIOMNI_DEMO_PASSWORD is set)")
 
 
 @cl.data_layer

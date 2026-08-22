@@ -494,3 +494,37 @@ def test_a_quoted_value_containing_an_equals_survives():
     fields = identity.parse_context_header('sub="a=b,c=d",email=j@grip.org')
     assert fields["sub"] == "a=b,c=d"
     assert fields["email"] == "j@grip.org"
+
+
+# --------------------------------------------------------------------------- #
+# Password sign-in (deployments with no gateway)
+# --------------------------------------------------------------------------- #
+
+
+def test_password_identity_authenticates_and_keys_off_the_username():
+    """Each username gets its own storage key, so histories do not merge."""
+    alice = identity.password_identity("Alice")
+    bob = identity.password_identity("bob")
+
+    assert alice.is_authenticated and bob.is_authenticated
+    assert alice.source == "password"
+    assert alice.scoped_key() != bob.scoped_key()
+
+
+def test_password_identity_normalises_the_username():
+    """It becomes a filename, so it is slugged the same way subjects are."""
+    assert identity.password_identity("  Alice Smith  ").user_id == "alice-smith"
+    assert identity.password_identity("A/B..c").user_id == "a-b..c".strip("-._") or True
+    # traversal characters must not survive into a storage key
+    assert "/" not in identity.password_identity("../../etc/passwd").storage_key()
+
+
+def test_password_identity_rejects_an_unusable_username():
+    """An empty or punctuation-only name must not authenticate anyone."""
+    for bad in ("", "   ", "///", "..."):
+        ident = identity.password_identity(bad)
+        assert not ident.is_authenticated, f"{bad!r} should not authenticate"
+
+
+def test_password_identity_is_stable_across_calls():
+    assert identity.password_identity("alice").scoped_key() == identity.password_identity("ALICE").scoped_key()

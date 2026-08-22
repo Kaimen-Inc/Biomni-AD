@@ -439,6 +439,24 @@ def anonymous_identity(session_id: str | None = None) -> UserIdentity:
     return UserIdentity(user_id=f"session-{session_id}" if session_id else None, source="anonymous")
 
 
+def password_identity(username: str) -> UserIdentity:
+    """Identity for a caller who signed in with the deployment password.
+
+    ``source="password"`` makes :attr:`UserIdentity.is_authenticated` true, which
+    is what turns on durable preferences, run records and the conversation list -
+    so each person who picks a distinct username gets their own history, without
+    the deployment having to opt into ``BIOMNI_ALLOW_ANONYMOUS_PERSISTENCE``.
+
+    The name is normalised because it becomes a storage key: trimmed, lowercased
+    and stripped of anything outside ``[a-z0-9._-]``. An empty result yields an
+    unauthenticated identity, which the caller must reject rather than serve.
+    """
+    slug = _SLUG_UNSAFE_RE.sub("-", (username or "").strip().lower()).strip("-._")[:40]
+    if not slug:
+        return UserIdentity(source="anonymous")
+    return UserIdentity(user_id=slug, source="password")
+
+
 LOCAL_USER_ID = "local"
 
 

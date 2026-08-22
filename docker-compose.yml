@@ -24,6 +24,12 @@ services:
       BIOMNI_PATH: /app/data
       BIOMNI_USER_DATA_PATH: /app/user-data
       BIOMNI_DATA_PATH: /app/user-data
+      # Per-user preferences, durable run records and the chat-history database.
+      # Without it resolve_threads_dir() falls back to the workspace root, which
+      # is mounted read-only below, finds it unwritable and returns None - so
+      # the conversation list on the left silently never appears and no run
+      # record survives a restart.
+      BIOMNI_STATE_DIR: /app/state
       MPLBACKEND: Agg
     ports:
       - "${HOST_PORT:-8000}:8000"
@@ -31,6 +37,8 @@ services:
       - ${BIOMNI_APP_DATA_HOST_PATH:-./data}:/app/data
       - ${BIOMNI_RUNS_HOST_PATH:-./runs}:/app/runs
       - ${BIOMNI_USER_DATA_HOST_PATH:-/tmp/biomni_user_data}:/app/user-data:ro
+      # Writable, and must stay outside the read-only user-data mount.
+      - ${BIOMNI_STATE_HOST_PATH:-./state}:/app/state
     restart: unless-stopped
     # No `healthcheck:` block - the image's HEALTHCHECK (see Dockerfile) is
     # inherited automatically and shows up in `docker compose ps`. Keeping
