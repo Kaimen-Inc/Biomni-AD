@@ -245,3 +245,49 @@ def test_logging_setup_never_binds_the_repl_router() -> None:
     finally:
         sys.stdout = real_stdout
         logging.getLogger().handlers.clear()
+
+
+# --------------------------------------------------------------------------- #
+# Plot capture must observe, not dispose
+# --------------------------------------------------------------------------- #
+
+
+def test_saving_twice_produces_two_real_files(tmp_path) -> None:
+    """The regression that made every second save blank.
+
+    Capture runs from the savefig monkey patch - inside the user's own plotting
+    code - and used to close the figure afterwards. So the very common
+    `savefig("x.png"); savefig("x.pdf")` wrote a correct PNG and then a blank
+    1 KB PDF, because by the second call there was no figure left.
+    """
+    pytest.importorskip("matplotlib")
+    png, pdf = tmp_path / "f.png", tmp_path / "f.pdf"
+
+    out = run_python_repl(
+        "import matplotlib; matplotlib.use('Agg')\n"
+        "import matplotlib.pyplot as plt\n"
+        "plt.figure(figsize=(4,3)); plt.plot([1,2,3],[2,4,3])\n"
+        f"plt.savefig(r'{png}')\n"
+        f"plt.savefig(r'{pdf}')\n"
+        "print('figs', plt.get_fignums())\n"
+    )
+
+    assert png.exists() and pdf.exists(), out
+    # A blank single-page PDF is ~1 KB; a real one carrying a plot is several.
+    assert pdf.stat().st_size > 3000, f"second save produced a blank file ({pdf.stat().st_size} bytes)"
+    assert "figs []" not in out, "the user's figure was closed out from under them"
+
+
+def test_capture_leaves_the_figure_open_for_further_work(tmp_path) -> None:
+    """Generated code routinely keeps editing a figure after a first save."""
+    pytest.importorskip("matplotlib")
+    out = run_python_repl(
+        "import matplotlib; matplotlib.use('Agg')\n"
+        "import matplotlib.pyplot as plt\n"
+        "plt.figure(); plt.plot([1,2]); "
+        f"plt.savefig(r'{tmp_path / 'a.png'}')\n"
+        "plt.title('added after saving')\n"
+        "print('title:', plt.gca().get_title())\n"
+    )
+
+    assert "title: added after saving" in out, out

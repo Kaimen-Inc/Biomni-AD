@@ -315,8 +315,15 @@ def _capture_matplotlib_plots():
                 if plot_data not in plots:
                     plots.append(plot_data)
 
-                # Close the figure to free memory
-                plt.close(fig)
+                # The figure is deliberately NOT closed. This runs from the
+                # savefig/show monkey patches, i.e. in the middle of the user's
+                # own plotting code, and closing here destroyed the figure they
+                # were still working on: the extremely common
+                #   plt.savefig("x.png"); plt.savefig("x.pdf")
+                # wrote a correct PNG and then a blank 1 KB PDF, because by the
+                # second call there was no figure left. Capture must observe,
+                # not dispose - the generated code owns the figure's lifetime.
+                # Duplicates are already prevented by the identity check above.
 
     except ImportError:
         # matplotlib not available

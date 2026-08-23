@@ -30,6 +30,12 @@ services:
       # the conversation list on the left silently never appears and no run
       # record survives a restart.
       BIOMNI_STATE_DIR: /app/state
+      # Declares the runs volume mounted below as the output root. Without it
+      # resolution falls through to the "cwd-fallback" candidate, which is
+      # flagged ephemeral - so the UI warned that results are lost on restart
+      # while they were in fact landing on a bind mount and persisting fine. The
+      # Kubernetes manifest has always set this; compose had not.
+      BIOMNI_OUTPUT_ROOT: /app/runs
       MPLBACKEND: Agg
     ports:
       # Bind address is configurable so a deployment can put a TLS proxy in
