@@ -141,6 +141,7 @@ def test_a_timed_out_execution_cannot_leak_the_window_open(monkeypatch: pytest.M
     monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-secret")
 
     opened = threading.Event()
+    release = threading.Event()
 
     def abandoned() -> None:
         # A thread that enters a window and never leaves - what run_with_timeout
@@ -153,8 +154,11 @@ def test_a_timed_out_execution_cannot_leak_the_window_open(monkeypatch: pytest.M
         window = credentials.scrubbed_environ()
         window.__enter__()
         opened.set()
-        threading.Event().wait(30)
-        del window
+        # Held until the test releases it, rather than sleeping: a thread still
+        # parked here when the test ends wakes later and runs its finally under
+        # whatever test is running then, un-scrubbing os.environ mid-assertion.
+        release.wait(30)
+        window.__exit__(None, None, None)
 
     worker = threading.Thread(target=abandoned, daemon=True)
     worker.start()
@@ -169,6 +173,11 @@ def test_a_timed_out_execution_cannot_leak_the_window_open(monkeypatch: pytest.M
     assert not credentials.scrub_active(), "window stayed open after the thread was abandoned"
     assert os.environ["ANTHROPIC_API_KEY"] == "sk-ant-secret"
 
+    release.set()
+    worker.join(10)
+    assert not worker.is_alive(), "the abandoned thread outlived the test"
+    assert not credentials.scrub_active(), "its late exit reopened or leaked a window"
+
 
 def test_releasing_one_thread_leaves_another_thread_window_intact(monkeypatch: pytest.MonkeyPatch) -> None:
     """Two chats, one times out: the other must stay protected.
@@ -178,6 +187,7 @@ def test_releasing_one_thread_leaves_another_thread_window_intact(monkeypatch: p
     """
     monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-secret")
     opened = threading.Event()
+    release = threading.Event()
 
     def abandoned() -> None:
         # Bound to a local, not left as a temporary: an unreferenced context
@@ -187,8 +197,11 @@ def test_releasing_one_thread_leaves_another_thread_window_intact(monkeypatch: p
         window = credentials.scrubbed_environ()
         window.__enter__()
         opened.set()
-        threading.Event().wait(30)
-        del window
+        # Held until the test releases it, rather than sleeping: a thread still
+        # parked here when the test ends wakes later and runs its finally under
+        # whatever test is running then, un-scrubbing os.environ mid-assertion.
+        release.wait(30)
+        window.__exit__(None, None, None)
 
     worker = threading.Thread(target=abandoned, daemon=True)
     worker.start()
@@ -200,6 +213,10 @@ def test_releasing_one_thread_leaves_another_thread_window_intact(monkeypatch: p
         assert os.environ.get("ANTHROPIC_API_KEY") is None
 
     assert os.environ["ANTHROPIC_API_KEY"] == "sk-ant-secret"
+
+    release.set()
+    worker.join(10)
+    assert not worker.is_alive(), "the abandoned thread outlived the test"
 
 
 def test_extra_and_allow_overrides(monkeypatch: pytest.MonkeyPatch) -> None:

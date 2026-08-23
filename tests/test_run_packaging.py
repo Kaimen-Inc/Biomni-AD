@@ -11,8 +11,18 @@ import os
 import zipfile
 from pathlib import Path
 
-import chainlit_app
 import pytest
+
+# chainlit_app is imported inside a fixture, not here: it calls sys.exit(1)
+# when its dependencies are missing, and pytest cannot survive a SystemExit
+# during collection - the whole suite aborts with INTERNALERROR and zero
+# tests run, on any interpreter where that import fails.
+
+
+@pytest.fixture
+def chainlit_app():
+    """The app module, skipped rather than fatal when it cannot import."""
+    return pytest.importorskip("chainlit_app")
 
 
 @pytest.fixture
@@ -28,7 +38,7 @@ def run_dir(tmp_path: Path) -> Path:
     return d
 
 
-def test_packages_every_file_including_subdirectories(run_dir: Path) -> None:
+def test_packages_every_file_including_subdirectories(chainlit_app, run_dir: Path) -> None:
     archive, note = chainlit_app._package_run_dir(str(run_dir), run_dir.name)
 
     assert archive is not None, note
@@ -44,13 +54,13 @@ def test_packages_every_file_including_subdirectories(run_dir: Path) -> None:
     )
 
 
-def test_archive_contents_survive_the_round_trip(run_dir: Path) -> None:
+def test_archive_contents_survive_the_round_trip(chainlit_app, run_dir: Path) -> None:
     archive, _ = chainlit_app._package_run_dir(str(run_dir), run_dir.name)
     with zipfile.ZipFile(archive) as z:
         assert z.read(f"{run_dir.name}/report.md").decode() == "# findings"
 
 
-def test_archive_lands_outside_the_run_directory(run_dir: Path) -> None:
+def test_archive_lands_outside_the_run_directory(chainlit_app, run_dir: Path) -> None:
     """Otherwise it ends up inside the next archive of itself, and in the listing."""
     archive, _ = chainlit_app._package_run_dir(str(run_dir), run_dir.name)
 
@@ -59,7 +69,7 @@ def test_archive_lands_outside_the_run_directory(run_dir: Path) -> None:
     assert not any(p.suffix == ".zip" for p in run_dir.rglob("*"))
 
 
-def test_repackaging_is_stable(run_dir: Path) -> None:
+def test_repackaging_is_stable(chainlit_app, run_dir: Path) -> None:
     first, _ = chainlit_app._package_run_dir(str(run_dir), run_dir.name)
     second, _ = chainlit_app._package_run_dir(str(run_dir), run_dir.name)
 
@@ -68,7 +78,7 @@ def test_repackaging_is_stable(run_dir: Path) -> None:
         assert len(z.namelist()) == 4, "a re-run must not nest the previous archive"
 
 
-def test_empty_run_offers_no_download(tmp_path: Path) -> None:
+def test_empty_run_offers_no_download(chainlit_app, tmp_path: Path) -> None:
     d = tmp_path / "runs" / "run_empty"
     d.mkdir(parents=True)
 
@@ -78,13 +88,15 @@ def test_empty_run_offers_no_download(tmp_path: Path) -> None:
     assert "no files" in note
 
 
-def test_missing_directory_is_not_fatal(tmp_path: Path) -> None:
+def test_missing_directory_is_not_fatal(chainlit_app, tmp_path: Path) -> None:
     archive, note = chainlit_app._package_run_dir(str(tmp_path / "nope"), "run_x")
     assert archive is None
     assert "no run directory" in note
 
 
-def test_oversized_run_is_reported_rather_than_zipped(run_dir: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_oversized_run_is_reported_rather_than_zipped(
+    chainlit_app, run_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     """A run can write a multi-GB intermediate; zipping it would stall the app."""
     monkeypatch.setattr(chainlit_app, "MAX_PACKAGE_BYTES", 10)
 
@@ -95,7 +107,7 @@ def test_oversized_run_is_reported_rather_than_zipped(run_dir: Path, monkeypatch
     assert "MB" in note
 
 
-def test_hidden_files_are_left_out(run_dir: Path) -> None:
+def test_hidden_files_are_left_out(chainlit_app, run_dir: Path) -> None:
     (run_dir / ".DS_Store").write_text("junk")
     hidden = run_dir / ".cache"
     hidden.mkdir()
@@ -107,7 +119,7 @@ def test_hidden_files_are_left_out(run_dir: Path) -> None:
         assert not any(".DS_Store" in n or ".cache" in n for n in z.namelist())
 
 
-def test_old_packages_are_pruned(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_old_packages_are_pruned(chainlit_app, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """Archives duplicate runs that are never deleted, so they must be bounded.
 
     The shipped Kubernetes manifest points BIOMNI_OUTPUT_ROOT at a 20Gi PVC;
@@ -131,7 +143,9 @@ def test_old_packages_are_pruned(tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     assert kept == sorted(made[-3:]), "the newest archives must be the ones kept"
 
 
-def test_pruning_never_removes_the_archive_just_created(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_pruning_never_removes_the_archive_just_created(
+    chainlit_app, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     monkeypatch.setattr(chainlit_app, "MAX_RETAINED_PACKAGES", 1)
     runs = tmp_path / "runs"
     for i in range(3):
@@ -142,5 +156,5 @@ def test_pruning_never_removes_the_archive_just_created(tmp_path: Path, monkeypa
         assert Path(archive).exists(), "the run's own package was pruned out from under it"
 
 
-def test_pruning_tolerates_a_missing_directory() -> None:
+def test_pruning_tolerates_a_missing_directory(chainlit_app) -> None:
     assert chainlit_app._prune_packages("/nonexistent/packages", 5) == 0

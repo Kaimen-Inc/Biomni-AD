@@ -1,17 +1,17 @@
+from __future__ import annotations
+
 import logging
 import os
 import zipfile
+from typing import TYPE_CHECKING
 
 import matplotlib
 import requests
 
 matplotlib.use("Agg")  # Use non-interactive backend
-import nibabel as nib
 import numpy as np
-import SimpleITK as sitk
 import torch
 import torch.serialization
-from nnunet.inference.predict import predict_from_folder
 
 # Apply safe globals for torch serialization
 torch.serialization.add_safe_globals([tuple, list, dict, set, int, float, str, bytes, bytearray])
@@ -19,9 +19,10 @@ torch.serialization.add_safe_globals([complex, slice, range])
 torch.serialization.add_safe_globals([np.core.multiarray.scalar])
 
 # Configure logging
+if TYPE_CHECKING:  # names for annotations only - never imported at run time
+    import SimpleITK as sitk
+
 logger = logging.getLogger(__name__)
-
-
 # ============================================================================
 # SEGMENTATION CLASS
 # ============================================================================
@@ -48,6 +49,10 @@ class SegmentationTool:
         Returns:
             output_dir: Path to directory containing split modality files
         """
+        # Deferred: absent from the shipped environment, and a module-level
+        # import took every tool here down with it, not just this one.
+        import nibabel as nib
+
         os.makedirs(output_dir, exist_ok=True)
 
         # Load the 4D image
@@ -94,6 +99,10 @@ class SegmentationTool:
         Returns:
             prepared_dir: Path to directory with nnUNet-ready files
         """
+        # Deferred: absent from the shipped environment, and a module-level
+        # import took every tool here down with it, not just this one.
+        import nibabel as nib
+
         os.makedirs(output_dir, exist_ok=True)
 
         if os.path.isfile(input_path):
@@ -306,6 +315,10 @@ class SegmentationTool:
             results_folder: Path to nnUNet results folder (default: None, will use environment variable or default)
             auto_download: Automatically download missing models (default: True)
         """
+        # Deferred: absent from the shipped environment, and a module-level
+        # import took every tool here down with it, not just this one.
+        import nibabel as nib
+
         if folds is None:
             folds = [0, 1, 2, 3, 4]
         os.makedirs(output_dir, exist_ok=True)
@@ -324,6 +337,7 @@ class SegmentationTool:
         logging.info("Verifying NIfTI input files...")
 
         def verify_nifti_input(image_path):
+            # nib comes from the enclosing scope's deferred import.
             if os.path.isfile(image_path):
                 nib.load(image_path)
             else:
@@ -436,6 +450,11 @@ class SegmentationTool:
         # Run the segmentation
         torch.load = patched_torch_load
         try:
+            # Imported here, not at module scope: nnunet is absent from the shipped
+            # environment, and a top-level import took every tool in this module down
+            # with it rather than just the one that needs it.
+            from nnunet.inference.predict import predict_from_folder
+
             predict_from_folder(
                 model=model_folder,
                 input_folder=image_path,
@@ -597,6 +616,10 @@ class ImageRegistrationTool:
         Returns:
             SimpleITK Image object
         """
+        # Deferred: absent from the shipped environment, and a module-level
+        # import took every tool here down with it, not just this one.
+        import SimpleITK as sitk
+
         if not os.path.exists(image_path):
             raise FileNotFoundError(f"Image file not found: {image_path}")
 
@@ -617,6 +640,10 @@ class ImageRegistrationTool:
             image: SimpleITK Image object
             output_path: Path to save the image (must include filename and extension)
         """
+        # Deferred: absent from the shipped environment, and a module-level
+        # import took every tool here down with it, not just this one.
+        import SimpleITK as sitk
+
         # Validate output path
         if os.path.isdir(output_path):
             raise ValueError(
@@ -649,6 +676,10 @@ class ImageRegistrationTool:
         Returns:
             Preprocessed SimpleITK image
         """
+        # Deferred: absent from the shipped environment, and a module-level
+        # import took every tool here down with it, not just this one.
+        import SimpleITK as sitk
+
         logger.info("Preprocessing image...")
         processed_image = sitk.Image(image)
 
@@ -686,6 +717,10 @@ class ImageRegistrationTool:
         Returns:
             Rigid transform object
         """
+        # Deferred: absent from the shipped environment, and a module-level
+        # import took every tool here down with it, not just this one.
+        import SimpleITK as sitk
+
         logger.info("Creating rigid transform...")
 
         if initial_transform is None:
@@ -710,6 +745,10 @@ class ImageRegistrationTool:
         Returns:
             Affine transform object
         """
+        # Deferred: absent from the shipped environment, and a module-level
+        # import took every tool here down with it, not just this one.
+        import SimpleITK as sitk
+
         logger.info("Creating affine transform...")
 
         if initial_transform is None:
@@ -734,6 +773,10 @@ class ImageRegistrationTool:
         Returns:
             Deformable transform object
         """
+        # Deferred: absent from the shipped environment, and a module-level
+        # import took every tool here down with it, not just this one.
+        import SimpleITK as sitk
+
         logger.info("Creating deformable transform...")
 
         # Create B-spline transform
@@ -764,6 +807,10 @@ class ImageRegistrationTool:
         Returns:
             Configured registration method
         """
+        # Deferred: absent from the shipped environment, and a module-level
+        # import took every tool here down with it, not just this one.
+        import SimpleITK as sitk
+
         logger.info(f"Setting up registration method: {metric} metric, {optimizer} optimizer")
 
         registration_method = sitk.ImageRegistrationMethod()
@@ -833,6 +880,10 @@ class ImageRegistrationTool:
         Returns:
             Tuple of (final_transform, registered_image)
         """
+        # Deferred: absent from the shipped environment, and a module-level
+        # import took every tool here down with it, not just this one.
+        import SimpleITK as sitk
+
         logger.info("Starting image registration...")
 
         # Add iteration callback
@@ -875,6 +926,10 @@ class ImageRegistrationTool:
         Returns:
             Dictionary of similarity metrics
         """
+        # Deferred: absent from the shipped environment, and a module-level
+        # import took every tool here down with it, not just this one.
+        import SimpleITK as sitk
+
         logger.info("Calculating similarity metrics...")
         metrics = {}
 
@@ -1061,6 +1116,10 @@ def quick_rigid_registration(
     Returns:
         Dictionary with registration results
     """
+    # Deferred: absent from the shipped environment, and a module-level
+    # import took every tool here down with it, not just this one.
+    import SimpleITK as sitk
+
     tool = ImageRegistrationTool()
 
     # Load images
@@ -1137,6 +1196,10 @@ def quick_affine_registration(
     Returns:
         Dictionary with registration results
     """
+    # Deferred: absent from the shipped environment, and a module-level
+    # import took every tool here down with it, not just this one.
+    import SimpleITK as sitk
+
     tool = ImageRegistrationTool()
 
     # Load images
@@ -1215,6 +1278,10 @@ def quick_deformable_registration(
     Returns:
         Dictionary with registration results
     """
+    # Deferred: absent from the shipped environment, and a module-level
+    # import took every tool here down with it, not just this one.
+    import SimpleITK as sitk
+
     tool = ImageRegistrationTool()
 
     # Load images

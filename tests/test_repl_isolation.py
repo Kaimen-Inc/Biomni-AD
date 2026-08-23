@@ -28,12 +28,30 @@ from biomni.utils import run_with_timeout
 
 @pytest.fixture(autouse=True)
 def _clean_sessions() -> None:
-    """Every test starts from empty REPL state."""
+    """Every test starts from empty REPL state, and leaves stdout as it found it.
+
+    run_python_repl installs a router on sys.stdout and never removes it, so
+    without restoring it here the first test to execute code decides what
+    sys.stdout is for the rest of the session - which made
+    test_logging_setup_never_binds_the_repl_router order-dependent, and it fails
+    under `pytest -s`. The root handler list is saved for the same reason: that
+    test calls setup_logging(force=True), which claims the root logger.
+    """
+    import logging
+    import sys
+
+    saved_stdout = sys.stdout
+    saved_handlers = list(logging.getLogger().handlers)
+    saved_level = logging.getLogger().level
     with support_tools._sessions_lock:
         support_tools._sessions.clear()
     yield
     with support_tools._sessions_lock:
         support_tools._sessions.clear()
+    sys.stdout = saved_stdout
+    root = logging.getLogger()
+    root.handlers[:] = saved_handlers
+    root.setLevel(saved_level)
 
 
 # --------------------------------------------------------------------------- #
@@ -243,8 +261,8 @@ def test_logging_setup_never_binds_the_repl_router() -> None:
             assert not isinstance(handler.stream, support_tools._StdoutRouter)
             assert handler.stream is real_stdout
     finally:
+        # sys.stdout and the root handlers are restored by the autouse fixture.
         sys.stdout = real_stdout
-        logging.getLogger().handlers.clear()
 
 
 # --------------------------------------------------------------------------- #

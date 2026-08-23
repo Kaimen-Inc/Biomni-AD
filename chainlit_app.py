@@ -1843,14 +1843,35 @@ async def _save_ad1_artifacts(agent, final_state: dict, initial_files: set):
 # How large a run may be before it is offered as a path rather than a download.
 # A single run can write a multi-GB intermediate; zipping and serving that would
 # stall the app and the browser rather than help anyone.
-MAX_PACKAGE_BYTES = max(1, int(os.getenv("BIOMNI_MAX_PACKAGE_MB", "200"))) * 1024 * 1024
+def _positive_int_env(name: str, default: int) -> int:
+    """An int from the environment, never fatal.
+
+    Parsed at import, so an unparseable value - a typo, or the very common
+    set-but-empty ConfigMap key, for which os.getenv returns "" rather than
+    the default - would otherwise raise before uvicorn binds and leave the
+    pod in CrashLoopBackOff naming a tuning knob."""
+    raw = os.getenv(name, "").strip()
+    if not raw:
+        return default
+    try:
+        value = int(raw)
+    except ValueError:
+        logger.warning("ignoring invalid %s=%r; using %d", name, raw, default)
+        return default
+    if value < 1:
+        logger.warning("ignoring non-positive %s=%r; using %d", name, raw, default)
+        return default
+    return value
+
+
+MAX_PACKAGE_BYTES = _positive_int_env("BIOMNI_MAX_PACKAGE_MB", 200) * 1024 * 1024
 
 # How many archives to keep. Each one roughly duplicates the run it came from,
 # and the run directory itself is never deleted, so without a bound the output
 # volume fills about twice as fast forever - on the shipped Kubernetes manifest
 # that is a 20Gi PVC. Archives are pure derived data: dropping an old one costs
 # nothing but regenerating it, and the files it held are still on disk.
-MAX_RETAINED_PACKAGES = max(1, int(os.getenv("BIOMNI_MAX_PACKAGES", "20")))
+MAX_RETAINED_PACKAGES = _positive_int_env("BIOMNI_MAX_PACKAGES", 20)
 
 
 def _prune_packages(packages_dir: str, keep: int) -> int:

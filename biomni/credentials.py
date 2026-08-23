@@ -6,12 +6,23 @@ whoever writes the prompt - including ``ANTHROPIC_API_KEY`` and friends. A singl
 ``print(os.environ)`` exfiltrates them, and because ``subprocess`` children
 inherit the parent environment, so does a single ``printenv``.
 
-This module closes that hole with a scrub window: :func:`scrubbed_environ`
+This module narrows that hole with a scrub window: :func:`scrubbed_environ`
 removes credential-shaped variables from the real ``os.environ`` for the
 duration of a block and puts them back afterwards. Mutating the real mapping is
 deliberate - handing a filtered copy into the ``exec`` globals would be defeated
 by a bare ``import os`` inside the snippet, and would not cover what a
-subprocess inherits.
+subprocess inherits from ``os.environ``.
+
+**It does not remove the values from the process.** ``os.environ.pop`` calls
+``unsetenv``, which rewrites libc's ``environ`` pointer array but never touches
+the ``[env_start, env_end)`` stack block the kernel exposes at
+``/proc/self/environ``. On Linux a one-liner reads every credential straight out
+of that file while the window is open, and it needs no knowledge of this
+codebase - so it is *not* covered by the "determined attacker" caveat below.
+Verified on linux/amd64. Closing it properly means the process must never have
+held the values in its initial environment: read them from a file or a secret
+store after start, or re-exec once with a cleaned block. Until then, treat this
+as raising the cost of an accidental leak, not as containment.
 
 Two consequences of that choice are handled here rather than left to callers:
 
@@ -37,9 +48,10 @@ legitimate reason to read; those are endpoints, not secrets.
 
 **What this is not.** It is not a sandbox. Any secret this process can recover,
 code running *in* this process can recover the same way - including through this
-module. It closes the accidental and casual paths, which is the realistic
-failure mode: a model that prints its configuration, a library that dumps the
-environment into a traceback, a snippet that shells out. A determined attacker
+module, and including through ``/proc/self/environ`` as described above. It
+closes the accidental paths, which are the realistic failure mode: a model that
+prints its configuration, a library that dumps the environment into a traceback,
+a snippet that runs ``printenv``. A determined attacker
 who knows the codebase is out of scope, and defending against one needs the
 executor moved to a separate process or sandbox (see ARCHITECTURE.md §9.4).
 Deployments exposed to untrusted users should pair this with a provider-side
@@ -102,7 +114,17 @@ _CREDENTIAL_NAMES = frozenset(
 # does break the process: Chainlit calls ``get_jwt_secret()`` on every JWT
 # operation, so while one chat ran a code step, every other user reconnecting or
 # resuming a thread hit ``assert secret`` and got a 500.
-_NEVER_SCRUBBED = frozenset({"CHAINLIT_AUTH_SECRET"})
+_NEVER_SCRUBBED = frozenset(
+    {
+        "CHAINLIT_AUTH_SECRET",
+        # Matches the PASSWORD marker, and hiding it is actively unsafe: while a
+        # window is open, demo_password() reads empty, header_auth_callback stops
+        # refusing anonymous callers and mints a session for anyone who asks -
+        # and a correct password typed in that window is rejected. Both heal when
+        # the code step ends, so it presents as a flake rather than a hole.
+        "BIOMNI_DEMO_PASSWORD",
+    }
+)
 
 _EXTRA_ENV = "BIOMNI_SCRUB_ENV_EXTRA"
 _ALLOW_ENV = "BIOMNI_SCRUB_ENV_ALLOW"
@@ -186,15 +208,22 @@ def scrubbed_environ() -> Iterator[frozenset[str]]:
         yield hidden
     finally:
         with _lock:
-            _depth -= 1
-            remaining = _thread_depth.get(ident, 1) - 1
-            if remaining > 0:
-                _thread_depth[ident] = remaining
-            else:
-                _thread_depth.pop(ident, None)
-            if _depth <= 0:
-                _depth = 0
-                _restore_locked()
+            # An abandoned thread's finally can still run - late, after
+            # release_thread already accounted for it - so the decrement is
+            # conditional on this thread still being counted. Without that guard
+            # the global depth is reduced twice for one window: it reaches zero
+            # while a *different* chat is mid-exec, and every credential is
+            # written back into os.environ underneath that chat's code.
+            counted = _thread_depth.get(ident)
+            if counted:
+                _depth -= 1
+                if counted > 1:
+                    _thread_depth[ident] = counted - 1
+                else:
+                    _thread_depth.pop(ident, None)
+                if _depth <= 0:
+                    _depth = 0
+                    _restore_locked()
 
 
 def getenv(name: str, default: str | None = None) -> str | None:

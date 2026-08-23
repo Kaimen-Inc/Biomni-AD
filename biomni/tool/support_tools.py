@@ -45,17 +45,7 @@ from biomni.observability import session_id_var
 
 logger = logging.getLogger(__name__)
 
-# Session used by every caller that has not bound a session id: notebooks, the
-# CLI, direct library use. Keeping them on one shared session preserves the
-# "variables persist between calls" contract those callers rely on.
-_DEFAULT_SESSION = "__default__"
 
-
-# Upper bound on retained session state. Chat sessions end without a reliable
-# callback (a closed tab never says goodbye), so the registry evicts the least
-# recently used entry instead of trusting a teardown hook to fire. On any real
-# deployment the cap is never reached; it exists so a long-lived server cannot
-# grow a namespace per visitor forever.
 def _positive_int(env_name: str, default: int) -> int:
     """An int from the environment, never fatal.
 
@@ -78,6 +68,17 @@ def _positive_int(env_name: str, default: int) -> int:
     return value
 
 
+# Session used by every caller that has not bound a session id: notebooks, the
+# CLI, direct library use. Keeping them on one shared session preserves the
+# "variables persist between calls" contract those callers rely on.
+_DEFAULT_SESSION = "__default__"
+
+
+# Upper bound on retained session state. Chat sessions end without a reliable
+# callback (a closed tab never says goodbye), so the registry evicts the least
+# recently used entry instead of trusting a teardown hook to fire. On any real
+# deployment the cap is never reached; it exists so a long-lived server cannot
+# grow a namespace per visitor forever.
 _MAX_SESSIONS = _positive_int("BIOMNI_MAX_REPL_SESSIONS", 32)
 
 # Upper bound on figures left open across executions. Capture deliberately no
@@ -89,26 +90,47 @@ _MAX_SESSIONS = _positive_int("BIOMNI_MAX_REPL_SESSIONS", 32)
 _MAX_OPEN_FIGURES = _positive_int("BIOMNI_MAX_OPEN_FIGURES", 50)
 
 
-def _bound_open_figures() -> int:
-    """Close the oldest figures beyond the cap. Returns how many were closed."""
+def _open_figure_numbers() -> list[int]:
+    """Figure numbers currently open, or an empty list if matplotlib is absent."""
+    try:
+        import matplotlib.pyplot as plt
+
+        return sorted(plt.get_fignums())
+    except Exception:
+        return []
+
+
+def _bound_open_figures(preexisting: set[int]) -> int:
+    """Close figures *this execution* created beyond the cap.
+
+    ``preexisting`` is what was open before the snippet ran, and is never
+    touched: pyplot allocates numbers monotonically, so the lowest-numbered
+    figures are the longest-lived, which means they belong to another chat that
+    is still working on them. Closing those reintroduced exactly the blank-file
+    bug across sessions - the other chat's next ``plt.figure(3); plt.savefig()``
+    would silently write an empty image. If a session's own figures are not
+    enough to get under the cap, the registry is left too large rather than
+    reaching into somebody else's.
+    """
     try:
         import matplotlib.pyplot as plt
     except Exception:
         return 0
-    try:
-        numbers = sorted(plt.get_fignums())
-    except Exception:
-        return 0
+    numbers = _open_figure_numbers()
     excess = len(numbers) - _MAX_OPEN_FIGURES
     if excess <= 0:
         return 0
-    for number in numbers[:excess]:
+    mine = [n for n in numbers if n not in preexisting]
+    closed = 0
+    for number in mine[: min(excess, len(mine))]:
         try:
             plt.close(number)
+            closed += 1
         except Exception:
             logger.debug("could not close figure %s", number, exc_info=True)
-    logger.info("closed %d matplotlib figure(s) beyond the %d kept open", excess, _MAX_OPEN_FIGURES)
-    return excess
+    if closed:
+        logger.info("closed %d figure(s) this execution created, beyond the %d kept open", closed, _MAX_OPEN_FIGURES)
+    return closed
 
 
 # How long a session's state is protected from eviction, regardless of how many
@@ -116,7 +138,7 @@ def _bound_open_figures() -> int:
 # damage, because eviction is silent from the user's side: their next step comes
 # back "name 'adata' is not defined" for a frame they correctly believe they
 # loaded.
-_SESSION_TTL_SECONDS = max(0.0, float(os.getenv("BIOMNI_REPL_SESSION_TTL_SECONDS", str(6 * 60 * 60))))
+_SESSION_TTL_SECONDS = float(_positive_int("BIOMNI_REPL_SESSION_TTL_SECONDS", 6 * 60 * 60))
 
 
 class _ReplSession:
@@ -234,9 +256,19 @@ class _StdoutRouter(io.TextIOBase):
             target.flush()
 
     def isatty(self) -> bool:
+        # False while capturing: the buffer is not a terminal, and answering for
+        # the real stream made rich and tqdm write ANSI escapes into text that
+        # ends up in the agent's observation.
+        if _active_buffer.get() is not None:
+            return False
         return getattr(self._fallback, "isatty", lambda: False)()
 
     def fileno(self) -> int:
+        # No descriptor while capturing. subprocess(stdout=sys.stdout) would
+        # otherwise be handed the real fd and write past the buffer straight to
+        # the container log, so the agent never sees that output.
+        if _active_buffer.get() is not None:
+            raise io.UnsupportedOperation("fileno: stdout is captured for this execution")
         return self._fallback.fileno()
 
     @property
@@ -245,6 +277,18 @@ class _StdoutRouter(io.TextIOBase):
 
     def writable(self) -> bool:
         return True
+
+    def __getattr__(self, name):
+        # Everything not overridden above is answered by the stream we wrap.
+        # The router is installed on the first code step and never removed, so
+        # without this the standard binary-stdout idioms break process-wide and
+        # permanently once any chat has run code:
+        #   fig.savefig(sys.stdout.buffer, format="png")
+        #   df.to_parquet(sys.stdout.buffer)
+        #   sys.stdout.reconfigure(encoding="utf-8")
+        # all raised AttributeError, and only on a server that had served a
+        # previous session - the same snippet worked in a fresh process.
+        return getattr(self._fallback, name)
 
 
 _router_lock = threading.Lock()
@@ -284,6 +328,7 @@ def run_python_repl(command: str) -> str:
     def execute_in_repl(command: str) -> str:
         """Execute the command in this session's namespace, capturing its output."""
         namespace = get_repl_namespace()
+        preexisting_figures = set(_open_figure_numbers())
         buffer = StringIO()
         _ensure_stdout_router()
         token = _active_buffer.set(buffer)
@@ -310,15 +355,25 @@ def run_python_repl(command: str) -> str:
             output = f"{partial}Error: {str(e)}" if partial else f"Error: {str(e)}"
         finally:
             _active_buffer.reset(token)
-            _bound_open_figures()
+            _bound_open_figures(preexisting_figures)
         return output
 
     command = command.strip("```").strip()
     return execute_in_repl(command)
 
 
-def _capture_matplotlib_plots():
-    """Capture any matplotlib plots that might have been generated during execution."""
+def _capture_matplotlib_plots(target=None):
+    """Capture ``target`` (default: the current figure) as a base64 PNG.
+
+    Only ever one figure, and never via ``plt.figure(n)``. Iterating every open
+    figure was wrong three ways once figures stopped being closed: it re-encoded
+    the whole registry on every ``savefig`` - N(N+1)/2 renders at dpi=150 with
+    ``bbox_inches='tight'``, measured at 6.5x slower for 20 figures - it swept in
+    figures belonging to *other* chat sessions, since pyplot's registry is
+    process-global while the plot list is per session, and ``plt.figure(n)``
+    makes each one current as a side effect, so a bare ``plt.savefig()`` after a
+    capture wrote whichever figure the loop happened to leave selected.
+    """
     plots = _session().plots
     try:
         import matplotlib
@@ -328,11 +383,9 @@ def _capture_matplotlib_plots():
             matplotlib.use("Agg", force=True)
         import matplotlib.pyplot as plt
 
-        # Check if there are any active figures
-        if plt.get_fignums():
-            for fig_num in plt.get_fignums():
-                fig = plt.figure(fig_num)
-
+        figure = target if target is not None else (plt.gcf() if plt.get_fignums() else None)
+        if figure is not None:
+            for fig in (figure,):
                 # Save figure to base64
                 buffer = io.BytesIO()
                 fig.savefig(buffer, format="png", dpi=150, bbox_inches="tight")
@@ -384,8 +437,8 @@ def _apply_matplotlib_patches():
 
         def show_with_capture(*args, **kwargs):
             """Enhanced show function that captures plots before displaying them."""
-            # Capture any plots before showing
-            _capture_matplotlib_plots()
+            # Capture before showing - this figure, not every open one.
+            _capture_matplotlib_plots(plt.gcf() if plt.get_fignums() else None)
             # Print a message to indicate plot was generated
             print("Plot generated and displayed")
             # Call the original show function
@@ -397,8 +450,8 @@ def _apply_matplotlib_patches():
             filename = args[0] if args else kwargs.get("fname", "unknown")
             # Call the original savefig function
             result = original_savefig(*args, **kwargs)
-            # Capture the plot after saving
-            _capture_matplotlib_plots()
+            # Capture the plot after saving - this figure, not every open one.
+            _capture_matplotlib_plots(plt.gcf() if plt.get_fignums() else None)
             # Print a message to indicate plot was saved
             print(f"Plot saved to: {filename}")
             return result
