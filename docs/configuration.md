@@ -277,6 +277,52 @@ default_config.base_url = None  # For custom models
 default_config.api_key = None  # For custom models
 ```
 
+## Deployment settings
+
+These matter to whoever runs the app rather than to whoever writes an analysis.
+All are optional; the defaults are what a single-user local run wants.
+
+### Serving and access
+
+| Variable | Default | What it does |
+|---|---|---|
+| `BIOMNI_DEMO_PASSWORD` | unset | Puts Chainlit's own login in front of the app: one shared password, any username, and the username becomes the identity - so each person gets a separate conversation history. For a deployment with **no** authentication gateway. Leave unset behind a gateway, where it would add a second and weaker door in front of a real one. |
+| `BIOMNI_BIND_ADDRESS` | `0.0.0.0` | Address the compose deployment publishes on. Set to `127.0.0.1` when a TLS proxy sits in front, so the app is reachable only through it. Note a `ufw deny` will **not** close a published port - Docker writes iptables rules ahead of ufw's chain - so binding to loopback is the reliable way. |
+| `BIOMNI_TRUST_AUTH_HEADERS` | off | Believe the gateway's identity headers. Fails closed: until this is set, headers are ignored and every session is anonymous. Turn it on in the same change that puts a gateway in front. |
+| `BIOMNI_AUTH_ISSUER_HEADER` | see identity.py | Header carrying the OIDC issuer. When an issuer is present it is folded into the storage key, because a subject id is unique within a realm rather than globally. **Send it from the first deployment or not at all** - introducing it later re-keys every existing user, who then finds an empty history. |
+
+### Storage
+
+| Variable | Default | What it does |
+|---|---|---|
+| `BIOMNI_STATE_DIR` | unset | Preferences, run records and the chat-history database. **The conversation list on the left needs this to be writable**; without it the app falls back to the workspace root, and if that is mounted read-only there is no thread list at all. Set by both the compose file and the Kubernetes manifest. |
+| `BIOMNI_STATE_HOST_PATH` | `./state` | Host path compose mounts at `BIOMNI_STATE_DIR`. |
+| `BIOMNI_OUTPUT_ROOT` | unset | Where run artifacts go. Declare it whenever outputs land on a volume: without it resolution falls through to a candidate flagged *ephemeral*, and the UI warns that results are lost on restart even when they are not. |
+
+### Run artifacts
+
+| Variable | Default | What it does |
+|---|---|---|
+| `BIOMNI_MAX_PACKAGE_MB` | `200` | A finished run is offered to the user as one downloadable archive. Runs larger than this are reported by size instead - a single run can write a multi-GB intermediate, and zipping that would stall the app and the browser. |
+| `BIOMNI_MAX_PACKAGES` | `20` | How many archives to keep. Each roughly duplicates the run it came from and the run directories are never deleted, so without a bound the output volume fills about twice as fast. Archives are derived data; dropping one costs only regenerating it. |
+
+### Execution and memory
+
+| Variable | Default | What it does |
+|---|---|---|
+| `BIOMNI_MAX_REPL_SESSIONS` | `32` | How many chats' Python state is held in memory. Each retained session costs whatever that conversation loaded, so keep it well under the container's memory limit rather than raising it freely. |
+| `BIOMNI_REPL_SESSION_TTL_SECONDS` | `21600` (6h) | How long a chat's state is protected from eviction regardless of how many other chats have run. Eviction is silent from the user's side - their next step fails with `NameError` for a frame they correctly believe they loaded - so idle sessions are dropped first and evicting a live one is logged as a warning. |
+| `BIOMNI_MAX_OPEN_FIGURES` | `50` | Matplotlib figures left open across executions. Capture does not close them - doing so mid-`savefig` blanked the next save - but pyplot's figure registry is process-global, so the oldest are closed beyond this cap to stop every figure any chat ever drew staying resident. |
+| `BIOMNI_ADVERTISE_ALL_LIBRARIES` | off | Skip the check that narrows the advertised library catalogue to what is installed. Normally the agent is only told about libraries it can actually import; set this for a deployment that installs more after the image is built. |
+| `BIOMNI_SCRUB_ENV_EXTRA` / `BIOMNI_SCRUB_ENV_ALLOW` | unset | Add to, or exempt from, the credential-shaped names hidden from generated code while it runs. Both are read once at startup, so code running in the sandbox cannot re-arm them. |
+
+### Monitoring
+
+| Variable | Default | What it does |
+|---|---|---|
+| `BIOMNI_STATUS_INACTIVITY_SECONDS` | `14400` (4h) | How long `GET /status` keeps reporting `active` after the last activity, with nobody connected. |
+| `BIOMNI_STATUS_OPEN_SESSION_INACTIVITY_SECONDS` | `43200` (12h) | The same while a browser session is connected. Longer on purpose: a platform that reclaims pods on `active: false` would otherwise destroy a connected researcher's in-memory state. Never applied as shorter than the window above. |
+
 ## Important Notes
 
 - **For pip-installed packages**: You can't edit the package files, but you can still use environment variables or modify `default_config` at runtime

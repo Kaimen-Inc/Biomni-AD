@@ -88,4 +88,6 @@ jobs:
             --follow-imports=silent \
             biomni/artifact.py \
             biomni/config.py \
+            biomni/credentials.py \
+            biomni/env_probe.py \
             biomni/llm.py

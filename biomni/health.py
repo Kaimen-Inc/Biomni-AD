@@ -21,6 +21,8 @@ from __future__ import annotations
 import os
 from typing import TYPE_CHECKING, Any
 
+from biomni import credentials
+
 if TYPE_CHECKING:
     from collections.abc import Callable
 
@@ -68,7 +70,10 @@ def _data_path() -> str:
 def _has_llm_credential() -> tuple[bool, str]:
     """Whether some usable LLM credential / endpoint is configured."""
     for env in _PROVIDER_KEY_ENVS:
-        if os.getenv(env):
+        # Via the vault, not os.getenv: credentials are hidden from os.environ
+        # while generated code runs, and a probe landing in that window must
+        # not report the pod unready.
+        if credentials.getenv(env):
             return True, env
     if os.getenv("BIOMNI_CUSTOM_BASE_URL"):
         return True, "BIOMNI_CUSTOM_BASE_URL"

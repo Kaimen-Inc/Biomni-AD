@@ -1,9 +1,11 @@
 import logging
 import os
-from typing import TYPE_CHECKING, Literal, Optional, cast, get_args
+from typing import TYPE_CHECKING, Any, Literal, Optional, cast, get_args
 
 from dotenv import load_dotenv
 from langchain_core.language_models.chat_models import BaseChatModel
+
+from biomni import credentials
 
 load_dotenv(override=True)
 
@@ -14,6 +16,21 @@ if TYPE_CHECKING:
 
 SourceType = Literal["OpenAI", "AzureOpenAI", "Anthropic", "Ollama", "Gemini", "Bedrock", "Groq", "Custom"]
 ALLOWED_SOURCES: set[str] = set(get_args(SourceType))
+
+
+def _openai_key_kwargs() -> dict[str, Any]:
+    """``api_key`` for the OpenAI client, sourced through the credential vault.
+
+    The SDK's own fallback reads ``OPENAI_API_KEY`` from ``os.environ``, which is
+    stripped while generated code runs (see :mod:`biomni.credentials`), so a chat
+    opened during another chat's code step would build a keyless client. Passing
+    it explicitly removes that dependency. The key is omitted rather than passed
+    as ``None`` when unset, so the SDK's own resolution still applies to
+    deployments that populate it by some other means.
+    """
+    key = credentials.getenv("OPENAI_API_KEY")
+    kwargs: dict[str, Any] = {"api_key": key} if key else {}
+    return kwargs
 
 
 def resolve_source(
@@ -63,7 +80,7 @@ def resolve_source(
     if model.startswith(("anthropic.claude-", "amazon.titan-", "meta.llama-", "mistral.", "cohere.", "ai21.", "us.")):
         return "Bedrock"
     if (
-        os.getenv("AZURE_ANTHROPIC_API_KEY")
+        credentials.getenv("AZURE_ANTHROPIC_API_KEY")
         and os.getenv("ENDPOINT_URL")
         and "anthropic" in os.getenv("ENDPOINT_URL", "")
     ):
@@ -169,6 +186,7 @@ def get_llm(
                 temperature=1,  # Set to default value for gpt-5, will be removed in payload
                 stop_sequences=stop_sequences,
                 base_url=os.getenv("OPENAI_BASE_URL"),
+                **_openai_key_kwargs(),
                 use_responses_api=True,
                 output_version="v0",
                 max_retries=max_retries,
@@ -180,6 +198,7 @@ def get_llm(
                 temperature=temperature,
                 stop_sequences=stop_sequences,
                 base_url=os.getenv("OPENAI_BASE_URL"),
+                **_openai_key_kwargs(),
                 max_retries=max_retries,
                 timeout=request_timeout,
             )
@@ -206,7 +225,7 @@ def get_llm(
                 return payload
 
         return _AzureChatOpenAINoTemp(
-            openai_api_key=os.getenv("AZURE_OPENAI_API_KEY") or os.getenv("OPENAI_API_KEY"),
+            openai_api_key=credentials.getenv("AZURE_OPENAI_API_KEY") or credentials.getenv("OPENAI_API_KEY"),
             azure_endpoint=os.getenv("ENDPOINT_URL") or os.getenv("OPENAI_ENDPOINT"),
             azure_deployment=deployment,
             openai_api_version=API_VERSION,
@@ -232,15 +251,19 @@ def get_llm(
             model = azure_deployment
 
         # Allow Azure Anthropic credentials while keeping backwards compatibility.
-        # Anthropic SDK reads ANTHROPIC_API_KEY / ANTHROPIC_BASE_URL from environment.
-        azure_anthropic_key = os.getenv("AZURE_ANTHROPIC_API_KEY")
-        if uses_azure_anthropic and azure_anthropic_key:
-            os.environ["ANTHROPIC_API_KEY"] = azure_anthropic_key
-        if uses_azure_anthropic and azure_endpoint:
-            os.environ["ANTHROPIC_BASE_URL"] = azure_endpoint
+        # Resolved into locals and handed to the client below rather than written
+        # back into os.environ: an env write landing inside another session's
+        # code step would hand the key straight to model-written code.
+        azure_anthropic_key = credentials.getenv("AZURE_ANTHROPIC_API_KEY")
+        anthropic_key = azure_anthropic_key if uses_azure_anthropic else None
+        anthropic_base_url = azure_endpoint if uses_azure_anthropic else None
+        if anthropic_key is None:
+            anthropic_key = credentials.getenv("ANTHROPIC_API_KEY")
+        if anthropic_base_url is None:
+            anthropic_base_url = os.getenv("ANTHROPIC_BASE_URL")
 
         # Ensure ANTHROPIC_API_KEY is loaded from bash_profile if not in environment
-        if not os.environ.get("ANTHROPIC_API_KEY"):
+        if not anthropic_key:
             try:
                 import subprocess
 
@@ -251,10 +274,20 @@ def get_llm(
                     timeout=5,
                 )
                 if result.stdout.strip():
-                    os.environ["ANTHROPIC_API_KEY"] = result.stdout.strip()
+                    anthropic_key = result.stdout.strip()
                     logger.info("Loaded ANTHROPIC_API_KEY from ~/.bash_profile")
             except Exception:
                 logger.warning("Could not load ANTHROPIC_API_KEY from bash_profile", exc_info=True)
+
+        # Passed explicitly rather than left to the SDK's os.environ lookup:
+        # credentials are stripped from the environment while generated code
+        # runs, so a chat starting during another chat's code step would
+        # otherwise build a client with no key.
+        anthropic_kwargs: dict[str, Any] = {}
+        if anthropic_key:
+            anthropic_kwargs["api_key"] = anthropic_key
+        if anthropic_base_url:
+            anthropic_kwargs["base_url"] = anthropic_base_url
 
         return ChatAnthropic(
             model=model,
@@ -263,6 +296,7 @@ def get_llm(
             stop_sequences=stop_sequences,
             max_retries=max_retries,
             default_request_timeout=request_timeout,
+            **anthropic_kwargs,
         )
 
     elif source == "Gemini":
@@ -281,7 +315,7 @@ def get_llm(
         return ChatOpenAI(
             model=model,
             temperature=temperature,
-            api_key=os.getenv("GEMINI_API_KEY"),
+            api_key=credentials.getenv("GEMINI_API_KEY"),
             base_url="https://generativelanguage.googleapis.com/v1beta/openai/",
             stop_sequences=stop_sequences,
             max_retries=max_retries,
@@ -298,7 +332,7 @@ def get_llm(
         return ChatOpenAI(
             model=model,
             temperature=temperature,
-            api_key=os.getenv("GROQ_API_KEY"),
+            api_key=credentials.getenv("GROQ_API_KEY"),
             base_url="https://api.groq.com/openai/v1",
             stop_sequences=stop_sequences,
             max_retries=max_retries,

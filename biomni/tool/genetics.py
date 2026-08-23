@@ -73,8 +73,6 @@ from datetime import datetime
 
 import numpy as np
 import pandas as pd
-import torch
-from torch import nn, optim
 
 
 def bayesian_finemapping_with_deep_vi(
@@ -189,6 +187,15 @@ def bayesian_finemapping_with_deep_vi(
             )
 
     # Convert data to tensors
+    # Imported here, not at module scope. This is the only function in the
+    # module that needs torch, and torch is not in the shipped environment - a
+    # module-level import made `from biomni.tool.genetics import
+    # liftover_coordinates` (which has nothing to do with torch) raise
+    # ModuleNotFoundError, taking all nine of this module's registered tools
+    # down with it.
+    import torch
+    from torch import nn, optim
+
     z_scores = torch.FloatTensor(gwas_summary["z_score"].values)
     ld_tensor = torch.FloatTensor(ld_matrix)
 

@@ -19,10 +19,19 @@ which is the platform's own suggestion and comfortably longer than a working
 session's think time - and reports inactive only when nothing has run and nobody
 has touched it for that long.
 
-An idle *open* session is deliberately not enough on its own. Browser tabs get
-left open for days, and honouring one would make a pod that has done nothing
-since Tuesday claim to be busy. A tab someone is actually using generates
-activity by definition, which the window above already covers.
+**An open session earns a longer grace period.** The platform has confirmed that
+``active: false`` will eventually reclaim pods, so a false negative costs a
+researcher their working state: preferences, run records and chat threads are on
+the volume and survive, but the REPL namespace their analysis has been building
+up - loaded frames, fitted models - is in memory and does not. While at least one
+browser session is connected, the window widens to
+``BIOMNI_STATUS_OPEN_SESSION_INACTIVITY_SECONDS`` (default 12 hours), which
+covers a long reading-and-thinking gap without pretending a tab left open since
+Tuesday is work in progress. With nobody connected, the shorter window applies
+and an abandoned pod is still reclaimable within a working day.
+
+Work in flight is unconditional: a run reports active however long it takes, so
+neither window can interrupt one.
 
 **The elapsed-time check uses a monotonic clock**, so a wall-clock correction
 (NTP step, container clock skew) cannot make a busy app look idle for hours.
@@ -64,32 +73,49 @@ SCHEMA_VERSION = 1
 # abandoned pod is visible within a working day.
 DEFAULT_INACTIVITY_SECONDS = 4 * 60 * 60
 
+# The same, while a browser session is connected. Longer because reclaiming a
+# pod out from under a connected user destroys their in-memory REPL state.
+DEFAULT_OPEN_SESSION_INACTIVITY_SECONDS = 12 * 60 * 60
 
-def inactivity_window_seconds() -> float:
-    """The configured grace period, in seconds (``BIOMNI_STATUS_INACTIVITY_SECONDS``).
+
+def _window_seconds(env_name: str, default: int) -> float:
+    """A grace period read from ``env_name``, in seconds.
 
     ``0`` is a legitimate setting: it means "active only while something is
-    actually running". An unparseable value falls back to the default rather
-    than raising - a typo in a manifest must not break the status endpoint.
+    actually running". An unparseable or negative value falls back to the
+    default rather than raising - a typo in a manifest must not break the status
+    endpoint, and must not silently make the pod look reclaimable either.
     """
-    raw = os.getenv("BIOMNI_STATUS_INACTIVITY_SECONDS", "").strip()
+    raw = os.getenv(env_name, "").strip()
     if not raw:
-        return float(DEFAULT_INACTIVITY_SECONDS)
+        return float(default)
     try:
         value = float(raw)
     except ValueError:
-        logger.warning(
-            "ignoring invalid BIOMNI_STATUS_INACTIVITY_SECONDS=%r; using %ss",
-            raw,
-            DEFAULT_INACTIVITY_SECONDS,
-        )
-        return float(DEFAULT_INACTIVITY_SECONDS)
+        logger.warning("ignoring invalid %s=%r; using %ss", env_name, raw, default)
+        return float(default)
     if value < 0:
-        logger.warning(
-            "ignoring negative BIOMNI_STATUS_INACTIVITY_SECONDS=%r; using %ss", raw, DEFAULT_INACTIVITY_SECONDS
-        )
-        return float(DEFAULT_INACTIVITY_SECONDS)
+        logger.warning("ignoring negative %s=%r; using %ss", env_name, raw, default)
+        return float(default)
     return value
+
+
+def inactivity_window_seconds() -> float:
+    """Grace period with nobody connected (``BIOMNI_STATUS_INACTIVITY_SECONDS``)."""
+    return _window_seconds("BIOMNI_STATUS_INACTIVITY_SECONDS", DEFAULT_INACTIVITY_SECONDS)
+
+
+def open_session_window_seconds() -> float:
+    """Grace period while a session is connected (``BIOMNI_STATUS_OPEN_SESSION_INACTIVITY_SECONDS``).
+
+    Never shorter than :func:`inactivity_window_seconds`: a deployment that
+    raises only the base window should not accidentally make a connected user
+    *more* likely to be reclaimed than a disconnected one.
+    """
+    return max(
+        _window_seconds("BIOMNI_STATUS_OPEN_SESSION_INACTIVITY_SECONDS", DEFAULT_OPEN_SESSION_INACTIVITY_SECONDS),
+        inactivity_window_seconds(),
+    )
 
 
 def _coerce_count(value: Any) -> int | None:
@@ -213,7 +239,6 @@ class ActivityTracker:
 
     def snapshot(self) -> dict[str, Any]:
         """The ``GET /status`` payload."""
-        window = inactivity_window_seconds()
         with self._lock:
             jobs = self._background_jobs
             sessions = self._open_sessions
@@ -223,6 +248,10 @@ class ActivityTracker:
         reported_sessions = self._read_gauge("open_sessions")
         if reported_sessions is not None:
             sessions = reported_sessions
+
+        # Resolved after the gauge, because which window applies depends on
+        # whether anyone is actually connected.
+        window = open_session_window_seconds() if sessions > 0 else inactivity_window_seconds()
 
         payload: dict[str, Any] = {
             "active": jobs > 0 or idle_seconds <= window,
@@ -279,9 +308,11 @@ def register_status_route(app: Any, *, path: str = "/status") -> None:
 __all__ = [
     "ACTIVITY",
     "DEFAULT_INACTIVITY_SECONDS",
+    "DEFAULT_OPEN_SESSION_INACTIVITY_SECONDS",
     "SCHEMA_VERSION",
     "ActivityTracker",
     "inactivity_window_seconds",
+    "open_session_window_seconds",
     "register_status_route",
     "status_payload",
 ]

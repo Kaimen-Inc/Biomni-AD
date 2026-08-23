@@ -9,6 +9,8 @@ import os
 from dataclasses import dataclass
 from pathlib import Path
 
+from biomni import credentials
+
 
 def resolve_data_lake_root() -> str:
     """Where the built-in data lake (including the AD-specific ``biomniAD`` subtree) lives on disk.
@@ -43,9 +45,9 @@ def resolve_default_llm(fallback: str = "claude-sonnet-4-5") -> str:
     deployment = os.getenv("DEPLOYMENT_NAME")
     endpoint = os.getenv("ENDPOINT_URL")
     if deployment and endpoint:
-        if os.getenv("AZURE_OPENAI_API_KEY"):
+        if credentials.getenv("AZURE_OPENAI_API_KEY"):
             return f"azure-{deployment}"
-        if "anthropic" in endpoint and os.getenv("AZURE_ANTHROPIC_API_KEY"):
+        if "anthropic" in endpoint and credentials.getenv("AZURE_ANTHROPIC_API_KEY"):
             return deployment
 
     return fallback
@@ -143,8 +145,8 @@ class BiomniConfig:
             self.temperature = float(os.getenv("BIOMNI_TEMPERATURE"))
         if os.getenv("BIOMNI_CUSTOM_BASE_URL"):
             self.base_url = os.getenv("BIOMNI_CUSTOM_BASE_URL")
-        if os.getenv("BIOMNI_CUSTOM_API_KEY"):
-            self.api_key = os.getenv("BIOMNI_CUSTOM_API_KEY")
+        if credentials.getenv("BIOMNI_CUSTOM_API_KEY"):
+            self.api_key = credentials.getenv("BIOMNI_CUSTOM_API_KEY")
         if os.getenv("BIOMNI_SOURCE"):
             self.source = os.getenv("BIOMNI_SOURCE")
 
@@ -165,7 +167,9 @@ class BiomniConfig:
             self.enable_llm_telemetry = os.getenv("BIOMNI_ENABLE_LLM_TELEMETRY").lower() == "true"
 
         # Protocols.io access token (prefer specific env vars)
-        env_token = os.getenv("PROTOCOLS_IO_ACCESS_TOKEN") or os.getenv("BIOMNI_PROTOCOLS_IO_ACCESS_TOKEN")
+        env_token = credentials.getenv("PROTOCOLS_IO_ACCESS_TOKEN") or credentials.getenv(
+            "BIOMNI_PROTOCOLS_IO_ACCESS_TOKEN"
+        )
         if env_token:
             self.protocols_io_access_token = env_token
 

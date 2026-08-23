@@ -7,8 +7,21 @@ name: Docker image
 #      operators can `docker pull ghcr.io/<owner>/biomni-ad:<tag>` rather
 #      than building locally or shipping a tarball.
 #
-# The build job runs on every relevant change; the publish job is gated on
-# the push event and skips for PRs (where pushing would be wrong anyway).
+# The image ships the AD Workbench environment (~650 pinned packages, multi-GB),
+# because that is the environment the agent is actually described as having -
+# see the Dockerfile's BIOMNI_ENV_FILE comment. Building it on every PR would
+# cost tens of minutes and crowd the runner's disk for changes that cannot
+# affect it, so the `scope` job below picks:
+#
+#   * the full environment when the PR touches the environment files, the
+#     Dockerfile or docker/ - exactly the changes that can break it, and when a
+#     slow build is worth the wall-clock;
+#   * the minimal environment otherwise, as a fast canary that still proves the
+#     Dockerfile, the package install and the entrypoint are sound.
+#
+# Push and manual runs always build the full environment: that is what ships.
+# Use the "Run workflow" button to force a full build on a branch before merging
+# something risky.
 
 on:
   pull_request:
@@ -20,7 +33,7 @@ on:
       - ".dockerignore"
       - "docker-compose.yml"
       - "docker/**"
-      - "biomni_env/environment.yml"
+      - "biomni_env/**"
       - "pyproject.toml"
       - "MANIFEST.in"
       - "biomni/**"
@@ -37,6 +50,7 @@ on:
       - feat/adworkbench
     tags:
       - "v*"
+  workflow_dispatch:
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
@@ -45,15 +59,77 @@ concurrency:
 env:
   REGISTRY: ghcr.io
   IMAGE_NAME: ${{ github.repository }}
+  FULL_ENV: biomni_env/adworkbench_env.yml
+  MINIMAL_ENV: biomni_env/environment.yml
 
 jobs:
+  scope:
+    name: Decide build scope
+    # Skipped on push, where publish builds the real thing anyway and there is
+    # no reason to pay for a full-history checkout.
+    if: github.event_name != 'push'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      env_file: ${{ steps.pick.outputs.env_file }}
+      heavy: ${{ steps.pick.outputs.heavy }}
+    steps:
+      # Full history: the comparison below needs the PR's merge base, which a
+      # shallow clone does not have.
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Pick the environment to build
+        id: pick
+        env:
+          EVENT: ${{ github.event_name }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          set -euo pipefail
+          if [ "$EVENT" != "pull_request" ]; then
+            env_file="$FULL_ENV"; heavy=true
+            reason="manual run - building what actually ships"
+          else
+            # Collected first rather than piped into grep: `git diff | grep -q`
+            # takes SIGPIPE on a large diff once grep exits early, and pipefail
+            # turns that into a failed step (141).
+            changed=$(git diff --name-only "$BASE_SHA"...HEAD)
+            if printf '%s\n' "$changed" | grep -E '^(biomni_env/|docker/|Dockerfile$|pyproject.toml$)' >/dev/null; then
+              env_file="$FULL_ENV"; heavy=true
+              reason="this change can affect the shipped environment"
+            else
+              env_file="$MINIMAL_ENV"; heavy=false
+              reason="ordinary change - fast canary on the minimal environment"
+            fi
+          fi
+          echo "env_file=$env_file" >> "$GITHUB_OUTPUT"
+          echo "heavy=$heavy" >> "$GITHUB_OUTPUT"
+          echo "Building with \`$env_file\` ($reason)." >> "$GITHUB_STEP_SUMMARY"
+
   build:
     name: Build (verify Dockerfile)
+    # PRs and manual runs. On push the publish job below builds the same image
+    # and pushes it, so running both would build a multi-GB image twice for one
+    # commit; a build failure there fails the job and publishes nothing, which is
+    # the protection this job used to provide.
+    if: github.event_name != 'push'
+    needs: scope
     runs-on: ubuntu-latest
     permissions:
       contents: read
     steps:
       - uses: actions/checkout@v4
+
+      # The hosted runner ships ~14 GB free; a full-environment image plus its
+      # build cache does not comfortably fit alongside the preinstalled Android
+      # SDK and .NET toolchains.
+      - name: Reclaim runner disk
+        if: needs.scope.outputs.heavy == 'true'
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /usr/local/.ghcup
+          df -h /
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
@@ -67,6 +143,8 @@ jobs:
           file: Dockerfile
           push: false
           tags: biomni-ad:ci
+          build-args: |
+            BIOMNI_ENV_FILE=${{ needs.scope.outputs.env_file }}
           cache-from: type=gha
           # ``mode=min`` (default) keeps PR cache writes small - only the
           # final layers are exported. The publish job uses ``mode=max``
@@ -85,13 +163,17 @@ jobs:
     # Only push on push events (branch / tag), not PRs - pushing PR builds
     # would require a token that PRs from forks shouldn't have anyway.
     if: github.event_name == 'push'
-    needs: build
     runs-on: ubuntu-latest
     permissions:
       contents: read
       packages: write
     steps:
       - uses: actions/checkout@v4
+
+      - name: Reclaim runner disk
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /usr/local/.ghcup
+          df -h /
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3

@@ -195,6 +195,8 @@ def run_with_timeout(func, args=None, kwargs=None, timeout=600):
     import queue
     import threading
 
+    from biomni.observability import capture_context
+
     result_queue = queue.Queue()
 
     def thread_func(func, args, kwargs, result_queue):
@@ -205,8 +207,15 @@ def run_with_timeout(func, args=None, kwargs=None, timeout=600):
         except Exception as e:
             result_queue.put(("error", str(e)))
 
+    # Snapshot the caller's context so the worker inherits session_id / run_id.
+    # A bare threading.Thread starts with an empty context, which would leave
+    # run_python_repl unable to tell which chat it is executing for - every
+    # concurrent session would land in the shared default namespace, which is
+    # precisely the cross-talk this propagation exists to prevent.
+    ctx = capture_context()
+
     # Start a separate thread
-    thread = threading.Thread(target=thread_func, args=(func, args, kwargs, result_queue))
+    thread = threading.Thread(target=ctx.run, args=(thread_func, func, args, kwargs, result_queue))
     thread.daemon = True  # Set as daemon so it will be killed when main thread exits
     thread.start()
 
@@ -232,6 +241,14 @@ def run_with_timeout(func, args=None, kwargs=None, timeout=600):
                     ctypes.pythonapi.PyThreadState_SetAsyncExc(ctypes.c_long(thread_id), None)
         except Exception as e:
             print(f"Error trying to terminate thread: {e}")
+
+        # The thread is abandoned, not stopped, so anything it left open stays
+        # open. A credential scrub window is the one that matters: nobody will
+        # run its finally, and the process would keep running with its
+        # credentials stripped out of os.environ.
+        from biomni.credentials import release_thread
+
+        release_thread(thread_id)
 
         return f"ERROR: Code execution timed out after {timeout} seconds. Please try with simpler inputs or break your task into smaller steps."
 
@@ -1335,12 +1352,13 @@ def inject_custom_functions_to_repl(custom_functions: dict):
         of custom functions during code execution.
     """
     if custom_functions:
-        # Access the persistent namespace used by run_python_repl
-        from biomni.tool.support_tools import _persistent_namespace
+        # Access the calling session's namespace used by run_python_repl
+        from biomni.tool.support_tools import get_repl_namespace
 
         # Inject all custom functions into the execution namespace
+        namespace = get_repl_namespace()
         for name, func in custom_functions.items():
-            _persistent_namespace[name] = func
+            namespace[name] = func
 
         # Also make them available in builtins for broader access
         import builtins

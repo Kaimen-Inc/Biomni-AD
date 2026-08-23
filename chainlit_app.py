@@ -14,6 +14,7 @@ Environment variables:
 """
 
 import asyncio
+import hmac
 import inspect
 import logging
 import os
@@ -22,6 +23,7 @@ import sys
 import threading
 import time
 import uuid
+import zipfile
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field, replace
 from pathlib import Path
@@ -75,7 +77,13 @@ import chainlit as cl
 from biomni.artifact import build_run_id, get_all_files
 from biomni.config import default_config, resolve_data_lake_root, resolve_default_llm
 from biomni.health import register_health_routes
-from biomni.identity import UserIdentity, resolve_identity, single_user_mode, trust_auth_headers
+from biomni.identity import (
+    UserIdentity,
+    password_identity,
+    resolve_identity,
+    single_user_mode,
+    trust_auth_headers,
+)
 from biomni.observability import (
     RunHeartbeat,
     bind_run,
@@ -88,6 +96,7 @@ from biomni.observability import (
 )
 from biomni.run_registry import RunRecord, RunRegistry, build_run_registry
 from biomni.status import ACTIVITY, register_status_route
+from biomni.tool.support_tools import discard_repl_session
 from biomni.workspace_prefs import (
     NullPrefsStore,
     OutputTarget,
@@ -717,6 +726,37 @@ def _apply_workspace_settings(ws: WorkspaceSession, settings: dict) -> tuple[Wor
 os.environ.setdefault("CHAINLIT_AUTH_SECRET", ensure_auth_secret(_resolve_workspace_root()))
 
 
+def demo_password() -> str:
+    """The shared sign-in password, or empty when none is configured.
+
+    Set ``BIOMNI_DEMO_PASSWORD`` to put a login in front of a deployment that
+    has no authentication gateway - a demo box on a public IP being the case it
+    exists for. It is deliberately the *only* knob: one password, any username,
+    and the username becomes the identity, so people get separate conversation
+    histories without anyone administering accounts.
+    """
+    return os.getenv("BIOMNI_DEMO_PASSWORD", "").strip()
+
+
+def _user_from_identity(identity: UserIdentity) -> cl.User:
+    """One place that turns a resolved identity into Chainlit's user.
+
+    Shared by both auth paths so preferences, run records and chat threads
+    always key off the same string, whichever way the caller signed in.
+    """
+    return cl.User(
+        identifier=identity.scoped_key(),
+        display_name=identity.display_name,
+        metadata={
+            "source": identity.source,
+            "email": identity.email or "",
+            "workspace_id": identity.workspace_id or "",
+            "given_name": identity.given_name or "",
+            "family_name": identity.family_name or "",
+        },
+    )
+
+
 @cl.header_auth_callback
 def header_auth_callback(headers) -> cl.User | None:
     """Identify the caller from the authentication gateway's headers.
@@ -740,17 +780,39 @@ def header_auth_callback(headers) -> cl.User | None:
     if not identity.is_authenticated and trust_auth_headers():
         logger.warning("rejecting a session with no gateway identity headers (BIOMNI_TRUST_AUTH_HEADERS is on)")
         return None
-    return cl.User(
-        identifier=identity.scoped_key(),
-        display_name=identity.display_name,
-        metadata={
-            "source": identity.source,
-            "email": identity.email or "",
-            "workspace_id": identity.workspace_id or "",
-            "given_name": identity.given_name or "",
-            "family_name": identity.family_name or "",
-        },
-    )
+    if not identity.is_authenticated and demo_password():
+        # A password is configured, so the anonymous fallback below must not
+        # apply - it would hand every caller a session without ever asking, and
+        # the login form would be decorative. Returning None sends them to it.
+        return None
+    return _user_from_identity(identity)
+
+
+def password_auth_callback(username: str, password: str) -> cl.User | None:
+    """Check the shared password and turn the username into an identity.
+
+    Registered only when ``BIOMNI_DEMO_PASSWORD`` is set (see below), so a
+    deployment behind a real gateway never grows a second way in.
+    """
+    expected = demo_password()
+    if not expected or not hmac.compare_digest(password or "", expected):
+        logger.warning("rejected a sign-in attempt for username=%r", (username or "")[:32])
+        return None
+    identity = password_identity(username)
+    if not identity.is_authenticated:
+        logger.warning("rejected a sign-in with an unusable username")
+        return None
+    logger.info("password sign-in accepted (identity=%s)", identity.storage_key())
+    return _user_from_identity(identity)
+
+
+# Registered conditionally rather than with a decorator: Chainlit renders a
+# login form whenever a password callback exists, so an unconditional
+# registration would put one in front of gateway deployments that already
+# authenticate upstream.
+if demo_password():
+    cl.password_auth_callback(password_auth_callback)
+    logger.info("password sign-in enabled (BIOMNI_DEMO_PASSWORD is set)")
 
 
 @cl.data_layer
@@ -954,6 +1016,15 @@ async def on_chat_end():
     last thing that happened, and the idle window should run from it.
     """
     ACTIVITY.session_closed("chat")
+
+    # Release this chat's Python state. Without it the namespace - which holds
+    # whatever dataframes and models the conversation loaded - stays resident
+    # until the LRU cap pushes it out, which on a busy deployment means holding
+    # up to BIOMNI_MAX_REPL_SESSIONS of them for the life of the pod.
+    try:
+        discard_repl_session()
+    except Exception:
+        logger.debug("could not release REPL session state", exc_info=True)
 
 
 @cl.on_chat_resume
@@ -1779,6 +1850,109 @@ async def _save_ad1_artifacts(agent, final_state: dict, initial_files: set):
     await _save_run_artifacts_for_agent(agent, final_state, initial_files)
 
 
+# How large a run may be before it is offered as a path rather than a download.
+# A single run can write a multi-GB intermediate; zipping and serving that would
+# stall the app and the browser rather than help anyone.
+def _positive_int_env(name: str, default: int) -> int:
+    """An int from the environment, never fatal.
+
+    Parsed at import, so an unparseable value - a typo, or the very common
+    set-but-empty ConfigMap key, for which os.getenv returns "" rather than
+    the default - would otherwise raise before uvicorn binds and leave the
+    pod in CrashLoopBackOff naming a tuning knob."""
+    raw = os.getenv(name, "").strip()
+    if not raw:
+        return default
+    try:
+        value = int(raw)
+    except ValueError:
+        logger.warning("ignoring invalid %s=%r; using %d", name, raw, default)
+        return default
+    if value < 1:
+        logger.warning("ignoring non-positive %s=%r; using %d", name, raw, default)
+        return default
+    return value
+
+
+MAX_PACKAGE_BYTES = _positive_int_env("BIOMNI_MAX_PACKAGE_MB", 200) * 1024 * 1024
+
+# How many archives to keep. Each one roughly duplicates the run it came from,
+# and the run directory itself is never deleted, so without a bound the output
+# volume fills about twice as fast forever - on the shipped Kubernetes manifest
+# that is a 20Gi PVC. Archives are pure derived data: dropping an old one costs
+# nothing but regenerating it, and the files it held are still on disk.
+MAX_RETAINED_PACKAGES = _positive_int_env("BIOMNI_MAX_PACKAGES", 20)
+
+
+def _prune_packages(packages_dir: str, keep: int) -> int:
+    """Drop all but the ``keep`` newest archives. Returns how many were removed."""
+    try:
+        archives = [os.path.join(packages_dir, name) for name in os.listdir(packages_dir) if name.endswith(".zip")]
+    except OSError:
+        return 0
+    if len(archives) <= keep:
+        return 0
+    archives.sort(key=lambda path: os.path.getmtime(path), reverse=True)
+    removed = 0
+    for stale in archives[keep:]:
+        try:
+            os.remove(stale)
+            removed += 1
+        except OSError:
+            logger.debug("could not remove stale run package %s", stale, exc_info=True)
+    if removed:
+        logger.info("removed %d run package(s) beyond the %d most recent", removed, keep)
+    return removed
+
+
+def _package_run_dir(run_dir: str, run_id: str) -> tuple[str | None, str]:
+    """Zip a finished run so the user can take it away. Returns ``(path, note)``.
+
+    The run directory lives on the server, so telling somebody its path is only
+    useful if they have a shell there - which a demo attendee, or anyone on the
+    hosted deployment, does not. This turns the same directory into one download.
+
+    The archive is written to a hidden ``.packages`` sibling rather than inside
+    the run directory, so it never ends up inside the next archive of itself and
+    never shows up in the run's own file listing (``get_all_files`` skips dotted
+    directories).
+    """
+    if not run_dir or not os.path.isdir(run_dir):
+        return None, "no run directory"
+
+    files: list[str] = []
+    total = 0
+    for root, dirs, names in os.walk(run_dir):
+        dirs[:] = [d for d in dirs if not d.startswith(".")]
+        for name in names:
+            if name.startswith("."):
+                continue
+            path = os.path.join(root, name)
+            try:
+                total += os.path.getsize(path)
+            except OSError:
+                continue
+            files.append(path)
+
+    if not files:
+        return None, "the run produced no files"
+    if total > MAX_PACKAGE_BYTES:
+        return None, f"{len(files)} files, {total / 1e6:.0f} MB - too large to package"
+
+    packages_dir = os.path.join(os.path.dirname(run_dir), ".packages")
+    os.makedirs(packages_dir, exist_ok=True)
+    archive = os.path.join(packages_dir, f"{run_id}.zip")
+    try:
+        with zipfile.ZipFile(archive, "w", zipfile.ZIP_DEFLATED) as bundle:
+            for path in files:
+                bundle.write(path, arcname=os.path.join(run_id, os.path.relpath(path, run_dir)))
+    except Exception:
+        logger.exception("could not package run %s", run_id)
+        return None, "packaging failed"
+    _prune_packages(packages_dir, MAX_RETAINED_PACKAGES)
+    return archive, f"{len(files)} files, {os.path.getsize(archive) / 1e6:.1f} MB"
+
+
 async def _save_run_artifacts_for_agent(
     agent,
     final_state: dict,
@@ -1812,7 +1986,19 @@ async def _save_run_artifacts_for_agent(
             logger.exception("Artifact saving failed for run %s", run_id)
             step.output = f"⚠️ Artifact saving failed: {exc}"
 
-    await cl.Message(content=f"**Run complete.** Artifacts saved to:\n`{current_run_dir}`").send()
+    # Offer the whole run as one download. The path below is on the server, so
+    # for anyone without a shell there the attachment is the only way to get the
+    # report, the notebook and the generated files off the box.
+    archive, note = await run_in_executor(_package_run_dir, current_run_dir, run_id)
+    if archive:
+        await cl.Message(
+            content=f"**Run complete.** Download everything this run produced ({note}), or find it on the server at `{current_run_dir}`.",
+            elements=[cl.File(name=f"{run_id}.zip", path=archive, display="inline")],
+        ).send()
+    else:
+        await cl.Message(
+            content=f"**Run complete.** Artifacts saved to:\n`{current_run_dir}`\n\n_No download offered: {note}._"
+        ).send()
 
 
 # ---------------------------------------------------------------------------

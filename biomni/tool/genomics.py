@@ -1,7 +1,6 @@
 import os
 from pathlib import Path
 
-import esm
 import gget
 import gseapy
 import numpy as np
@@ -9,7 +8,6 @@ import pandas as pd
 import requests
 import scanpy as sc
 import torch
-from pybiomart import Dataset
 from tqdm import tqdm
 
 from biomni.llm import get_llm
@@ -152,6 +150,9 @@ def interspecies_gene_conversion(
     >>> print(result)
     Gene conversion results saved to: human_to_mouse_gene_conversion.csv
     """
+    # Deferred: pybiomart is absent from the shipped environment, and a
+    # module-level import took every tool in this module down with it.
+    from pybiomart import Dataset
 
     steps = []
 
@@ -340,6 +341,12 @@ def generate_gene_embeddings_with_ESM_models(
     steps.append(f"Loading ESM model: {model_name}")
     # model loading take a while, once loaded for smaller models generation is relatively fast
     # running bilion model ESM models require FSDP or GPUs with 80 GB of memory
+    # Imported here rather than at module scope: esm is absent from the
+    # shipped environment, and a top-level import made every tool in this
+    # module unimportable - the agent is offered them all and gets
+    # ModuleNotFoundError for ones that never needed esm.
+    import esm
+
     model, alphabet = esm.pretrained.load_model_and_alphabet(model_name)
     batch_converter = alphabet.get_batch_converter()
     model.eval()
@@ -841,14 +848,20 @@ def create_scvi_embeddings_scRNA(adata_filename, batch_key, label_key, data_dir)
 
 def create_harmony_embeddings_scRNA(adata_filename, batch_key, data_dir):
     # https://pypi.org/project/harmony-pytorch/
-    from harmony import harmonize
+    # harmonypy, not harmony-pytorch: the deep-learning implementation was
+    # dropped from the environment (it dragged in torch and ~3GB of CUDA for
+    # one function). Same Harmony algorithm, C++ backend, numpy-only - but the
+    # entry point is run_harmony(data, meta, vars_use) returning an object whose
+    # .Z_corr is the corrected embedding, transposed relative to harmonize().
+    import harmonypy
 
     steps = []
     steps.append(f"Loading AnnData from {data_dir}/{adata_filename}")
     adata = sc.read_h5ad(f"{data_dir}/{adata_filename}")
 
     steps.append(f"Running Harmony integration with batch key: {batch_key}")
-    adata.obsm["X_harmony"] = harmonize(adata.obsm["X_pca"], adata.obs, batch_key=batch_key)
+    _harmony = harmonypy.run_harmony(adata.obsm["X_pca"], adata.obs, vars_use=[batch_key])
+    adata.obsm["X_harmony"] = _harmony.Z_corr.T
 
     output_filename = f"{data_dir}/harmony_emb_data.h5ad"
     steps.append(f"Saving the Harmony embeddings to {output_filename}.")

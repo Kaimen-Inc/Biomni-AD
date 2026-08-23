@@ -434,7 +434,17 @@ def setup_logging(
     redactor = Redactor.from_environ()
     formatter: logging.Formatter = JsonFormatter(redactor) if fmt != "text" else HumanFormatter(redactor)
 
-    handler = logging.StreamHandler(stream or sys.stdout)
+    # Never bind the REPL's stdout router (biomni/tool/support_tools.py). It
+    # forwards writes to whichever generated-code execution is running in the
+    # calling context, so a record emitted during a code step would be captured
+    # into that snippet's output - shown to the user as if their code had
+    # printed it, and missing from the log pipeline entirely. Duck-typed on the
+    # router's ``fallback`` rather than imported, to keep this module free of a
+    # dependency on the tool layer.
+    target_stream = stream or sys.stdout
+    target_stream = getattr(target_stream, "fallback", target_stream)
+
+    handler = logging.StreamHandler(target_stream)
     handler.setFormatter(formatter)
     setattr(handler, _MANAGED_ATTR, True)
 
