@@ -96,6 +96,7 @@ from biomni.observability import (
 )
 from biomni.run_registry import RunRecord, RunRegistry, build_run_registry
 from biomni.status import ACTIVITY, register_status_route
+from biomni.tool.support_tools import discard_repl_session
 from biomni.workspace_prefs import (
     NullPrefsStore,
     OutputTarget,
@@ -1015,6 +1016,15 @@ async def on_chat_end():
     last thing that happened, and the idle window should run from it.
     """
     ACTIVITY.session_closed("chat")
+
+    # Release this chat's Python state. Without it the namespace - which holds
+    # whatever dataframes and models the conversation loaded - stays resident
+    # until the LRU cap pushes it out, which on a busy deployment means holding
+    # up to BIOMNI_MAX_REPL_SESSIONS of them for the life of the pod.
+    try:
+        discard_repl_session()
+    except Exception:
+        logger.debug("could not release REPL session state", exc_info=True)
 
 
 @cl.on_chat_resume

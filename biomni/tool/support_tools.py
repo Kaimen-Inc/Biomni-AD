@@ -181,20 +181,25 @@ def _evict_locked(now: float) -> None:
     their working state and means the cap is set too low for the deployment.
     """
     while len(_sessions) > _MAX_SESSIONS:
+        # Genuinely idle entries first, oldest of those first; only if none has
+        # aged out is a live session taken, because that costs somebody their
+        # working state. Both branches evict - the cap has to hold either way -
+        # but which entry goes, and how loudly, is the point.
+        idle = [(k, v) for k, v in _sessions.items() if now - v.last_used >= _SESSION_TTL_SECONDS]
+        if idle:
+            key, session = idle[0]
+            _sessions.pop(key)
+            logger.info("released idle REPL session state (key=%s, idle=%.0fs)", key, now - session.last_used)
+            continue
         key, session = next(iter(_sessions.items()))
-        idle_for = now - session.last_used
-        if idle_for >= _SESSION_TTL_SECONDS:
-            _sessions.pop(key)
-            logger.info("released idle REPL session state (key=%s, idle=%.0fs)", key, idle_for)
-        else:
-            _sessions.pop(key)
-            logger.warning(
-                "evicted REPL session state that was still in use (key=%s, idle=%.0fs); "
-                "raise BIOMNI_MAX_REPL_SESSIONS above %d - that chat's variables are gone",
-                key,
-                idle_for,
-                _MAX_SESSIONS,
-            )
+        _sessions.pop(key)
+        logger.warning(
+            "evicted REPL session state that was still in use (key=%s, idle=%.0fs); "
+            "raise BIOMNI_MAX_REPL_SESSIONS above %d - that chat's variables are gone",
+            key,
+            now - session.last_used,
+            _MAX_SESSIONS,
+        )
 
 
 def _session() -> _ReplSession:

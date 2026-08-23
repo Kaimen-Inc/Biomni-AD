@@ -342,3 +342,28 @@ def test_bounding_keeps_the_most_recent_figures(monkeypatch: pytest.MonkeyPatch)
 
     assert remaining == sorted(remaining)[-2:], f"kept the wrong figures: {remaining}"
     plt.close("all")
+
+
+def test_eviction_prefers_a_genuinely_idle_session(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A live chat should not be evicted while an aged-out one is available."""
+    import time as _time
+
+    monkeypatch.setattr(support_tools, "_MAX_SESSIONS", 2)
+    monkeypatch.setattr(support_tools, "_SESSION_TTL_SECONDS", 100.0)
+    now = _time.monotonic()
+
+    with support_tools._sessions_lock:
+        support_tools._sessions.clear()
+        stale = support_tools._ReplSession(now - 500)  # aged out
+        fresh = support_tools._ReplSession(now)  # in use, but older in LRU order
+        support_tools._sessions["stale"] = stale
+        support_tools._sessions["fresh"] = fresh
+
+    with bind_run(session_id="newcomer"):
+        get_repl_namespace()
+
+    with support_tools._sessions_lock:
+        keys = set(support_tools._sessions)
+
+    assert "stale" not in keys, "the idle session should have gone first"
+    assert "fresh" in keys, "a live session was evicted while an idle one was available"

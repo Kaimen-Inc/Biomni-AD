@@ -108,3 +108,7 @@ docs/source/_autosummary/
 
 # Local review artifacts (lavish-axi)
 .lavish/
+
+# Compose mounts this for preferences, run records and the chat database.
+# It holds the JWT signing secret; it must never be committed.
+state/

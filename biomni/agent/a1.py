@@ -13,6 +13,11 @@ from typing import Any, Literal, TypedDict
 
 logger = logging.getLogger(__name__)
 
+
+class _RunDirReady(Exception):
+    """Internal signal: the caller supplied the run directory already."""
+
+
 import pandas as pd
 from dotenv import load_dotenv
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage
@@ -2565,6 +2570,17 @@ Each library is listed with its description to help you understand its functiona
 
         # Create run directory BEFORE execution so OUTPUT_DIR is available during code runs.
         try:
+            # A caller that already made one wins - AD1.go builds its run
+            # directory before delegating here, and building a second would send
+            # generated outputs to one directory while the report, trace and
+            # notebook are written into the other. Run ids carry a random token,
+            # so the two could never coincide.
+            existing = getattr(self, "_current_run_dir", None)
+            if existing and os.path.isdir(existing):
+                current_run_dir = existing
+                run_id = os.path.basename(existing)
+                os.environ["BIOMNI_OUTPUT_PATH"] = current_run_dir
+                raise _RunDirReady
             run_id = self._build_run_id(prompt)
             runs_root = self._resolve_runs_root()
             os.makedirs(runs_root, exist_ok=True)
@@ -2572,6 +2588,8 @@ Each library is listed with its description to help you understand its functiona
             os.makedirs(current_run_dir, exist_ok=True)
             self._current_run_dir = current_run_dir
             os.environ["BIOMNI_OUTPUT_PATH"] = current_run_dir
+        except _RunDirReady:
+            pass
         except Exception as _e:
             print(f"Warning: Could not pre-create run directory: {_e}")
             current_run_dir = None
