@@ -80,6 +80,36 @@ def _positive_int(env_name: str, default: int) -> int:
 
 _MAX_SESSIONS = _positive_int("BIOMNI_MAX_REPL_SESSIONS", 32)
 
+# Upper bound on figures left open across executions. Capture deliberately no
+# longer closes them - doing so mid-savefig blanked the user's next save - but
+# pyplot's figure manager is process-global, so without a bound every figure any
+# chat ever drew stays resident for the life of the pod. Closing the oldest
+# preserves the Jupyter-like behaviour that makes a figure usable in a later
+# step, while keeping the registry from growing without limit.
+_MAX_OPEN_FIGURES = _positive_int("BIOMNI_MAX_OPEN_FIGURES", 50)
+
+
+def _bound_open_figures() -> int:
+    """Close the oldest figures beyond the cap. Returns how many were closed."""
+    try:
+        import matplotlib.pyplot as plt
+    except Exception:
+        return 0
+    try:
+        numbers = sorted(plt.get_fignums())
+    except Exception:
+        return 0
+    excess = len(numbers) - _MAX_OPEN_FIGURES
+    if excess <= 0:
+        return 0
+    for number in numbers[:excess]:
+        try:
+            plt.close(number)
+        except Exception:
+            logger.debug("could not close figure %s", number, exc_info=True)
+    logger.info("closed %d matplotlib figure(s) beyond the %d kept open", excess, _MAX_OPEN_FIGURES)
+    return excess
+
 
 # How long a session's state is protected from eviction, regardless of how many
 # other chats have run since. The cap below bounds memory; this bounds the
@@ -280,6 +310,7 @@ def run_python_repl(command: str) -> str:
             output = f"{partial}Error: {str(e)}" if partial else f"Error: {str(e)}"
         finally:
             _active_buffer.reset(token)
+            _bound_open_figures()
         return output
 
     command = command.strip("```").strip()

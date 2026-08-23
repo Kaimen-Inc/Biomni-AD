@@ -291,3 +291,36 @@ def test_capture_leaves_the_figure_open_for_further_work(tmp_path) -> None:
     )
 
     assert "title: added after saving" in out, out
+
+
+def test_open_figures_are_bounded(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Not closing on save is right; leaving them forever is not.
+
+    pyplot's figure manager is process-global, so without a cap every figure any
+    chat ever drew stays resident for the life of the pod.
+    """
+    plt = pytest.importorskip("matplotlib.pyplot")
+    monkeypatch.setattr(support_tools, "_MAX_OPEN_FIGURES", 3)
+    plt.close("all")
+
+    run_python_repl(
+        "import matplotlib; matplotlib.use('Agg')\nimport matplotlib.pyplot as plt\nfor _ in range(8): plt.figure()\n"
+    )
+
+    assert len(plt.get_fignums()) <= 3, f"figures leaked: {plt.get_fignums()}"
+    plt.close("all")
+
+
+def test_bounding_keeps_the_most_recent_figures(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The one just drawn is the one the next step is most likely to want."""
+    plt = pytest.importorskip("matplotlib.pyplot")
+    monkeypatch.setattr(support_tools, "_MAX_OPEN_FIGURES", 2)
+    plt.close("all")
+
+    run_python_repl(
+        "import matplotlib; matplotlib.use('Agg')\nimport matplotlib.pyplot as plt\nfor _ in range(5): plt.figure()\n"
+    )
+    remaining = plt.get_fignums()
+
+    assert remaining == sorted(remaining)[-2:], f"kept the wrong figures: {remaining}"
+    plt.close("all")

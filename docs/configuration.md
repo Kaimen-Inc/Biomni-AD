@@ -312,6 +312,7 @@ All are optional; the defaults are what a single-user local run wants.
 |---|---|---|
 | `BIOMNI_MAX_REPL_SESSIONS` | `32` | How many chats' Python state is held in memory. Each retained session costs whatever that conversation loaded, so keep it well under the container's memory limit rather than raising it freely. |
 | `BIOMNI_REPL_SESSION_TTL_SECONDS` | `21600` (6h) | How long a chat's state is protected from eviction regardless of how many other chats have run. Eviction is silent from the user's side - their next step fails with `NameError` for a frame they correctly believe they loaded - so idle sessions are dropped first and evicting a live one is logged as a warning. |
+| `BIOMNI_MAX_OPEN_FIGURES` | `50` | Matplotlib figures left open across executions. Capture does not close them - doing so mid-`savefig` blanked the next save - but pyplot's figure registry is process-global, so the oldest are closed beyond this cap to stop every figure any chat ever drew staying resident. |
 | `BIOMNI_ADVERTISE_ALL_LIBRARIES` | off | Skip the check that narrows the advertised library catalogue to what is installed. Normally the agent is only told about libraries it can actually import; set this for a deployment that installs more after the image is built. |
 | `BIOMNI_SCRUB_ENV_EXTRA` / `BIOMNI_SCRUB_ENV_ALLOW` | unset | Add to, or exempt from, the credential-shaped names hidden from generated code while it runs. Both are read once at startup, so code running in the sandbox cannot re-arm them. |
 
