@@ -562,11 +562,16 @@ def _output_dir_description(ws: WorkspaceSession) -> str:
     )
     if not ws.output.writable:
         text += f"\n\n⚠️ That directory is not writable. {ws.output.reason or ''}".rstrip()
-    elif ws.output.is_ephemeral:
-        text += (
-            "\n\n⚠️ Container-local storage: results are lost when the application restarts. "
-            "Set a path on a mounted volume, or ask an operator to configure BIOMNI_OUTPUT_ROOT."
-        )
+    else:
+        if ws.output.is_ephemeral:
+            text += (
+                "\n\n⚠️ Container-local storage: results are lost when the application restarts. "
+                "Set a path on a mounted volume, or ask an operator to configure BIOMNI_OUTPUT_ROOT."
+            )
+        # Shown even when the resolved directory is fine: a working fallback is
+        # exactly the case where a mis-set BIOMNI_OUTPUT_ROOT goes unnoticed.
+        if ws.output.reason:
+            text += f"\n\n⚠️ This is not the configured location - {ws.output.reason}."
     if ws.persistence_label:
         text += f"\n\nSettings are stored in {ws.persistence_label}."
     return text
@@ -1317,11 +1322,19 @@ async def on_settings_update(settings: dict):
     summary += f"\n\nOutputs: `{ws.output.path}`"
     if not ws.output.writable:
         summary += f"\n\n⚠️ That directory is not writable. {ws.output.reason or ''}".rstrip()
-    elif ws.output.is_ephemeral:
-        summary += "\n\n⚠️ Container-local storage: results are lost when the application restarts."
+    else:
+        if ws.output.is_ephemeral:
+            summary += "\n\n⚠️ Container-local storage: results are lost when the application restarts."
+        if ws.output.reason:
+            summary += f"\n\n⚠️ This is not the configured location - {ws.output.reason}."
 
     if ws.prefs.remember and not persisted:
-        summary += "\n\n_Note: settings could not be saved, so they apply to this session only._"
+        # NullPrefsStore knows exactly why it cannot persist - no signed-in user
+        # is an expected state, an unwritable volume is an operator bug - and
+        # the two are indistinguishable without it.
+        detail = ws.store.reason if isinstance(ws.store, NullPrefsStore) else None
+        summary += "\n\n_Note: settings could not be saved, so they apply to this session only"
+        summary += f" ({detail})._" if detail else "._"
 
     await cl.Message(content=summary).send()
 

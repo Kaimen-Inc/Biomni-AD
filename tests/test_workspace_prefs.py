@@ -9,6 +9,7 @@ preferred one has become unwritable.
 from __future__ import annotations
 
 import json
+import logging
 import os
 
 import pytest
@@ -250,6 +251,83 @@ def test_unwritable_preference_falls_through_to_next_candidate(tmp_path):
         assert target.reason and "preference" in target.reason
     finally:
         ro.chmod(0o700)
+
+
+def test_fallback_reason_names_the_setting_and_the_path(tmp_path, monkeypatch):
+    """An unwritable BIOMNI_OUTPUT_ROOT must be distinguishable from an unset one.
+
+    Regression test for the GRIP report: the app fell back to /app/runs and said
+    nothing about why, which looked identical to the env var being ignored.
+    """
+    ro = tmp_path / "ro"
+    ro.mkdir()
+    ro.chmod(0o500)
+    try:
+        monkeypatch.setenv("BIOMNI_OUTPUT_ROOT", str(ro / "outputs"))
+        target = wp.resolve_output_dir(wp.WorkspacePrefs(), workspace_root=str(tmp_path))
+        assert target.source == "workspace"
+        assert target.reason
+        assert "BIOMNI_OUTPUT_ROOT" in target.reason
+        assert str(ro / "outputs") in target.reason
+    finally:
+        ro.chmod(0o700)
+
+
+def test_skipped_output_root_is_logged(tmp_path, monkeypatch, caplog):
+    ro = tmp_path / "ro"
+    ro.mkdir()
+    ro.chmod(0o500)
+    try:
+        monkeypatch.setenv("BIOMNI_OUTPUT_ROOT", str(ro / "outputs"))
+        with caplog.at_level(logging.WARNING, logger="biomni.workspace_prefs"):
+            wp.resolve_output_dir(wp.WorkspacePrefs(), workspace_root=str(tmp_path))
+        messages = [record.getMessage() for record in caplog.records]
+        assert any("BIOMNI_OUTPUT_ROOT" in message and str(ro / "outputs") in message for message in messages)
+    finally:
+        ro.chmod(0o700)
+
+
+def test_cwd_fallback_on_a_mounted_volume_is_not_ephemeral():
+    """A disk mounted over the fallback directory is durable, and must not warn.
+
+    GRIP mounts one at /app/runs - the exact path the fallback uses - so the
+    "results are lost on restart" warning was false there.
+    """
+    on_volume = wp.OutputTarget(path="/app/runs", source="cwd-fallback", writable=True, mounted_volume=True)
+    assert not on_volume.is_ephemeral
+
+    container_local = wp.OutputTarget(path="/app/runs", source="cwd-fallback", writable=True)
+    assert container_local.is_ephemeral
+
+
+def test_on_mounted_volume_needs_positive_evidence(tmp_path, monkeypatch):
+    """Unverifiable means "not a volume", so the UI never over-promises."""
+    monkeypatch.setattr(wp, "_mount_fstype", lambda _path: None)
+    assert wp.on_mounted_volume(str(tmp_path)) is False
+
+    # A distinct mount that is RAM-backed or the container's own layer is not
+    # durability either, however different its device number.
+    monkeypatch.setattr(wp, "_mount_fstype", lambda _path: "tmpfs")
+    assert wp.on_mounted_volume(str(tmp_path)) is False
+    monkeypatch.setattr(wp, "_mount_fstype", lambda _path: "overlay")
+    assert wp.on_mounted_volume(str(tmp_path)) is False
+
+
+def test_mount_fstype_picks_the_longest_matching_mountpoint(tmp_path, monkeypatch):
+    mounts = tmp_path / "mounts"
+    mounts.write_text(
+        "overlay / overlay rw 0 0\n"
+        "/dev/sdh /app/runs ext4 rw 0 0\n"
+        "//stg.file.core.windows.net/share /app/user-data cifs rw 0 0\n"
+    )
+    real_open = open
+    monkeypatch.setattr(
+        "builtins.open",
+        lambda path, *a, **k: real_open(mounts, *a, **k) if path == "/proc/self/mounts" else real_open(path, *a, **k),
+    )
+    assert wp._mount_fstype("/app/runs/run_1") == "ext4"
+    assert wp._mount_fstype("/app/user-data/x") == "cifs"
+    assert wp._mount_fstype("/app/biomni") == "overlay"
 
 
 def test_ensure_output_dir_creates_it(tmp_path):

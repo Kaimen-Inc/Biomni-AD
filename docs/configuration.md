@@ -200,8 +200,28 @@ With nothing selected, the workspace is advertised by top-level folder name only
 4. `./runs/` next to the process.
 
 Only the last is container-local: results written there are lost when the pod
-restarts, and the UI says so. Set `BIOMNI_OUTPUT_ROOT` to a mounted volume, or
-make the workspace mount read-write, to keep results.
+restarts, and the UI says so - unless a volume is mounted over that very path,
+which the resolver checks against the mount table rather than assuming.
+Set `BIOMNI_OUTPUT_ROOT` to a mounted volume, or make the workspace mount
+read-write, to keep results.
+
+"First **writable** candidate" is load-bearing, and the usual reason a
+configured `BIOMNI_OUTPUT_ROOT` appears to be ignored is that it is not
+writable by the image's non-root user (UID 57439).
+Writability is tested with `os.access(W_OK|X_OK)` on the nearest existing
+ancestor, so the check reflects the mount's reported ownership and mode.
+When a candidate is skipped, `resolve_output_dir` logs a WARNING naming the
+setting and the rejected path, and the UI reports it on the resolved location -
+a silently working fallback is precisely the case where a mis-set variable would
+otherwise go unnoticed.
+
+Two mount-level causes account for nearly all of it:
+
+- **Block volumes** (Azure Disk, EBS, any PVC the kubelet formats) mount as
+  `root:root 0755`. Fix with `securityContext.fsGroup: 57439` on the pod.
+- **SMB/NFS shares** (Azure Files) ignore `fsGroup` entirely. Fix with
+  `mountOptions: [uid=57439, gid=57439, dir_mode=0770, file_mode=0770, mfsymlinks]`
+  on the StorageClass or PV.
 
 Files attached to a message with 📎 are copied into `<output dir>/uploads/`
 under their original names, and it is that path the agent is given.
