@@ -287,6 +287,71 @@ def _nearest_existing(path: str) -> str:
     return current
 
 
+# Filesystem types that carry no durability even though they are a distinct
+# mount: a RAM disk survives nothing, and the container's own writable layer is
+# exactly what a restart discards.
+_RAM_FSTYPES = frozenset({"tmpfs", "ramfs", "devtmpfs"})
+_CONTAINER_LAYER_FSTYPES = frozenset({"overlay", "overlayfs", "aufs"})
+
+
+def _mount_fstype(path: str) -> str | None:
+    """Filesystem type backing ``path``, per ``/proc/self/mounts``.
+
+    ``None`` when the mount table is unavailable (macOS, a container with no
+    ``/proc``), which callers treat as "cannot tell" rather than as an answer.
+    The longest matching mount point wins, since mount points nest.
+    """
+    try:
+        with open("/proc/self/mounts", encoding="utf-8") as handle:
+            lines = handle.readlines()
+    except OSError:
+        return None
+
+    target = os.path.abspath(path)
+    best_mountpoint = ""
+    fstype: str | None = None
+    for line in lines:
+        fields = line.split()
+        if len(fields) < 3:
+            continue
+        # Mount points are escaped octal-style in /proc (a space is \040).
+        mountpoint = fields[1].replace("\\040", " ")
+        if target != mountpoint and not target.startswith(mountpoint.rstrip("/") + "/"):
+            continue
+        if len(mountpoint) >= len(best_mountpoint):
+            best_mountpoint, fstype = mountpoint, fields[2]
+    return fstype
+
+
+def on_mounted_volume(path: str) -> bool:
+    """Whether ``path`` sits on durable storage an operator mounted here.
+
+    This is what separates "results are lost on restart" from "results are on a
+    volume" - a distinction the app used to infer from *which candidate won*,
+    and so got wrong in the GRIP deployment, where a disk is mounted over the
+    very directory the last-resort fallback uses.
+
+    Deliberately requires positive evidence: a Linux mount table showing a
+    distinct, non-RAM, non-container-layer filesystem. Anything it cannot verify
+    reads as "not a volume", so the UI keeps warning rather than promising
+    durability nobody checked.
+    """
+    target = _nearest_existing(path)
+    if not target:
+        return False
+
+    fstype = _mount_fstype(target)
+    if fstype is None or fstype in _RAM_FSTYPES or fstype in _CONTAINER_LAYER_FSTYPES:
+        return False
+
+    # A separate mount from the root filesystem is the thing that makes it a
+    # volume; sharing the root's device just means "somewhere under /".
+    try:
+        return os.stat(target).st_dev != os.stat("/").st_dev
+    except OSError:
+        return False
+
+
 def is_writable_dir(path: str | None) -> bool:
     """Whether ``path`` is (or could be created as) a writable directory.
 
@@ -359,11 +424,32 @@ class OutputTarget:
     source: str  # "preference" | "env" | "workspace" | "cwd-fallback"
     writable: bool
     reason: str | None = None
+    # Whether the resolved path is on a mounted volume. Determined once, at
+    # resolution time, so :attr:`is_ephemeral` stays a pure property that the UI
+    # can read on every render without touching the filesystem.
+    mounted_volume: bool = False
 
     @property
     def is_ephemeral(self) -> bool:
-        """True when outputs land in container-local storage and die with the pod."""
-        return self.source == "cwd-fallback"
+        """True when outputs land in storage that a restart discards.
+
+        The last-resort location is container-local *unless* an operator mounted
+        a volume over it - which the GRIP deployment does, with a disk at
+        ``/app/runs``. Warning there was a false alarm that sent people looking
+        for a configuration bug instead of the real one, so the claim is now
+        checked against the mount table (see :func:`on_mounted_volume`).
+        """
+        return self.source == "cwd-fallback" and not self.mounted_volume
+
+
+# How each candidate is named to a human. The env entry deliberately spells the
+# variable, so a warning about it is directly actionable by an operator.
+_SOURCE_LABELS = {
+    "preference": "the output directory you configured",
+    "env": "BIOMNI_OUTPUT_ROOT",
+    "workspace": "the workspace default",
+    "cwd-fallback": "the container-local fallback",
+}
 
 
 def _output_candidates(prefs: WorkspacePrefs, workspace_root: str | None) -> list[tuple[str, str]]:
@@ -390,6 +476,18 @@ def _output_candidates(prefs: WorkspacePrefs, workspace_root: str | None) -> lis
     return candidates
 
 
+def _describe_skipped(entries: list[tuple[str, str]]) -> str:
+    """Human explanation of which configured locations were passed over, and why.
+
+    Names the setting and the path, because "fell back from env" told a reader
+    that something was rejected without telling them what to go and fix.
+    """
+    uid = getattr(os, "getuid", lambda: None)()
+    by_whom = f" by uid {uid}" if uid is not None else ""
+    parts = [f"{_SOURCE_LABELS.get(source, source)} ({path}) is not writable{by_whom}" for path, source in entries]
+    return "; ".join(parts)
+
+
 def resolve_output_dir(prefs: WorkspacePrefs, *, workspace_root: str | None = None) -> OutputTarget:
     """Decide where run outputs go, preferring what the user asked for.
 
@@ -397,19 +495,37 @@ def resolve_output_dir(prefs: WorkspacePrefs, *, workspace_root: str | None = No
     preference pointing at a deleted folder degrades instead of failing every
     run. The returned target always has a path; ``writable`` says whether it can
     actually be used.
+
+    Every skipped candidate is logged at WARNING. Silence here cost a round-trip
+    with the GRIP team: an unwritable ``BIOMNI_OUTPUT_ROOT`` looked exactly like
+    an ignored ``BIOMNI_OUTPUT_ROOT``, and nothing in the logs or the UI could
+    tell the two apart.
     """
     candidates = _output_candidates(prefs, workspace_root)
-    skipped: list[str] = []
+    skipped: list[tuple[str, str]] = []
 
     for path, source in candidates:
         if is_writable_dir(path):
             reason = None
             if skipped:
-                reason = f"fell back from {', '.join(skipped)} (not writable)"
-            return OutputTarget(path=path, source=source, writable=True, reason=reason)
-        skipped.append(source)
+                reason = f"fell back from {_describe_skipped(skipped)}"
+            return OutputTarget(
+                path=path,
+                source=source,
+                writable=True,
+                reason=reason,
+                mounted_volume=on_mounted_volume(path),
+            )
+        if source != "cwd-fallback":
+            logger.warning(
+                "output location %s (%s) is not writable; falling back to the next candidate",
+                _SOURCE_LABELS.get(source, source),
+                path,
+            )
+        skipped.append((path, source))
 
     path, source = candidates[-1]
+    logger.error("no writable output location found; tried %s", _describe_skipped(skipped))
     return OutputTarget(
         path=path,
         source=source,

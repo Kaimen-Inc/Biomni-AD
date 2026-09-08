@@ -80,6 +80,23 @@ spec:
       # degrades gracefully, the failure is silent: outputs fall back to the
       # ephemeral ./runs and preferences stop persisting, making the volume a
       # no-op. fsGroup makes the kubelet chgrp the volume to that GID.
+      #
+      # IMPORTANT: fsGroup only works on *block* volumes (Azure Disk, EBS, any
+      # ReadWriteOnce PVC the kubelet formats). It is silently ignored by SMB
+      # and NFS, so a deployment putting BIOMNI_OUTPUT_ROOT or BIOMNI_STATE_DIR
+      # on Azure Files must instead set ownership in the StorageClass or PV:
+      #
+      #   mountOptions:
+      #     - uid=57439
+      #     - gid=57439
+      #     - dir_mode=0770
+      #     - file_mode=0770
+      #     - mfsymlinks
+      #
+      # Without it the share mounts as root:root 0755, os.access() reports it
+      # unwritable to UID 57439, and outputs fall back exactly as if the env var
+      # had never been set. resolve_output_dir() logs a WARNING naming the
+      # rejected path when this happens.
       securityContext:
         fsGroup: 57439
         fsGroupChangePolicy: OnRootMismatch
