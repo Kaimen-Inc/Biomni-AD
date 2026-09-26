@@ -11,13 +11,19 @@ import pytest
 from chainlit_ui.live_runs import LiveRuns
 
 
-class FakeSession:
-    """A stand-in for chainlit's WebsocketSession - only emit matters here."""
+class FakeUser:
+    def __init__(self, identifier: str) -> None:
+        self.identifier = identifier
 
-    def __init__(self, name: str) -> None:
+
+class FakeSession:
+    """A stand-in for chainlit's WebsocketSession: its emitters and its login."""
+
+    def __init__(self, name: str, user: str = "alice") -> None:
         self.name = name
         self.emit = f"emit-{name}"
         self.emit_call = f"emit_call-{name}"
+        self.user = FakeUser(user)
 
 
 @pytest.fixture
@@ -114,6 +120,14 @@ def test_reattach_survives_a_session_that_will_not_take_it(runs: LiveRuns) -> No
     assert runs.is_live("t1")
 
 
+def test_a_run_is_never_handed_to_another_users_connection(runs: LiveRuns) -> None:
+    running = FakeSession("running", user="alice")
+    runs.register("t1", running)
+
+    assert runs.reattach("t1", FakeSession("intruder", user="bob")) is False
+    assert running.emit == "emit-running"
+
+
 def test_reattach_needs_both_a_thread_and_a_session(runs: LiveRuns) -> None:
     runs.register("t1", FakeSession("running"))
     assert runs.reattach(None, FakeSession("reopened")) is False
@@ -142,16 +156,25 @@ def test_cancel_stops_the_task_that_is_doing_the_work(runs: LiveRuns) -> None:
     task = FakeTask()
     runs.register("t1", FakeSession("running"), task)
 
-    assert runs.cancel("t1") is True
+    assert runs.cancel("t1", FakeSession("reopened")) is True
     assert task.cancelled
 
 
+def test_only_the_user_who_started_a_run_can_stop_it(runs: LiveRuns) -> None:
+    task = FakeTask()
+    runs.register("t1", FakeSession("running", user="alice"), task)
+
+    assert runs.cancel("t1", FakeSession("intruder", user="bob")) is False
+    assert runs.cancel("t1", None) is False
+    assert not task.cancelled
+
+
 def test_cancel_is_false_with_nothing_to_stop(runs: LiveRuns) -> None:
-    assert runs.cancel("t1") is False
-    assert runs.cancel(None) is False
+    assert runs.cancel("t1", FakeSession("a")) is False
+    assert runs.cancel(None, FakeSession("a")) is False
 
     runs.register("t2", FakeSession("no-task"))
-    assert runs.cancel("t2") is False
+    assert runs.cancel("t2", FakeSession("a")) is False
 
 
 def test_a_finished_task_is_not_cancelled_again(runs: LiveRuns) -> None:
@@ -159,7 +182,7 @@ def test_a_finished_task_is_not_cancelled_again(runs: LiveRuns) -> None:
     task = FakeTask(done=True)
     runs.register("t1", FakeSession("running"), task)
 
-    assert runs.cancel("t1") is False
+    assert runs.cancel("t1", FakeSession("reopened")) is False
     assert not task.cancelled
 
 

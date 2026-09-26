@@ -185,17 +185,16 @@ def query_pubmed(query: str, max_papers: int = 10, max_retries: int = 3) -> str:
         return f"Error querying PubMed: {e}"
 
 
-def search_google(query: str, num_results: int = 3, language: str = "en") -> list[dict]:
+def search_google(query: str, num_results: int = 3, language: str = "en") -> str:
     """Search using Google search.
 
     Args:
-        query (str): The search query (e.g., "protocol text or seach question")
-        num_results (int): Number of results to return (default: 10)
+        query (str): The search query (e.g., "protocol text or search question")
+        num_results (int): Number of results to return (default: 3)
         language (str): Language code for search results (default: 'en')
-        pause (float): Pause between searches to avoid rate limiting (default: 2.0 seconds)
 
     Returns:
-        List[dict]: List of dictionaries containing search results with title and URL
+        str: One Title / URL / Description block per result, or an empty string
 
     """
     try:
@@ -221,7 +220,7 @@ def advanced_web_search_claude(
     query: str,
     max_searches: int = 1,
     max_retries: int = 3,
-) -> tuple[str, list[dict[str, str]], list]:
+) -> str:
     """
     Initiate an advanced web search by launching a specialized agent to collect relevant information and citations through multiple rounds of web searches for a given query.
     Craft the query carefully for the search agent to find the most relevant information.
@@ -244,24 +243,21 @@ def advanced_web_search_claude(
 
     import anthropic
 
-    try:
-        from biomni.config import default_config
+    from biomni.config import default_config
+    from biomni.tool.availability import claude_web_search_problem
 
-        model = default_config.llm
-        api_key = default_config.api_key
-        if not api_key:
-            api_key = credentials.getenv("ANTHROPIC_API_KEY")
-    except ImportError:
-        model = "claude-4-sonnet-latest"
-        api_key = credentials.getenv("ANTHROPIC_API_KEY")
+    # Checked here as well as when the tool list is built, because generated
+    # code can import the function whether or not it was advertised - and
+    # behind the LLM proxy a direct call to Anthropic must never be made.
+    problem = claude_web_search_problem()
+    if problem:
+        raise RuntimeError(problem)
 
-    if "claude" not in model:
-        raise ValueError("Model must be a Claude model.")
-
-    if not api_key:
-        raise ValueError("Set your api_key explicitly.")
-
-    client = anthropic.Anthropic(api_key=api_key)
+    # ANTHROPIC_API_KEY only. default_config.api_key belongs to a custom model
+    # endpoint, and sending it to api.anthropic.com would hand that endpoint's
+    # credential to a third party.
+    client = anthropic.Anthropic(api_key=credentials.getenv("ANTHROPIC_API_KEY"))
+    model = default_config.llm
     tool_def = {
         "type": "web_search_20250305",
         "name": "web_search",

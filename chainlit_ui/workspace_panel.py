@@ -238,6 +238,15 @@ def build_scope_inventory(
     """
     if not workspace_root:
         return ""
+    if not os.access(workspace_root, os.R_OK | os.X_OK):
+        # Otherwise the agent is told the workspace has no folders and to look
+        # for itself, and a user whose data is all there hears that it is empty.
+        return (
+            f"User workspace ({workspace_root})\n\n"
+            "This application is NOT permitted to read the workspace, so what it contains is unknown. "
+            "If a task needs the user's data, tell them it cannot be accessed from this app until the "
+            "deployment's storage permissions are fixed. Do not guess at what the workspace contains."
+        )
 
     if scope.is_default or not scope.roots:
         names = list(top_level_dirs if top_level_dirs is not None else list_top_level_dirs(workspace_root))

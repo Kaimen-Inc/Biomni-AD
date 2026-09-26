@@ -47,11 +47,20 @@ COPY ${BIOMNI_ENV_FILE} /tmp/biomni_env.yml
 # BuildKit cache mounts: pkg downloads and pip's HTTP cache persist across
 # builds for speed, but never enter any image layer. ``sharing=locked`` so
 # parallel builds (e.g. arm64 + amd64) don't corrupt the cache.
+#
+# Chainlit is pinned (here and in adworkbench_env.yml) to the version the app
+# is tested against: chainlit_app.py hooks its login dependency and styles its
+# settings dialog, and an unpinned upgrade would change either without notice.
+# Its data layer needs SQLAlchemy (in the env) and a database driver: aiosqlite
+# for the default SQLite store, asyncpg for BIOMNI_THREADS_DB_URL on Postgres.
+# Not chainlit[custom-data]: that also pulls the S3, GCS and Azure storage SDKs
+# for attachments, which this app keeps inline (chainlit_ui/persistence.py), and
+# the GCS one upgrades requests past what the env's arxiv client accepts.
 RUN --mount=type=cache,target=/opt/conda/pkgs,sharing=locked \
     --mount=type=cache,target=/root/.cache/pip,sharing=locked \
     micromamba create -y -n biomni_e1 -f /tmp/biomni_env.yml && \
     micromamba run -n biomni_e1 pip install --upgrade pip && \
-    micromamba run -n biomni_e1 pip install "chainlit[custom-data]>=2.8" "aiosqlite>=0.20" --index-url https://pypi.org/simple/
+    micromamba run -n biomni_e1 pip install "chainlit==2.11.1" "aiosqlite>=0.20,<1" "asyncpg>=0.30,<1" --index-url https://pypi.org/simple/
 
 # Editable install of the biomni package. Stage 2 copies the same source
 # tree to the same /app path so the .pth pointer resolves at runtime.

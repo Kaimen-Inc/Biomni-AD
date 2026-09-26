@@ -29,6 +29,10 @@ def _clear_llm_env(monkeypatch: pytest.MonkeyPatch) -> None:
         "AZURE_OPENAI_API_KEY",
         "GEMINI_API_KEY",
         "GROQ_API_KEY",
+        # A configured proxy outranks every other source (tests/test_llm_proxy.py).
+        "BIOMNI_LLM_PROXY_URL",
+        "BIOMNI_LLM_PROXY_SCHEMA",
+        "BIOMNI_LLM_PROXY_API_KEY",
     ):
         monkeypatch.delenv(k, raising=False)
 
@@ -153,6 +157,23 @@ def test_get_llm_inherits_config_resilience(monkeypatch: pytest.MonkeyPatch) -> 
     kw = captured[-1]
     assert kw["max_retries"] == 9
     assert kw["default_request_timeout"] == 7.5
+
+
+@pytest.mark.parametrize(
+    ("model", "env_name"), [("gemini-1.5-pro", "GEMINI_API_KEY"), ("some-groq-mixtral", "GROQ_API_KEY")]
+)
+def test_an_openai_compatible_provider_never_gets_the_openai_key(monkeypatch, model, env_name) -> None:
+    """Without its own key ChatOpenAI would read OPENAI_API_KEY - and send it to Google or Groq."""
+    captured = _install_fake_provider_module(monkeypatch, "langchain_openai", "ChatOpenAI")
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-openai")
+
+    with pytest.raises(ValueError, match=env_name):
+        get_llm(model)
+    assert not captured
+
+    monkeypatch.setenv(env_name, "provider-key")
+    get_llm(model)
+    assert captured[-1]["api_key"].get_secret_value() == "provider-key"
 
 
 def test_get_llm_config_none_timeout_disables(monkeypatch: pytest.MonkeyPatch) -> None:

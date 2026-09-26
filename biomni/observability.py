@@ -124,6 +124,40 @@ def capture_context() -> contextvars.Context:
     return contextvars.copy_context()
 
 
+_pool_patch_lock = threading.Lock()
+
+
+def carry_context_into_thread_pools() -> None:
+    """Run every ``ThreadPoolExecutor`` task in the context that submitted it.
+
+    For the code the model writes, which runs in this process and routinely fans
+    work out to a thread pool. Each task would otherwise start with an empty
+    context and so belong to no chat session: the LLM proxy refuses its model
+    calls for want of a user to bill, and what it prints misses the step that
+    ran it. The model writes ``from concurrent.futures import ThreadPoolExecutor``,
+    not ours, so the stdlib class itself is patched - the same wrapping LangChain
+    gives its own pools (``ContextThreadPoolExecutor``).
+
+    Per task, not per worker thread: a pool's threads outlive the task that
+    started them and go on to serve whichever session submits next, so a thread
+    that kept its creator's context would run the next session's work as the
+    previous user. Installed once, idempotently, and never removed.
+    """
+    from concurrent.futures import ThreadPoolExecutor
+
+    with _pool_patch_lock:
+        if getattr(ThreadPoolExecutor.submit, "_carries_context", False):
+            return
+        submit = ThreadPoolExecutor.submit
+
+        def submit_in_context(self, fn, /, *args, **kwargs):
+            return submit(self, contextvars.copy_context().run, fn, *args, **kwargs)
+
+        submit_in_context.__doc__ = submit.__doc__
+        submit_in_context._carries_context = True  # type: ignore[attr-defined]
+        ThreadPoolExecutor.submit = submit_in_context  # type: ignore[method-assign]
+
+
 # ---------------------------------------------------------------------------
 # Redaction
 # ---------------------------------------------------------------------------
@@ -134,6 +168,11 @@ def capture_context() -> contextvars.Context:
 # protects against a short, non-secret value (e.g. an empty placeholder key)
 # triggering collateral redaction of unrelated log text.
 _SECRET_ENV_HINTS = ("KEY", "TOKEN", "SECRET", "PASSWORD", "PASSWD", "CREDENTIAL", "AUTH")
+
+# Settings that trip a hint but hold no secret: the names of the gateway's
+# identity headers. Scrubbing them turned every mention of Ai-App-User-Context
+# into "[REDACTED]" - the warnings explaining a misconfigured one included.
+_NOT_SECRET_ENV = re.compile(r"^BIOMNI_(?:AUTH_\w+_HEADER|TRUST_AUTH_HEADERS)$")
 
 REDACTED = "[REDACTED]"
 
@@ -182,7 +221,7 @@ class Redactor:
             if not value:
                 continue
             upper = name.upper()
-            if any(hint in upper for hint in _SECRET_ENV_HINTS):
+            if any(hint in upper for hint in _SECRET_ENV_HINTS) and not _NOT_SECRET_ENV.match(upper):
                 secrets.append(value)
         if redact_emails is None:
             redact_emails = _env_flag(env.get("BIOMNI_LOG_REDACT_EMAILS"), default=False)
@@ -520,7 +559,7 @@ def diff_usage_summary(before: Mapping[str, Any], after: Mapping[str, Any]) -> d
     the delta (a straight subtraction of ratios would be meaningless).
     """
     counters = ("calls", "input_tokens", "output_tokens", "cache_read_tokens", "cache_creation_tokens", "total_tokens")
-    delta = {key: int(after.get(key, 0)) - int(before.get(key, 0)) for key in counters}
+    delta: dict[str, Any] = {key: int(after.get(key, 0)) - int(before.get(key, 0)) for key in counters}
     cached = delta["cache_read_tokens"]
     fresh = delta["input_tokens"]
     delta["cache_hit_ratio"] = round(cached / (cached + fresh), 4) if (cached + fresh) > 0 else 0.0
@@ -586,12 +625,11 @@ class RunHeartbeat:
         self._thread.start()
         return self
 
-    def __exit__(self, *_exc: object) -> bool:
+    def __exit__(self, *_exc: object) -> None:  # None: never suppresses an exception
         self._stop.set()
         thread = self._thread
         if thread is not None:
             thread.join(timeout=2.0)
-        return False  # never suppress exceptions
 
     def _loop(self) -> None:
         # Event.wait returns True once stopped; the loop ends without a final emit.

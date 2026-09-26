@@ -1,0 +1,11 @@
+gene,chromosome,p_value
+APOE,19,1e-300
+BIN1,2,3e-60
+CLU,8,2e-25
+PICALM,11,5e-24
+CR1,1,8e-22
+TREM2,6,4e-20
+SORL1,11,6e-18
+ABCA7,19,9e-16
+MS4A6A,11,3e-14
+CD33,19,2e-11

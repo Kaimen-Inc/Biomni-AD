@@ -41,7 +41,7 @@ from io import StringIO
 
 from biomni import credentials
 from biomni.credentials import scrubbed_environ
-from biomni.observability import session_id_var
+from biomni.observability import carry_context_into_thread_pools, session_id_var
 
 logger = logging.getLogger(__name__)
 
@@ -336,6 +336,9 @@ def run_python_repl(command: str) -> str:
         preexisting_figures = set(_open_figure_numbers())
         buffer = StringIO()
         _ensure_stdout_router()
+        # Thread pools the snippet starts stay in its session: their model calls
+        # name its user to the LLM proxy, and their prints land in this buffer.
+        carry_context_into_thread_pools()
         token = _active_buffer.set(buffer)
 
         try:

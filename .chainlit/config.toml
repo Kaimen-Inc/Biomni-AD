@@ -128,7 +128,8 @@ cot = "full"
 
 # Specify a CSS file that can be used to customize the user interface.
 # The CSS file can be served from the public directory or via an external link.
-# custom_css = "/public/test.css"
+# biomni.css lets the settings dialog's help text keep its paragraph breaks.
+custom_css = "/public/biomni.css"
 
 # Specify additional attributes for a custom CSS file
 # custom_css_attributes = "media=\"print\""
@@ -157,6 +158,9 @@ alert_style = "classic"
 # custom_meta_image_url = "https://chainlit-cloud.s3.eu-west-3.amazonaws.com/logo/chainlit_banner.png"
 
 # Load assistant logo directly from URL.
+# Only a signed-in browser is sent this setting. The sign-in page shows
+# public/logo_dark.png or logo_light.png instead - copies of the same image,
+# there so that page does not fall back to the Chainlit logo.
 logo_file_url = "/public/avatars/ad1_256.png"
 
 # Load assistant avatar image directly from URL.

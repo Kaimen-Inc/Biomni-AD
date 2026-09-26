@@ -40,9 +40,10 @@ from biomni.env_probe import filter_library_catalog
 from biomni.fs_scan import scan_directory
 from biomni.know_how import KnowHowLoader
 from biomni.llm import SourceType, get_llm, resolve_source
-from biomni.llm_resilience import LLMUsageTracker, prepare_messages_for_cache
+from biomni.llm_resilience import LLMUsageTracker, prepare_messages_for_cache, supports_prompt_caching
 from biomni.model.retriever import ToolRetriever
 from biomni.observability import emit_event
+from biomni.tool.availability import CLAUDE_WEB_SEARCH
 from biomni.tool.support_tools import run_python_repl
 from biomni.tool.tool_registry import ToolRegistry
 from biomni.utils import (
@@ -260,7 +261,7 @@ class A1:
             # get_llm() above would already have raised on a truly bad config.
             self._llm_source = None
         self._llm_prompt_caching = bool(
-            getattr(default_config, "enable_prompt_caching", False) and self._llm_source == "Anthropic"
+            getattr(default_config, "enable_prompt_caching", False) and supports_prompt_caching(self._llm_source)
         )
         # Resolved model name for per-call telemetry (provider objects expose it
         # under different attributes; fall back to the configured/auto name).
@@ -1588,6 +1589,35 @@ For all analyses in this run:
             self.know_how_loader.remove_document(doc_id)
             print(f"  ⚠️  Excluded know-how '{doc_name}' (non-commercial license)")
 
+    def _advertises_tool(self, name: str) -> bool:
+        """Whether the tool ``name`` is in this agent's catalogue."""
+        return any(api.get("name") == name for apis in getattr(self, "module2api", {}).values() for api in apis)
+
+    def _tool_priority_instructions(self) -> str:
+        """The search-first tool order, naming only functions this agent can call.
+
+        A function the model is told to prefer but cannot call is a failed step
+        on nearly every question, so the Claude web search is named only where
+        this deployment advertises it (see biomni/tool/availability.py).
+        """
+        claude = self._advertises_tool(CLAUDE_WEB_SEARCH)
+        web_search = f"`{CLAUDE_WEB_SEARCH}()` or `search_google()`" if claude else "`search_google()`"
+        protocol_search = f"{CLAUDE_WEB_SEARCH}()" if claude else "search_google()"
+        return f"""
+TOOL PRIORITY - ALWAYS FOLLOW THIS ORDER:
+1. **Web & literature search first**: Before writing any analysis code, use web/literature tools to gather information:
+   - {web_search} for general web searches
+   - `query_pubmed()`, `query_arxiv()`, `query_scholar()` for scientific literature
+   - the database query tools (`query_uniprot()`, `query_ensembl()`, `query_gwas_catalog()`, ...) for structured data
+2. **Local data & built-in tools second**: Use data lake files, database tools, and domain-specific functions that are already available.
+3. **Code generation last**: Only write custom analysis code (Python/R/Bash) when the above tools cannot provide the answer directly. Keep code minimal and focused.
+
+This priority order is especially important - retrieving information is faster and more reliable than generating it from scratch. When in doubt, search first.
+
+PROTOCOL GENERATION:
+If the user requests an experimental protocol, use search_protocols(), {protocol_search}, list_local_protocols(), and read_local_protocol() to generate an accurate protocol. Include details such as reagents (with catalog numbers if available), equipment specifications, replicate requirements, error handling, and troubleshooting - but ONLY include information found in these resources. Do not make up specifications, catalog numbers, or equipment details. Prioritize accuracy over completeness.
+"""
+
     def _generate_system_prompt(
         self,
         tool_desc,
@@ -1845,21 +1875,8 @@ In each response, you must include EITHER <execute> or <solution> tag. Not both 
 You may or may not receive feedbacks from human. If so, address the feedbacks by following the same procedure of multiple rounds of thinking, execution, and then coming up with a new solution.
 """
 
-        # Add protocol generation instructions
-        prompt_modifier += """
-TOOL PRIORITY - ALWAYS FOLLOW THIS ORDER:
-1. **Web & literature search first**: Before writing any analysis code, use web/literature tools to gather information:
-   - `advanced_web_search()` or `advanced_web_search_claude()` for general web searches
-   - `search_pubmed()`, `search_biorxiv()` for scientific literature
-   - `query_knowledge_base()` or database query tools for structured data
-2. **Local data & built-in tools second**: Use data lake files, database tools, and domain-specific functions that are already available.
-3. **Code generation last**: Only write custom analysis code (Python/R/Bash) when the above tools cannot provide the answer directly. Keep code minimal and focused.
-
-This priority order is especially important - retrieving information is faster and more reliable than generating it from scratch. When in doubt, search first.
-
-PROTOCOL GENERATION:
-If the user requests an experimental protocol, use search_protocols(), advanced_web_search_claude(), list_local_protocols(), and read_local_protocol() to generate an accurate protocol. Include details such as reagents (with catalog numbers if available), equipment specifications, replicate requirements, error handling, and troubleshooting - but ONLY include information found in these resources. Do not make up specifications, catalog numbers, or equipment details. Prioritize accuracy over completeness.
-"""
+        # Search-first tool order and protocol generation.
+        prompt_modifier += self._tool_priority_instructions()
 
         # Add custom resources section first (highlighted)
         has_custom_resources = any(

@@ -342,8 +342,10 @@ def write_python_code(request: str):
 
     # Route through get_llm so this call inherits the project's LLM resilience
     # config (max_retries / request_timeout -> provider-SDK 429/5xx backoff).
-    # A fresh BiomniConfig() honors BIOMNI_LLM_* env overrides at call time.
-    model = get_llm("claude-3-5-sonnet-20240620", source="Anthropic", config=BiomniConfig())
+    # A fresh BiomniConfig() honors BIOMNI_LLM_* env overrides at call time,
+    # including the model: a pinned model id is eventually retired, and one the
+    # deployment did not configure is one its key or LLM proxy cannot reach.
+    model = get_llm(config=BiomniConfig())
     template = """Write some python code to solve the user's problem.
 
     Return only python code in Markdown format, e.g.:
@@ -898,11 +900,17 @@ def read_module2api():
         "protocols",
     ]
 
+    from biomni.tool.availability import unavailable_tools
+
+    # Tools this deployment cannot run are left out, not listed and left to
+    # fail: the agent is told to search first, so an advertised tool that
+    # cannot work gets called on nearly every question.
+    unavailable = unavailable_tools()
     module2api = {}
     for field in fields:
         module_name = f"biomni.tool.tool_description.{field}"
         module = importlib.import_module(module_name)
-        module2api[f"biomni.tool.{field}"] = module.description
+        module2api[f"biomni.tool.{field}"] = [api for api in module.description if api["name"] not in unavailable]
     return module2api
 
 

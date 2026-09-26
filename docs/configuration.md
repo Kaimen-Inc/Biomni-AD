@@ -109,9 +109,22 @@ ANTHROPIC_BASE_URL=https://api.anthropic.com
 OPENAI_BASE_URL=https://api.openai.com/v1
 
 # Biomni Settings
-BIOMNI_PATH=/path/to/data                   # Default: ./data
+BIOMNI_PATH=/path/to/data                   # Default: ~/.biomni/data (the app's own data directory;
+                                             #          /app/data in the container image)
+BIOMNI_DATA_LAKE_PATH=/data/data_lake        # Default: data/biomni_data/data_lake in the checkout
+                                             #          (/app/data/biomni_data/data_lake in the image).
+                                             #          Reference datasets, ~9 GB if all are used, each
+                                             #          downloaded the first time a question needs it.
+BIOMNI_USER_DATA_PATH=/app/user-data         # Default: unset. The user's workspace: their own input
+                                             #          data, shown in Settings and read by the agent.
+                                             #          /readyz waits for it when set.
+BIOMNI_DATA_PATH=/app/user-data              # Default: unset. Older name for the workspace, read
+                                             #          when BIOMNI_USER_DATA_PATH is not set
+BIOMNI_USER_DATA_HOST_PATH=/mnt/data         # Default: unset. Compose only: the host folder mounted
+                                             #          at /app/user-data (also read as a workspace
+                                             #          when the path exists inside the container)
 BIOMNI_TIMEOUT_SECONDS=1200                 # Default: 600  (per code/tool step)
-BIOMNI_LLM=model_name                        # Default: claude-sonnet-4-20250514
+BIOMNI_LLM=model_name                        # Default: claude-sonnet-4-5 (BIOMNI_LLM_MODEL is an alias)
 BIOMNI_TEMPERATURE=0.7                      # Default: 0.7
 BIOMNI_USE_TOOL_RETRIEVER=true             # Default: true
 BIOMNI_AUTO_NETWORK_LIMITED_MODE=true      # Default: true
@@ -119,11 +132,34 @@ LLM_SOURCE=Anthropic                        # Preferred source selector
 BIOMNI_SOURCE=Anthropic                     # Also supported (backward compatibility)
 BIOMNI_CUSTOM_BASE_URL=http://localhost:8000/v1
 BIOMNI_CUSTOM_API_KEY=custom_key
+BIOMNI_COMMERCIAL_MODE=true                  # Default: false (leave out datasets and know-how whose
+                                             #          licence does not allow commercial use)
+
+# Chat interface
+BIOMNI_AGENT=ad1                             # Default: unset (the user picks AD1 or A1 as the chat
+                                             #          profile; set a1 or ad1 to fix the agent)
+BIOMNI_ALWAYS_PLAN=true                      # Default: false (short questions are answered directly;
+                                             #          true sends every question through a plan the
+                                             #          user approves)
+CHAINLIT_HOST=0.0.0.0                        # Default: 0.0.0.0 (container entrypoint only)
+CHAINLIT_PORT=8000                           # Default: 8000    (container entrypoint only)
+
+# Tokens for individual data services, used by the tools that query them
+PROTOCOLS_IO_ACCESS_TOKEN=token              # protocols.io (BIOMNI_PROTOCOLS_IO_ACCESS_TOKEN also read)
+SYNAPSE_AUTH_TOKEN=token                     # Synapse
+
+# Platform LLM proxy (GRIP; see docs/grip_deployment.md). When set, every model call
+# goes through it, whatever the provider settings above say, and each request names
+# the session's user and workspace in X-User-Id and X-Workspace-Id.
+BIOMNI_LLM_PROXY_URL=https://proxy/v1        # Default: unset (model calls go direct). With or without /v1
+BIOMNI_LLM_PROXY_API_KEY=proxy_token         # The proxy's token, sent as Authorization: Bearer
+BIOMNI_LLM_PROXY_SCHEMA=openai               # Default: openai (/v1/chat/completions); or anthropic (/v1/messages)
 
 # LLM resilience
 BIOMNI_LLM_MAX_RETRIES=3                     # Default: 3    (provider-SDK 429/5xx backoff)
 BIOMNI_LLM_REQUEST_TIMEOUT=120               # Default: 120  (seconds per LLM HTTP call; none/0 disables)
-BIOMNI_ENABLE_PROMPT_CACHING=true            # Default: true (Anthropic system-prompt cache)
+BIOMNI_ENABLE_PROMPT_CACHING=true            # Default: true (Anthropic system-prompt cache; also
+                                             #          through the LLM proxy with the anthropic schema)
 BIOMNI_RUN_TIMEOUT_SECONDS=600               # Default: unset (total wall-clock budget per run; bounds
                                              #          the number of ReAct turns. Recommended for
                                              #          interactive/demo so slow queries fail fast.)
@@ -135,6 +171,12 @@ BIOMNI_ENABLE_LLM_TELEMETRY=true             # Default: false (library); true in
                                              #          Emits a per-run llm_usage token/cost event.
 BIOMNI_RUN_HEARTBEAT_SECONDS=15              # Default: 15   (run-liveness heartbeat cadence; Chainlit)
 BIOMNI_LOG_REDACT_EMAILS=false               # Default: false (opt-in scrub of e-mail-shaped PII in logs)
+# Stamped on every log line, to tell services, builds and environments apart
+OTEL_SERVICE_NAME=biomni-ad                  # Default: biomni (BIOMNI_SERVICE_NAME also read)
+BIOMNI_VERSION=1.2.3                         # Default: the installed package version
+BIOMNI_ENV=prod                              # Default: unset (DEPLOY_ENV, then ENVIRONMENT, also read)
+BIOMNI_GIT_SHA=abc1234                       # Default: set by the image build (GIT_SHA also read);
+BIOMNI_GIT_REF=feat/adworkbench              #          reported by /healthz and /readyz (GIT_REF also read)
 
 # Workspace scanning (bounds every directory walk; see biomni/fs_scan.py)
 BIOMNI_WORKSPACE_MAX_FILES=10000             # Default: 10000 (hard file cap per scan)
@@ -173,11 +215,24 @@ CHAINLIT_AUTH_SECRET=…                       # Default: generated once and sto
 
 # Authentication gateway. Identity headers are IGNORED unless this is enabled:
 # without a gateway stripping client-supplied copies, anyone could send
-# `x-user-id: <someone else>` and read or overwrite that person's settings and
-# run history. Enable it only when a gateway is actually in front.
+# `Ai-App-User-Context: sub=<someone else>` and read or overwrite that person's
+# settings and run history. Enable it only when a gateway is actually in front.
 BIOMNI_TRUST_AUTH_HEADERS=true                # Default: false (fails closed)
 
-# Header names (each accepts a comma-separated list, additive to the defaults)
+# Header names. GRIP's composite headers, Ai-App-User-Context (sub, email,
+# given_name, family_name) and Ai-App-Workspace-Context (uuid), are read by
+# default and need no setting. Change these two only for a gateway that sends
+# the same key=value lists under other names:
+BIOMNI_AUTH_USER_CONTEXT_HEADER=ai-app-user-context
+BIOMNI_AUTH_WORKSPACE_CONTEXT_HEADER=ai-app-workspace-context
+
+# Single-value headers, for gateways that send one field per header
+# (oauth2-proxy, Envoy). Each takes a comma-separated list, tried before the
+# defaults. They are read only for a request that carries neither context
+# header: a gateway strips its own headers from what clients send, not every
+# name another gateway might use, so reading them next to GRIP's would let a
+# client fill in a field the gateway left out. Pointing one at a composite
+# header has no effect, and the app logs a warning at startup saying so.
 BIOMNI_AUTH_USER_ID_HEADER=x-auth-request-user-id
 BIOMNI_AUTH_EMAIL_HEADER=x-auth-request-email
 BIOMNI_AUTH_WORKSPACE_HEADER=x-workspace-id
@@ -222,6 +277,11 @@ Two mount-level causes account for nearly all of it:
 - **SMB/NFS shares** (Azure Files) ignore `fsGroup` entirely. Fix with
   `mountOptions: [uid=57439, gid=57439, dir_mode=0770, file_mode=0770, mfsymlinks]`
   on the StorageClass or PV.
+
+Changed mount options reach a running deployment only when the node mounts the share afresh.
+A StorageClass's options are copied into a PersistentVolume when it is created, and the node keeps a share mounted while any pod there uses it.
+So change the PersistentVolume's `spec.mountOptions` as well, then scale the deployment to zero and back up; [grip_deployment.md](grip_deployment.md#storage) has the details and a command to check what the container sees.
+At startup the app logs a `storage_check` line for the workspace, the output location and `BIOMNI_STATE_DIR`, with the mount options in effect and, for any location it cannot use, the reason and the fix.
 
 Files attached to a message with 📎 are copied into `<output dir>/uploads/`
 under their original names, and it is that path the agent is given.
@@ -283,12 +343,14 @@ Check this before scaling the deployment out.
 ### Python Configuration
 
 ```python
+import os
+
 from biomni.config import default_config
 
 # All available settings
-default_config.path = "./data"
+default_config.path = os.path.expanduser("~/.biomni/data")  # "~" is not expanded for you
 default_config.timeout_seconds = 600
-default_config.llm = "claude-sonnet-4-20250514"
+default_config.llm = "claude-sonnet-4-5"
 default_config.temperature = 0.7
 default_config.use_tool_retriever = True
 default_config.auto_network_limited_mode = True
@@ -306,15 +368,25 @@ All are optional; the defaults are what a single-user local run wants.
 
 | Variable | Default | What it does |
 |---|---|---|
-| `BIOMNI_DEMO_PASSWORD` | unset | Puts Chainlit's own login in front of the app: one shared password, any username, and the username becomes the identity - so each person gets a separate conversation history. For a deployment with **no** authentication gateway. Leave unset behind a gateway, where it would add a second and weaker door in front of a real one. |
+| `BIOMNI_DEMO_PASSWORD` | unset | Puts Chainlit's own login in front of the app: one shared password, any username, and the username becomes the identity - so each person gets a separate conversation history. The histories are separate, not private: anyone with the password can sign in under a username someone else used and see that history. For a deployment with **no** authentication gateway. Leave unset behind a gateway, where it would add a second and weaker door in front of a real one. |
 | `BIOMNI_BIND_ADDRESS` | `0.0.0.0` | Address the compose deployment publishes on. Set to `127.0.0.1` when a TLS proxy sits in front, so the app is reachable only through it. Note a `ufw deny` will **not** close a published port - Docker writes iptables rules ahead of ufw's chain - so binding to loopback is the reliable way. |
 | `BIOMNI_TRUST_AUTH_HEADERS` | off | Believe the gateway's identity headers. Fails closed: until this is set, headers are ignored and every session is anonymous. Turn it on in the same change that puts a gateway in front. |
 | `BIOMNI_AUTH_ISSUER_HEADER` | see identity.py | Header carrying the OIDC issuer. When an issuer is present it is folded into the storage key, because a subject id is unique within a realm rather than globally. **Send it from the first deployment or not at all** - introducing it later re-keys every existing user, who then finds an empty history. |
+
+### Model access
+
+| Variable | Default | What it does |
+|---|---|---|
+| `BIOMNI_LLM_PROXY_URL` | unset | Routes every model call through a platform LLM proxy, such as GRIP's in front of Azure AI Foundry, ahead of every provider setting. Each request carries the proxy's token as a bearer token and the session's user and workspace ids as `X-User-Id` and `X-Workspace-Id`, and a call with no gateway identity behind it is not sent. See [grip_deployment.md](grip_deployment.md#llm-proxy). |
+| `BIOMNI_LLM_PROXY_API_KEY` | unset | The proxy's token. `/readyz` reports not ready until it is set, and while `BIOMNI_TRUST_AUTH_HEADERS` is off, since the proxy then refuses every call. |
+| `BIOMNI_LLM_PROXY_SCHEMA` | `openai` | The API to speak to the proxy: `openai` calls `/v1/chat/completions`, `anthropic` calls `/v1/messages`. |
 
 ### Storage
 
 | Variable | Default | What it does |
 |---|---|---|
+| `BIOMNI_USER_DATA_PATH` | unset | The user's workspace. `/readyz` reports not ready until it exists. |
+| `BIOMNI_DATA_LAKE_PATH` | inside the checkout or image | The reference datasets. Point it at a volume: inside the container they count against the node's ephemeral storage and are downloaded again after every restart. |
 | `BIOMNI_STATE_DIR` | unset | Preferences, run records and the chat-history database. **The conversation list on the left needs this to be writable**; without it the app falls back to the workspace root, and if that is mounted read-only there is no thread list at all. Set by both the compose file and the Kubernetes manifest. |
 | `BIOMNI_STATE_HOST_PATH` | `./state` | Host path compose mounts at `BIOMNI_STATE_DIR`. |
 | `BIOMNI_OUTPUT_ROOT` | unset | Where run artifacts go. Declare it whenever outputs land on a volume: without it resolution falls through to a candidate flagged *ephemeral*, and the UI warns that results are lost on restart even when they are not. |
@@ -350,6 +422,9 @@ All are optional; the defaults are what a single-user local run wants.
 - **Priority order**: Direct params > Runtime config > Env vars > Defaults
 
 ## Troubleshooting
+
+**Deployed on GRIP**:
+- See the troubleshooting table in [grip_deployment.md](grip_deployment.md#troubleshooting)
 
 **API Key Not Found**:
 - Check `.env` file exists in your working directory

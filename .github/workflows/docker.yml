@@ -188,12 +188,13 @@ jobs:
       # Tag strategy:
       #   - branch name        (refs/heads/main → :main; / in feat branches
       #                         sanitised to - per Docker tag rules)
-      #   - git SHA short      (always - primary content-addressed tag,
-      #                         what production should pin to)
+      #   - git SHA short      (always, as :sha-<7 hex> - primary
+      #                         content-addressed tag, what production should
+      #                         pin to)
       #   - :latest            (only when pushing the default branch -
       #                         conventional "newest published" alias)
       #   - semver aliases     (v1.2.3 git tag → :1.2.3 and :1.2)
-      # Branch and :latest tags are convenience aliases; the :<sha> tag
+      # Branch and :latest tags are convenience aliases; the :sha-<short> tag
       # is the canonical immutable pointer.
       - name: Extract image metadata
         id: meta

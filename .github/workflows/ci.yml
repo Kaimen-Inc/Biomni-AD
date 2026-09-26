@@ -90,4 +90,13 @@ jobs:
             biomni/config.py \
             biomni/credentials.py \
             biomni/env_probe.py \
-            biomni/llm.py
+            biomni/health.py \
+            biomni/identity.py \
+            biomni/llm.py \
+            biomni/llm_proxy.py \
+            biomni/observability.py \
+            biomni/status.py \
+            biomni/tool/availability.py \
+            biomni/workspace_prefs.py \
+            chainlit_ui/graph_stream.py \
+            chainlit_ui/llm_failures.py

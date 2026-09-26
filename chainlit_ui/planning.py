@@ -28,6 +28,8 @@ import chainlit as cl
 from biomni.observability import emit_event
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 
+from chainlit_ui.llm_failures import describe_llm_failure, is_access_failure
+
 if TYPE_CHECKING:
     from biomni.agent.a1 import A1
 
@@ -39,7 +41,7 @@ PLANNING_SYSTEM_PROMPT = (
     "Given the user's research question, write a concise numbered plan "
     "of 3 to 7 steps describing exactly how you will solve it. "
     "IMPORTANT: Always prefer this tool order in your plan: "
-    "(1) web/literature search tools first (advanced_web_search, search_pubmed, search_biorxiv), "
+    "(1) web/literature search tools first (search_google, query_pubmed, query_arxiv, query_scholar), "
     "(2) local data and database query tools second, "
     "(3) custom code generation only as a last resort. "
     "Mention specific tools, databases, or analyses you will use. "
@@ -163,8 +165,10 @@ async def quick_answer(agent: A1, prompt: str, history: list[dict] | None = None
     messages.append(HumanMessage(content=prompt))
 
     try:
-        loop = asyncio.get_event_loop()
-        response = await loop.run_in_executor(None, agent.llm.invoke, messages)
+        # to_thread, not a bare executor: it carries the caller's context into
+        # the worker, and with it the session's identity, which a model call
+        # through the platform's LLM proxy cannot be made without.
+        response = await asyncio.to_thread(agent.llm.invoke, messages)
     except Exception:
         logger.warning("Triage call failed; falling back to the planning path", exc_info=True)
         return None
@@ -372,7 +376,9 @@ async def interactive_planning(
 
     Returns the (possibly modified) prompt on approval, or `None` if the user
     cancels. If plan generation itself raises, the approval gate is skipped
-    and the original prompt is returned so execution still happens.
+    and the original prompt is returned so execution still happens - unless the
+    model is out of reach altogether (`is_access_failure`: refused credentials,
+    a usage limit, no identity for the LLM proxy), which is raised to the caller.
     """
     base_prompt = build_planning_system_prompt(agent, agent_type, selected_data_lake)
     modification_context = ""
@@ -389,21 +395,28 @@ async def interactive_planning(
 
         # default_open: the plan is the thing the user is being asked to approve,
         # so it must be readable without first expanding a collapsed step.
+        unreachable: Exception | None = None
         async with cl.Step(name="📋 Generating Research Plan", type="llm", show_input=False, default_open=True) as step:
             try:
-                # NB: asyncio.to_thread would also work but copies the caller's
-                # contextvars into the worker - the rest of chainlit_app.py
-                # uses bare run_in_executor and we match that semantics so
-                # LangChain callback/tracing contextvars don't silently change
-                # which trace the LLM call attaches to.
-                loop = asyncio.get_event_loop()
-                response = await loop.run_in_executor(None, agent.llm.invoke, planning_messages)
+                # to_thread carries the caller's context into the worker: the
+                # session's identity (the LLM proxy bills the call to it) and
+                # the correlation ids its log lines need.
+                response = await asyncio.to_thread(agent.llm.invoke, planning_messages)
                 plan_text = response.content if hasattr(response, "content") else str(response)
                 step.output = plan_text
             except Exception as exc:
-                logger.warning("Plan generation failed; proceeding without approval gate", exc_info=True)
-                step.output = f"⚠️ Could not generate plan ({exc}). Proceeding without a plan."
-                return prompt
+                if not is_access_failure(exc):
+                    logger.warning("Plan generation failed; proceeding without approval gate", exc_info=True)
+                    step.output = f"⚠️ Could not generate a plan: {describe_llm_failure(exc)} Proceeding without one."
+                    return prompt
+                # Out of reach for the whole run: "proceeding without a plan"
+                # would only fail again at the first step. Raised once the step
+                # has closed, since raising inside it replaces this text with
+                # the exception's raw repr.
+                step.output = "⚠️ Could not reach the language model."
+                unreachable = exc
+        if unreachable is not None:
+            raise unreachable
 
         # The plan already carries its own data-files section and is shown
         # expanded, so repeating the list here only duplicated it on screen.

@@ -33,7 +33,22 @@ _CACHE_SUPPORTED_SOURCES = frozenset({"Anthropic"})
 
 
 def supports_prompt_caching(source: str | None) -> bool:
-    """Return True if ``source`` is a provider known to honor cache_control."""
+    """Return True if ``source`` is a provider known to honor cache_control.
+
+    The platform LLM proxy speaks whichever API it is configured for, and with
+    the Anthropic schema that is the Messages API, cache markers included.
+    Caching matters more there, not less: the proxy meters every input token
+    against per-user and per-workspace limits, and the system prompt is resent
+    on every turn.
+    """
+    if source == "LLMProxy":
+        from biomni.llm_proxy import llm_proxy_settings
+
+        try:
+            proxy = llm_proxy_settings()
+        except ValueError:
+            return False
+        return proxy is not None and proxy.schema == "anthropic"
     return source in _CACHE_SUPPORTED_SOURCES
 
 

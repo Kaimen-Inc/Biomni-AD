@@ -51,8 +51,11 @@ def test_write_python_code_routes_through_get_llm(monkeypatch: pytest.MonkeyPatc
     assert "print(1 + 1)" in out
     assert len(calls) == 1, "write_python_code must build its model via get_llm exactly once"
     args, kwargs = calls[0]["args"], calls[0]["kwargs"]
-    assert args[0] == "claude-3-5-sonnet-20240620"
-    assert kwargs["source"] == "Anthropic"
+    # No pinned model or provider: the deployment's configured model (BIOMNI_LLM)
+    # comes from the config. A pinned id is eventually retired, and one the
+    # deployment never set up is one its key or LLM proxy cannot reach.
+    assert not args
+    assert "model" not in kwargs and "source" not in kwargs
     assert isinstance(kwargs["config"], BiomniConfig)
 
 
@@ -94,8 +97,9 @@ def test_retriever_fallback_routes_through_get_llm(monkeypatch: pytest.MonkeyPat
 
     assert len(calls) == 1, "the llm=None fallback must build its model via get_llm"
     args, kwargs = calls[0]["args"], calls[0]["kwargs"]
-    assert args[0] == "gpt-4o"
-    assert kwargs["source"] == "OpenAI"
+    # The configured model, not a pinned provider the deployment may have no key for.
+    assert not args
+    assert "model" not in kwargs and "source" not in kwargs
     assert isinstance(kwargs["config"], BiomniConfig)
     # Routing through get_llm must not change selection behavior.
     assert selected["tools"] == [{"name": "t0", "description": "d0"}]

@@ -39,6 +39,19 @@ def test_supports_prompt_caching(source, expected) -> None:
     assert supports_prompt_caching(source) is expected
 
 
+@pytest.mark.parametrize(("schema", "expected"), [("anthropic", True), ("openai", False), ("bogus", False)])
+def test_prompt_caching_behind_the_llm_proxy_follows_its_schema(monkeypatch, schema, expected) -> None:
+    """The proxy meters every input token, so a cacheable prompt must be cached."""
+    monkeypatch.setenv("BIOMNI_LLM_PROXY_URL", "https://proxy.example")
+    monkeypatch.setenv("BIOMNI_LLM_PROXY_SCHEMA", schema)
+    assert supports_prompt_caching("LLMProxy") is expected
+
+
+def test_the_llm_proxy_source_without_a_proxy_does_not_cache(monkeypatch) -> None:
+    monkeypatch.delenv("BIOMNI_LLM_PROXY_URL", raising=False)
+    assert supports_prompt_caching("LLMProxy") is False
+
+
 # ---------------------------------------------------------------------------
 # prepare_messages_for_cache
 # ---------------------------------------------------------------------------

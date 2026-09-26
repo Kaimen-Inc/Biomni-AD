@@ -2,10 +2,15 @@
 #
 # This is a starting point, not a turnkey production config. Review resource
 # limits, replica count, ingress, and the Secret/ConfigMap wiring for your
-# cluster before applying. The pieces that matter for *observability* - the
-# focus of this manifest - are the three probes and the log-shaping env vars.
+# cluster before applying.
 #
 #   kubectl apply -f deploy/k8s/biomni-ad.yaml
+#
+# The volumes and paths are the ones the AD Workbench (GRIP) deployment uses.
+# What it does not do is trust an authentication gateway or use the platform's
+# LLM proxy, since it exposes the app through a plain Service with no gateway
+# in front. docs/grip_deployment.md#kubernetes-manifest lists the changes that
+# turn it into the GRIP deployment.
 #
 # Logs: the container writes one JSON object per line to stdout. On AKS with
 # Container Insights enabled, those land in the Log Analytics workspace and are
@@ -23,8 +28,11 @@ metadata:
   name: biomni-ad-secrets
 type: Opaque
 stringData:
-  # Provide whichever provider your BIOMNI_LLM resolves to. Readiness (/readyz)
-  # fails closed until at least one credential is present.
+  # Model access: the platform LLM proxy's token on GRIP (with
+  # BIOMNI_LLM_PROXY_URL below; see docs/grip_deployment.md), otherwise the key
+  # of whichever provider BIOMNI_LLM resolves to. Readiness (/readyz) fails
+  # closed until the one in use is present.
+  # BIOMNI_LLM_PROXY_API_KEY: "replace-me"
   ANTHROPIC_API_KEY: "replace-me"
   # OPENAI_API_KEY: "replace-me"
   # AZURE_OPENAI_API_KEY: "replace-me"
@@ -37,11 +45,9 @@ stringData:
   #   openssl rand -base64 48
   # CHAINLIT_AUTH_SECRET: "replace-me"
 ---
-# Persistent storage for run outputs, user preferences and run records.
-#
-# Without this the app falls back to a container-local ./runs directory, and a
-# rollout or restart destroys every artifact the user produced. The UI warns
-# when it detects that fallback.
+# The app's own state: per-user preferences, run records, the chat-history
+# database, and the reference datasets (BIOMNI_DATA_LAKE_PATH below), about 9 GB
+# if every one is used, each downloaded the first time a question needs it.
 #
 # ReadWriteOnce is sufficient at replicas: 1 (as configured below). Scaling out
 # requires ReadWriteMany (e.g. an Azure Files share) because several pods would
@@ -55,8 +61,51 @@ spec:
     - ReadWriteOnce
   resources:
     requests:
-      storage: 20Gi
+      storage: 30Gi
   # storageClassName: azurefile-csi   # switch to a RWX class before scaling out
+---
+# Run outputs: a folder per run with its figures, tables and code.
+#
+# Without a volume here the app falls back to a container-local ./runs, and a
+# rollout or restart destroys every result the user produced. The UI warns when
+# it detects that fallback.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: biomni-ad-runs
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 50Gi
+---
+# The user's workspace: their own input data, which the agent reads.
+#
+# Azure Files, so the same data is reachable from wherever else the user works
+# with it. AKS's built-in azurefile-csi class mounts shares world-writable
+# (dir_mode=0777), which the app can use as is. A share with tighter
+# permissions - an existing one bound through a PersistentVolume, as on GRIP -
+# needs ownership options on that PersistentVolume, because SMB ignores fsGroup
+# (see the note on securityContext below):
+#
+#   mountOptions:
+#     - uid=57439
+#     - gid=57439
+#     - dir_mode=0770
+#     - file_mode=0770
+#     - mfsymlinks
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: biomni-ad-workspace
+spec:
+  accessModes:
+    - ReadWriteMany
+  storageClassName: azurefile-csi
+  resources:
+    requests:
+      storage: 100Gi
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -76,27 +125,31 @@ spec:
     spec:
       # The image runs as the non-root mambauser (UID 57439). A freshly
       # provisioned block PVC mounts as root:root 0755, so without fsGroup the
-      # container cannot write /data - and because every write path here
-      # degrades gracefully, the failure is silent: outputs fall back to the
-      # ephemeral ./runs and preferences stop persisting, making the volume a
-      # no-op. fsGroup makes the kubelet chgrp the volume to that GID.
+      # container cannot write /app/state or /app/runs - and because every write
+      # path here degrades gracefully, the failure is silent: outputs fall back
+      # to the ephemeral ./runs and preferences stop persisting, making the
+      # volume a no-op. fsGroup makes the kubelet chgrp the volume to that GID.
       #
       # IMPORTANT: fsGroup only works on *block* volumes (Azure Disk, EBS, any
       # ReadWriteOnce PVC the kubelet formats). It is silently ignored by SMB
-      # and NFS, so a deployment putting BIOMNI_OUTPUT_ROOT or BIOMNI_STATE_DIR
-      # on Azure Files must instead set ownership in the StorageClass or PV:
+      # and NFS, so a share - the workspace, or BIOMNI_OUTPUT_ROOT or
+      # BIOMNI_STATE_DIR put on Azure Files - must instead get its ownership
+      # from the mountOptions on its StorageClass or PV (see the workspace claim
+      # above). Without them the share mounts as root:root 0755, os.access()
+      # reports it unwritable to UID 57439, and outputs fall back exactly as if
+      # the env var had never been set. resolve_output_dir() logs a WARNING
+      # naming the rejected path when this happens.
       #
-      #   mountOptions:
-      #     - uid=57439
-      #     - gid=57439
-      #     - dir_mode=0770
-      #     - file_mode=0770
-      #     - mfsymlinks
+      # Changed options only apply when the node mounts the share afresh. A
+      # StorageClass's options are copied into the PV when it is provisioned, so
+      # edit the PV's spec.mountOptions too; and the node keeps the share
+      # mounted while any pod there uses it, so scale this Deployment to 0 and
+      # back rather than restarting it. To see what the container actually got:
       #
-      # Without it the share mounts as root:root 0755, os.access() reports it
-      # unwritable to UID 57439, and outputs fall back exactly as if the env var
-      # had never been set. resolve_output_dir() logs a WARNING naming the
-      # rejected path when this happens.
+      #   kubectl exec deploy/biomni-ad -- sh -c 'id; grep " /app/user-data " /proc/self/mounts; ls -ldn /app/user-data'
+      #
+      # The app logs the same facts at startup, one `storage_check` line per
+      # location, with the reason and the fix for any it cannot use.
       securityContext:
         fsGroup: 57439
         fsGroupChangePolicy: OnRootMismatch
@@ -149,17 +202,28 @@ spec:
             # BIOMNI_TRUST_AUTH_HEADERS below is the mechanism; a password would
             # add a second, weaker door in front of a real one.
 
+            # The user's workspace, mounted below. /readyz reports not ready
+            # until it is there.
+            - name: BIOMNI_USER_DATA_PATH
+              value: "/app/user-data"
+
             # Run artifacts. Without this the app writes to a container-local
             # ./runs and every result is lost on restart. Points at the PVC
             # mounted below; users can override per session in the UI.
             - name: BIOMNI_OUTPUT_ROOT
-              value: "/data/outputs"
+              value: "/app/runs"
 
             # Per-user preferences (data scope, output directory), durable run
             # records and the chat-history database, so a user who closes the
             # tab still finds their jobs and their conversations.
             - name: BIOMNI_STATE_DIR
-              value: "/data/state"
+              value: "/app/state"
+
+            # Reference datasets from the public data lake, fetched on first use.
+            # The default is inside the container, which re-downloads them after
+            # every restart and counts them against the node's ephemeral storage.
+            - name: BIOMNI_DATA_LAKE_PATH
+              value: "/app/state/data_lake"
 
             # Chat history is stored in SQLite under $BIOMNI_STATE_DIR by
             # default, which assumes one replica - the same assumption the
@@ -183,7 +247,10 @@ spec:
             # (Ai-App-User-Context, carrying sub/email/given_name/family_name,
             # and Ai-App-Workspace-Context, carrying uuid), plus the usual
             # single-value headers for other gateways. Set these only when the
-            # gateway in front uses different names.
+            # gateway in front uses different names. GRIP needs none of them:
+            # the composite headers are parsed field by field, so pointing a
+            # single-value setting (USER_ID, EMAIL, WORKSPACE) at one of them
+            # has no effect, and the app logs a warning saying so.
             # - name: BIOMNI_AUTH_USER_CONTEXT_HEADER
             #   value: "ai-app-user-context"
             # - name: BIOMNI_AUTH_WORKSPACE_CONTEXT_HEADER
@@ -217,13 +284,30 @@ spec:
             # survive). Never applied as shorter than the window above.
             # - name: BIOMNI_STATUS_OPEN_SESSION_INACTIVITY_SECONDS
             #   value: "43200"
+            # The platform LLM proxy (GRIP, in front of Azure AI Foundry). With
+            # it set every model call goes through the proxy, authenticated by
+            # BIOMNI_LLM_PROXY_API_KEY from the Secret above and naming the
+            # session's user and workspace in X-User-Id / X-Workspace-Id. Those
+            # ids come from the gateway's headers, so this needs
+            # BIOMNI_TRUST_AUTH_HEADERS on too: without it every call is refused.
+            # BIOMNI_LLM is the name of the model the proxy serves.
+            # - name: BIOMNI_LLM_PROXY_URL
+            #   value: "https://<proxy-host>/v1"
+            # - name: BIOMNI_LLM_PROXY_SCHEMA
+            #   value: "openai" # or "anthropic", for /v1/messages
+            # - name: BIOMNI_LLM
+            #   value: "<model name>"
           envFrom:
             - secretRef:
                 name: biomni-ad-secrets
 
           volumeMounts:
             - name: state
-              mountPath: /data
+              mountPath: /app/state
+            - name: runs
+              mountPath: /app/runs
+            - name: workspace
+              mountPath: /app/user-data
 
           # Startup probe: gates the other two until the heavy agent stack has
           # finished importing (~30-60s cold start). failureThreshold*period =
@@ -246,8 +330,9 @@ spec:
             timeoutSeconds: 3
             failureThreshold: 3
 
-          # Readiness: pull the pod from the Service if it can't serve - data
-          # dir unmounted or no LLM credential. Returns 503 when not ready.
+          # Readiness: pull the pod from the Service if it can't serve - the
+          # workspace not mounted, or no way to reach a model. Returns 503, with
+          # the failing check named in the body, when not ready.
           readinessProbe:
             httpGet:
               path: /readyz
@@ -256,16 +341,20 @@ spec:
             timeoutSeconds: 3
             failureThreshold: 3
 
+          # The documented minimum as requests and the recommendation as limits
+          # (docs/grip_deployment.md#resources): a full AD1 run peaks around
+          # 1 GB, but the largest reference datasets take several GB once
+          # loaded, and each open chat keeps what it loaded in memory.
           resources:
             requests:
-              cpu: "1"
-              memory: 2Gi
+              cpu: "2"
+              memory: 8Gi
             limits:
               # Agent-generated code runs in-process; cap memory so a runaway
               # snippet is OOMKilled (visible in kube events) instead of taking
               # the node down.
-              cpu: "2"
-              memory: 6Gi
+              cpu: "4"
+              memory: 16Gi
 
           # SIGTERM is sent on rollout/scale-down; give in-flight agent runs a
           # chance to drain before SIGKILL. Runs that do not finish in time are
@@ -277,6 +366,12 @@ spec:
         - name: state
           persistentVolumeClaim:
             claimName: biomni-ad-state
+        - name: runs
+          persistentVolumeClaim:
+            claimName: biomni-ad-runs
+        - name: workspace
+          persistentVolumeClaim:
+            claimName: biomni-ad-workspace
 ---
 apiVersion: v1
 kind: Service

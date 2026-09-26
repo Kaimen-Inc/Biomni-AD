@@ -473,7 +473,7 @@ def annotate_celltype_scRNA(
     data_info,
     data_lake_path,
     cluster="leiden",
-    llm="claude-3-5-sonnet-20241022",
+    llm=None,
     composition=None,
 ):
     """Annotate cell types based on gene markers and transferred labels using LLM.
@@ -486,7 +486,7 @@ def annotate_celltype_scRNA(
     - data_dir (str): Directory containing the data files
     - data_info (str): Information about the scRNA-seq data (e.g., "homo sapiens, brain tissue, normal")
     - data_lake_path (str): Path to the data lake
-    - llm (str): Language model instance for cell type prediction, such as 'claude-3-haiku-20240307'
+    - llm (str, optional): Model for cell type prediction. Defaults to the deployment's configured model (BIOMNI_LLM)
     - composition (pd.DataFrame, optional): Transferred cell type composition for each cluster
     Returns:
     - str: Steps performed and file paths where results were saved

@@ -231,6 +231,31 @@ def test_credentials_are_restored_when_generated_code_raises(monkeypatch: pytest
     assert os.environ["ANTHROPIC_API_KEY"] == "sk-ant-secret"
 
 
+_POOL_SNIPPET = """
+from concurrent.futures import ThreadPoolExecutor
+from biomni.identity import current_identity
+
+def who(_):
+    print("from the pool")
+    return current_identity().user_id
+
+with ThreadPoolExecutor(max_workers=2) as pool:
+    seen = list(pool.map(who, range(3)))
+print(seen)
+"""
+
+
+def test_a_thread_pool_in_generated_code_stays_in_its_session() -> None:
+    """Behind the LLM proxy a pool task outside the session cannot call a model at all."""
+    from biomni.identity import UserIdentity, bound_identity
+
+    who = UserIdentity(user_id="u1", workspace_id="w1", source="headers")
+    with bind_run(session_id="chat-1"), bound_identity(who):
+        out = run_python_repl(_POOL_SNIPPET)
+    # The pool's prints are captured into the step that ran it, too.
+    assert out == "from the pool\n" * 3 + "['u1', 'u1', 'u1']\n"
+
+
 def test_output_printed_before_a_failure_is_kept() -> None:
     """The agent uses it to work out which step broke."""
     out = run_python_repl("print('step one done')\nraise ValueError('boom')")
