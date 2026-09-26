@@ -277,12 +277,15 @@ These come from a measured run of the "Multi-omics AD risk gene portrait" starte
   The minimum keeps a core free for the interface while a run computes; the recommendation lets several people's runs compute at once.
 - **Memory.**
   The run peaked at about 1 GB.
-  What an analysis loads matters more: the largest reference datasets are 1 to 1.5 GB on disk and several GB once loaded, and each open chat keeps what it loaded in memory until the chat is evicted (`BIOMNI_MAX_REPL_SESSIONS`).
-  The minimum fits one person working with the largest datasets, the recommendation several.
+  What an analysis loads matters more: most large reference datasets, such as GeneBass's variant tables, are 1 to 1.7 GB on disk and several GB once loaded, and each open chat keeps what it loaded in memory until the chat is evicted (`BIOMNI_MAX_REPL_SESSIONS`).
+  The minimum fits one person working with those, the recommendation several.
+  The exception is BindingDB (`BindingDB_All_202409.tsv`): 6.25 GB on disk and about 13 GiB once loaded whole, more than the minimum and most of the recommendation.
+  An analysis that loads all of it can exhaust the pod's memory, and the container then restarts for everyone using it.
 - **Disk.**
-  Reference datasets are downloaded the first time a question needs them, about 9 GB if every one is used.
+  Reference datasets are downloaded the first time a question needs them, about 16.5 GB if every one is used: 15 GB of Biomni's data lake, 6.25 GB of it a single BindingDB table, and 1.4 GB of AD1's catalogue data.
   By default they are written inside the container, where they count against the node's ephemeral storage and are downloaded again after every restart.
   Point `BIOMNI_DATA_LAKE_PATH` at a directory on a volume, as the manifest does.
+  A download cut short, by a pod restart say, leaves no half-written dataset behind: the file is fetched again the next time a question needs it.
 
 The same run sent about 800,000 input and 20,000 output tokens through the proxy, and at its busiest exceeded 100,000 input tokens a minute.
 Per-user limits below that slow long runs down with retries, and eventually stop them with the usage-limit message above.

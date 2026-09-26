@@ -46,7 +46,7 @@ stringData:
   # CHAINLIT_AUTH_SECRET: "replace-me"
 ---
 # The app's own state: per-user preferences, run records, the chat-history
-# database, and the reference datasets (BIOMNI_DATA_LAKE_PATH below), about 9 GB
+# database, and the reference datasets (BIOMNI_DATA_LAKE_PATH below), about 16.5 GB
 # if every one is used, each downloaded the first time a question needs it.
 #
 # ReadWriteOnce is sufficient at replicas: 1 (as configured below). Scaling out
@@ -343,8 +343,9 @@ spec:
 
           # The documented minimum as requests and the recommendation as limits
           # (docs/grip_deployment.md#resources): a full AD1 run peaks around
-          # 1 GB, but the largest reference datasets take several GB once
-          # loaded, and each open chat keeps what it loaded in memory.
+          # 1 GB, but large reference datasets take several GB once loaded
+          # (BindingDB about 13 GiB, if loaded whole), and each open chat
+          # keeps what it loaded in memory.
           resources:
             requests:
               cpu: "2"

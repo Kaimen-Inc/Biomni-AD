@@ -333,7 +333,7 @@ For the AD Workbench (GRIP) platform, see [docs/grip_deployment.md](docs/grip_de
 
 #### Controlling Datalake Loading
 
-Biomni does not download the full datalake (~11GB) when you create an agent.
+Biomni does not download the full datalake (about 15 GB) when you create an agent.
 Individual files are fetched lazily, the first time a query actually needs them - a session that never touches DepMap never pays to fetch it.
 Set `BIOMNI_DATA_LAKE_PATH` if the datalake should live somewhere other than the repo-local `data/` folder, e.g. a dedicated volume or a different disk on the server.
 

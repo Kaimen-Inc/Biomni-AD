@@ -57,7 +57,7 @@ graph TB
     end
 
     subgraph Data Layer
-        DataLake[Data Lake<br/>77+ Files ~11GB]
+        DataLake[Data Lake<br/>76 Files ~15GB]
         ADData[AD-Specific Data<br/>30+ Datasets]
         External[External APIs<br/>20+ Databases]
     end
@@ -236,13 +236,13 @@ Each tool has a corresponding schema in `biomni/tool/tool_description/`:
 
 ### Overview
 
-The data lake contains **77 curated datasets** (~11GB), catalogued in `biomni/env_desc.py` regardless of what's on disk.
+The data lake contains **76 curated datasets** (about 15 GB), catalogued in `biomni/env_desc.py` regardless of what's on disk.
 Individual files are fetched lazily from S3, the first time a query actually selects them (`A1._ensure_data_lake_files`) - not downloaded in bulk on agent construction.
 Layout once files are present:
 
 ```
 ./data/
-├── data_lake/           # ~11GB of curated datasets
+├── data_lake/           # ~15GB of curated datasets
 │   ├── *.parquet        # Tabular data files
 │   ├── *.pkl            # Serialized Python objects
 │   ├── *.csv            # CSV files
@@ -273,12 +273,12 @@ Layout once files are present:
 
 | Dataset | Description | Size |
 |---------|-------------|------|
-| `BindingDB_All_202409.tsv` | Drug-target binding affinities | Large |
-| `DepMap_CRISPRGeneEffect.csv` | Genome-wide CRISPR effects | ~2GB |
-| `gtex_tissue_gene_tpm.parquet` | GTEx expression across tissues | ~500MB |
-| `gwas_catalog.pkl` | GWAS association results | ~100MB |
-| `kg.csv` | Precision medicine knowledge graph (17,080 diseases, 4M+ relationships) | ~200MB |
-| `DisGeNET.parquet` | Gene-disease associations | ~100MB |
+| `BindingDB_All_202409.tsv` | Drug-target binding affinities | 6.3 GB |
+| `DepMap_CRISPRGeneEffect.csv` | Genome-wide CRISPR effects | 430 MB |
+| `gtex_tissue_gene_tpm.parquet` | GTEx expression across tissues | 11 MB |
+| `gwas_catalog.pkl` | GWAS association results | 180 MB |
+| `kg.csv` | Precision medicine knowledge graph (17,080 diseases, 4M+ relationships) | 980 MB |
+| `DisGeNET.parquet` | Gene-disease associations | 3 MB |
 
 ---
 
@@ -556,7 +556,7 @@ graph LR
     ACA --> AAnth
 
     subgraph Data
-        DataLake[Azure Files<br/>shared /app/data<br/>Biomni data lake ~11GB<br/>read-only]
+        DataLake[Azure Files<br/>shared /app/data<br/>Biomni data lake ~15GB<br/>read-only]
         ADDI[ADDI Workbench Mount<br/>controlled-access datasets<br/>read-only]
     end
     ACA --> DataLake
@@ -579,7 +579,7 @@ graph LR
 | **App runtime** | **Azure Container Apps** (preferred) or AKS | Runs the existing `Dockerfile` (micromamba + `chainlit run`) unmodified; per-revision rollouts |
 | **Image registry** | Azure Container Registry (mirror of GHCR) | **[Implemented]** `.github/workflows/docker.yml` builds the `Dockerfile` on every PR and publishes to GHCR (`ghcr.io/kaimen-inc/biomni-ad`) on push to `main` / `feat/adworkbench` / tags. Tags: `:sha-<short sha>`, `:<branch>`, plus semver aliases for git tags. For ACR-based deployments, mirror from GHCR rather than rebuilding. |
 | **Secrets** | Azure Key Vault + Container Apps secret refs | `BIOMNI_LLM_PROXY_API_KEY` on GRIP, otherwise `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `AZURE_*` keys; DB password - never baked into the image |
-| **Shared data lake** | Azure Files (Premium, SMB) at `BIOMNI_DATA_LAKE_PATH` | The Biomni data lake plus the `biomniAD` subtree, about 9 GB in all. **[Implemented]** each dataset is downloaded the first time a question needs it, so the location must be writable; `deploy/k8s/biomni-ad.yaml` puts it on the state volume. **[Target]** a share filled once and mounted by every replica. |
+| **Shared data lake** | Azure Files (Premium, SMB) at `BIOMNI_DATA_LAKE_PATH` | The Biomni data lake plus the `biomniAD` subtree, about 16.5 GB in all. **[Implemented]** each dataset is downloaded the first time a question needs it, so the location must be writable; `deploy/k8s/biomni-ad.yaml` puts it on the state volume. **[Target]** a share filled once and mounted by every replica. |
 | **Per-user scratch** | Azure Files (per-user share) at `/app/user-data` | User uploads + downloaded AD catalog files (`biomniAD/<dataset_id>/`) |
 | **Run artifacts** | Persistent volume, optionally tiered to Blob | **[Implemented]** The output root resolves to the user's setting, then `BIOMNI_OUTPUT_ROOT`, then `<workspace>/biomni-outputs/`, then container-local `./runs/` - which is flagged in the UI as ephemeral because a restart destroys it. `deploy/k8s/biomni-ad.yaml` mounts a PVC at `/app/runs` for this, as the GRIP deployment does. **[Target]** lifecycle rules to cool/archive tiers. |
 | **Chat history** | PostgreSQL Flexible Server | **[Implemented]** Chainlit's SQLAlchemy data layer, wired in `chainlit_ui/persistence.py`: conversations are listed in the left sidebar, reopened, and continued (`on_chat_resume`). Defaults to SQLite on the state volume - which assumes a single replica, like the file-backed preferences - and switches to Postgres by setting `BIOMNI_THREADS_DB_URL`. Small attachments are archived inline with the conversation so a reopened thread renders as it did live; the SQLite schema is created on boot (and additively upgraded, since a column the data layer writes but the table lacks fails the insert *silently*), any other database is an operator migration. A run is not bound to the browser: closing the tab leaves it executing and writing into its conversation, and reopening that conversation redirects the run's output into the new connection (`chainlit_ui/live_runs.py`) so it streams on live and Stop cancels the run rather than the tab. It is still bound to the process - a restart ends it, recorded as `interrupted`. |

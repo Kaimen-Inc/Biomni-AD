@@ -113,8 +113,8 @@ BIOMNI_PATH=/path/to/data                   # Default: ~/.biomni/data (the app's
                                              #          /app/data in the container image)
 BIOMNI_DATA_LAKE_PATH=/data/data_lake        # Default: data/biomni_data/data_lake in the checkout
                                              #          (/app/data/biomni_data/data_lake in the image).
-                                             #          Reference datasets, ~9 GB if all are used, each
-                                             #          downloaded the first time a question needs it.
+                                             #          Reference datasets, ~16.5 GB if all are used,
+                                             #          each downloaded the first time a question needs it.
 BIOMNI_USER_DATA_PATH=/app/user-data         # Default: unset. The user's workspace: their own input
                                              #          data, shown in Settings and read by the agent.
                                              #          /readyz waits for it when set.
