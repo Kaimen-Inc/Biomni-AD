@@ -1,12 +1,15 @@
 import ast
 import concurrent.futures
 import enum
+import glob
 import importlib
 import json
 import os
 import pickle
 import subprocess
 import tempfile
+import threading
+import time
 import traceback
 import zipfile
 from typing import Any, ClassVar
@@ -956,6 +959,79 @@ def download_and_unzip(url: str, dest_dir: str) -> str:
         return f"Error: {e}"
 
 
+# A download goes to a hidden partial file beside its target, named like this,
+# and is renamed into place once complete (see _download_file).
+_PARTIAL_SUFFIX = ".part"
+# (connect, read) seconds. Without a timeout, a stalled connection held the chat
+# turn that needed the file for as long as the socket stayed open.
+_DOWNLOAD_TIMEOUT = (10, 60)
+# A live download writes continuously, and gives up after the read timeout, so
+# a partial file untouched this long was left by a process that is gone: killed
+# mid-download, its pod evicted.
+_STALE_PARTIAL_S = 15 * 60
+
+_download_locks: dict[str, threading.Lock] = {}
+_download_locks_guard = threading.Lock()
+
+
+def _download_lock(path: str) -> threading.Lock:
+    """The lock that lets one thread of this process download ``path`` at a time."""
+    with _download_locks_guard:
+        return _download_locks.setdefault(os.path.abspath(path), threading.Lock())
+
+
+def _remove_stale_partials(file_path: str) -> None:
+    """Delete partial downloads of ``file_path`` that their process abandoned."""
+    directory, name = os.path.split(os.path.abspath(file_path))
+    cutoff = time.time() - _STALE_PARTIAL_S
+    for partial in glob.glob(os.path.join(glob.escape(directory), f".{glob.escape(name)}.*{_PARTIAL_SUFFIX}")):
+        try:
+            if os.path.getmtime(partial) < cutoff:
+                os.remove(partial)
+        except OSError:
+            pass
+
+
+def _download_file(url: str, file_path: str, desc: str) -> bool:
+    """Download ``url`` to ``file_path``, which appears only once it is complete.
+
+    The data lake counts a file that exists as downloaded. Written in place, a
+    download cut short - the process killed, the pod evicted - left a truncated
+    dataset that no later query fetched again, and a chat could read a file
+    another chat was still downloading. So the bytes go to a hidden partial file
+    beside the target, renamed into place once all of them have arrived.
+    """
+    partial = None
+    try:
+        directory = os.path.dirname(os.path.abspath(file_path))
+        os.makedirs(directory, exist_ok=True)
+        _remove_stale_partials(file_path)
+        fd, partial = tempfile.mkstemp(dir=directory, prefix=f".{os.path.basename(file_path)}.", suffix=_PARTIAL_SUFFIX)
+        with os.fdopen(fd, "wb") as f, requests.get(url, stream=True, timeout=_DOWNLOAD_TIMEOUT) as response:
+            response.raise_for_status()
+            expected = int(response.headers.get("content-length", 0))
+            received = 0
+            with tqdm.tqdm(total=expected or None, unit="B", unit_scale=True, desc=desc, ncols=80) as pbar:
+                for chunk in response.iter_content(chunk_size=8192):
+                    f.write(chunk)
+                    received += len(chunk)
+                    pbar.update(len(chunk))
+        if expected and received != expected:
+            raise OSError(f"the connection closed after {received} of {expected} bytes")
+        os.replace(partial, file_path)
+        return True
+    except Exception as e:
+        print(f"✗ Failed to download {desc}: {e}")
+        return False
+    finally:
+        # Renamed away on success; still here, it is an incomplete download.
+        if partial is not None and os.path.exists(partial):
+            try:
+                os.remove(partial)
+            except OSError:
+                pass
+
+
 def check_and_download_s3_files(
     s3_bucket_url: str, local_data_lake_path: str, expected_files: list[str], folder: str = "data_lake"
 ) -> dict[str, bool]:
@@ -974,38 +1050,6 @@ def check_and_download_s3_files(
     os.makedirs(local_data_lake_path, exist_ok=True)
     download_results = {}
 
-    def download_with_progress(url: str, file_path: str, desc: str) -> bool:
-        """Download file with progress bar."""
-        try:
-            # Ensure directory exists for nested files
-            os.makedirs(os.path.dirname(file_path), exist_ok=True)
-
-            response = requests.get(url, stream=True)
-            response.raise_for_status()
-
-            total_size = int(response.headers.get("content-length", 0))
-
-            with open(file_path, "wb") as f:
-                if total_size > 0:
-                    with tqdm.tqdm(total=total_size, unit="B", unit_scale=True, desc=desc, ncols=80) as pbar:
-                        for chunk in response.iter_content(chunk_size=8192):
-                            if chunk:
-                                f.write(chunk)
-                                pbar.update(len(chunk))
-                else:
-                    for chunk in response.iter_content(chunk_size=8192):
-                        if chunk:
-                            f.write(chunk)
-            return True
-        except Exception as e:
-            print(f"✗ Failed to download {desc}: {e}")
-            if os.path.exists(file_path):
-                try:
-                    os.remove(file_path)
-                except OSError:
-                    pass
-            return False
-
     def cleanup_file(file_path: str):
         """Clean up file if it exists."""
         if os.path.exists(file_path):
@@ -1022,7 +1066,7 @@ def check_and_download_s3_files(
         with tempfile.NamedTemporaryFile(suffix=".zip", delete=False) as tmp_zip:
             tmp_zip_path = tmp_zip.name
 
-            if download_with_progress(s3_zip_url, tmp_zip_path, f"{folder}.zip"):
+            if _download_file(s3_zip_url, tmp_zip_path, f"{folder}.zip"):
                 print(f"Extracting {folder}.zip...")
                 try:
                     with zipfile.ZipFile(tmp_zip_path, "r") as zip_ref:
@@ -1059,7 +1103,13 @@ def check_and_download_s3_files(
         local_file_path = os.path.join(local_data_lake_path, filename)
         s3_file_url = urljoin(s3_bucket_url + "/" + folder + "/", filename)
 
-        success = download_with_progress(s3_file_url, local_file_path, filename)
+        # One download of a file at a time: two chats that need the same dataset
+        # at once would otherwise both fetch it, each into a partial file of its
+        # own, doubling the disk a multi-GB file takes while it arrives.
+        with _download_lock(local_file_path):
+            if os.path.exists(local_file_path):  # fetched while this one waited
+                return filename, True
+            success = _download_file(s3_file_url, local_file_path, filename)
         if success:
             print(f"✓ Successfully downloaded: {filename}")
         return filename, success
