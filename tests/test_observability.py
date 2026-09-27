@@ -142,6 +142,20 @@ def test_json_includes_exception_traceback():
     assert "ValueError: boom" in line["exc"]
 
 
+def test_identity_header_names_are_not_treated_as_secrets():
+    """They contain "AUTH", and scrubbing them hid the header names from every warning about them."""
+    r = obs.Redactor.from_environ(
+        {
+            "BIOMNI_AUTH_USER_ID_HEADER": "Ai-App-User-Context",
+            "BIOMNI_AUTH_WORKSPACE_CONTEXT_HEADER": "Ai-App-Workspace-Context",
+            "BIOMNI_TRUST_AUTH_HEADERS": "yes-trust",
+            "CHAINLIT_AUTH_SECRET": "a-real-signing-secret",
+        }
+    )
+    line = "Ai-App-User-Context and Ai-App-Workspace-Context, signed with a-real-signing-secret, yes-trust"
+    assert r.redact(line) == "Ai-App-User-Context and Ai-App-Workspace-Context, signed with [REDACTED], yes-trust"
+
+
 def test_json_redacts_secret_in_message(monkeypatch):
     monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-secretkey-ABCDEFGHIJKL")
     stream, _ = _capture()
@@ -260,6 +274,35 @@ def test_capture_context_propagates_into_worker_thread():
             replayed = ex.submit(ctx.run, obs.get_context).result()
     assert raw == {}
     assert replayed == {"session_id": "S9", "run_id": "R9"}
+
+
+def test_thread_pool_tasks_run_in_the_context_that_submitted_them():
+    """What generated code gets: its own pools stay in its session."""
+    obs.carry_context_into_thread_pools()
+    with obs.bind_run(session_id="S1", run_id="R1"), ThreadPoolExecutor(max_workers=2) as ex:
+        submitted = ex.submit(obs.get_context).result()
+        mapped = list(ex.map(lambda _: obs.get_context(), range(3)))
+    assert submitted == {"session_id": "S1", "run_id": "R1"}
+    assert mapped == [{"session_id": "S1", "run_id": "R1"}] * 3
+
+
+def test_a_pool_thread_never_carries_one_sessions_context_into_the_next():
+    """Pool threads outlive the task that started them and serve every session."""
+    obs.carry_context_into_thread_pools()
+    with ThreadPoolExecutor(max_workers=1) as ex:
+        with obs.bind_run(session_id="alice"):
+            first = ex.submit(obs.get_context).result()
+        with obs.bind_run(session_id="bob"):
+            second = ex.submit(obs.get_context).result()
+        third = ex.submit(obs.get_context).result()
+    assert (first, second, third) == ({"session_id": "alice"}, {"session_id": "bob"}, {})
+
+
+def test_carrying_context_into_thread_pools_is_installed_once():
+    obs.carry_context_into_thread_pools()
+    installed = ThreadPoolExecutor.submit
+    obs.carry_context_into_thread_pools()
+    assert ThreadPoolExecutor.submit is installed
 
 
 def test_set_run_id_and_session_id_with_token_reset():

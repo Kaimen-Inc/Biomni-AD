@@ -39,6 +39,10 @@ _ENV_TO_CLEAR = (
     "GIT_SHA",
     "BIOMNI_GIT_REF",
     "GIT_REF",
+    "BIOMNI_LLM_PROXY_URL",
+    "BIOMNI_LLM_PROXY_SCHEMA",
+    "BIOMNI_LLM_PROXY_API_KEY",
+    "BIOMNI_TRUST_AUTH_HEADERS",
 )
 
 
@@ -68,6 +72,48 @@ def test_build_info_reads_git_env(monkeypatch):
 # ---------------------------------------------------------------------------
 
 
+def test_behind_the_llm_proxy_its_token_is_the_credential(monkeypatch, tmp_path):
+    monkeypatch.setenv("BIOMNI_PATH", str(tmp_path))
+    monkeypatch.setenv("BIOMNI_LLM_PROXY_URL", "https://proxy.example/v1")
+    monkeypatch.setenv("BIOMNI_LLM_PROXY_API_KEY", "proxy-token")
+    monkeypatch.setenv("BIOMNI_TRUST_AUTH_HEADERS", "true")
+    ok, report = health.readiness_report()
+    assert ok is True
+    assert report["checks"]["llm_credential"] == {"ok": True, "source": "BIOMNI_LLM_PROXY_URL"}
+
+
+def test_a_proxy_that_will_refuse_every_call_is_not_ready(monkeypatch, tmp_path):
+    """Without the gateway's ids the proxy refuses every request, so the pod cannot serve."""
+    monkeypatch.setenv("BIOMNI_PATH", str(tmp_path))
+    monkeypatch.setenv("BIOMNI_LLM_PROXY_URL", "https://proxy.example/v1")
+    monkeypatch.setenv("BIOMNI_LLM_PROXY_API_KEY", "proxy-token")
+    ok, report = health.readiness_report()
+    assert ok is False
+    assert "BIOMNI_TRUST_AUTH_HEADERS" in report["checks"]["llm_credential"]["detail"]
+
+
+def test_a_leftover_provider_key_does_not_make_a_tokenless_proxy_ready(monkeypatch, tmp_path):
+    """Every model call goes through the proxy, so without its token none can succeed."""
+    monkeypatch.setenv("BIOMNI_PATH", str(tmp_path))
+    monkeypatch.setenv("BIOMNI_LLM_PROXY_URL", "https://proxy.example/v1")
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-whatever")
+    ok, report = health.readiness_report()
+    assert ok is False
+    check = report["checks"]["llm_credential"]
+    assert check["ok"] is False
+    assert "BIOMNI_LLM_PROXY_API_KEY" in check["detail"]
+
+
+def test_a_misspelt_proxy_schema_makes_the_pod_unready(monkeypatch, tmp_path):
+    monkeypatch.setenv("BIOMNI_PATH", str(tmp_path))
+    monkeypatch.setenv("BIOMNI_LLM_PROXY_URL", "https://proxy.example/v1")
+    monkeypatch.setenv("BIOMNI_LLM_PROXY_API_KEY", "proxy-token")
+    monkeypatch.setenv("BIOMNI_LLM_PROXY_SCHEMA", "openia")
+    ok, report = health.readiness_report()
+    assert ok is False
+    assert "BIOMNI_LLM_PROXY_SCHEMA" in report["checks"]["llm_credential"]["detail"]
+
+
 def test_readiness_ok_when_data_and_credential_present(monkeypatch, tmp_path):
     monkeypatch.setenv("BIOMNI_PATH", str(tmp_path))
     monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-whatever")
@@ -86,12 +132,22 @@ def test_readiness_fails_without_credential(monkeypatch, tmp_path):
     assert report["checks"]["llm_credential"]["ok"] is False
 
 
-def test_readiness_fails_without_data_dir(monkeypatch, tmp_path):
-    monkeypatch.setenv("BIOMNI_PATH", str(tmp_path / "does-not-exist"))
+@pytest.mark.parametrize("env", ["BIOMNI_USER_DATA_PATH", "BIOMNI_DATA_PATH"])
+def test_readiness_waits_for_a_configured_workspace(monkeypatch, tmp_path, env):
+    monkeypatch.setenv(env, str(tmp_path / "does-not-exist"))
     monkeypatch.setenv("OPENAI_API_KEY", "sk-whatever")
     ok, report = health.readiness_report()
     assert ok is False
-    assert report["checks"]["data_path"]["ok"] is False
+    assert report["checks"]["data_path"] == {"ok": False, "path": str(tmp_path / "does-not-exist")}
+
+
+def test_readiness_does_not_wait_for_the_apps_own_data_directory(monkeypatch, tmp_path):
+    """The image sets BIOMNI_PATH to a directory only a chat creates - and an unready pod gets no chats."""
+    monkeypatch.setenv("BIOMNI_PATH", str(tmp_path / "created-on-first-use"))
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-whatever")
+    ok, report = health.readiness_report()
+    assert ok is True
+    assert report["checks"]["data_path"] == {"ok": True, "path": None}
 
 
 def test_readiness_accepts_custom_base_url(monkeypatch, tmp_path):

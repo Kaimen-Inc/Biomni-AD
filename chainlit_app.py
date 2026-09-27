@@ -20,11 +20,9 @@ import logging
 import os
 import re
 import sys
-import threading
 import time
 import uuid
 import zipfile
-from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 
@@ -78,12 +76,21 @@ from biomni.artifact import build_run_id, get_all_files
 from biomni.config import default_config, resolve_data_lake_root, resolve_default_llm
 from biomni.health import register_health_routes
 from biomni.identity import (
+    Login,
+    SessionIdentity,
     UserIdentity,
+    auth_config_warnings,
+    bound_identity,
+    describe_auth_config,
+    login_is_current,
     password_identity,
     resolve_identity,
+    resolve_session_identity,
+    set_current_identity,
     single_user_mode,
     trust_auth_headers,
 )
+from biomni.llm_proxy import describe_llm_proxy, llm_proxy_settings, proxy_identity_problem
 from biomni.observability import (
     RunHeartbeat,
     bind_run,
@@ -104,11 +111,15 @@ from biomni.workspace_prefs import (
     ScopeResolution,
     WorkspacePrefs,
     build_prefs_store,
+    default_prefs,
     env_flag,
+    explain_unreadable,
+    is_readable_dir,
     load_prefs,
     normalize_scope_entries,
     resolve_output_dir,
     resolve_scope,
+    storage_facts,
 )
 from chainlit.input_widget import InputWidget, MultiSelect, Switch, Tags, TextInput
 from langchain_core.messages import AIMessage, HumanMessage
@@ -160,7 +171,9 @@ def _extract_final_answer(state: dict) -> str:
 # intentionally not re-exported - anything that needs them should
 # `from chainlit_ui.planning import PLANNING_SYSTEM_PROMPT, AD1_PLANNING_SYSTEM_PROMPT`.
 from chainlit_ui.datasets import build_suggested_prompts_markdown
+from chainlit_ui.graph_stream import stream_langgraph
 from chainlit_ui.live_runs import LIVE_RUNS
+from chainlit_ui.llm_failures import describe_llm_failure
 from chainlit_ui.persistence import build_data_layer, ensure_auth_secret
 from chainlit_ui.planning import PLAN_ACTIONS, STALE_PLAN_ACTION_NOTE
 from chainlit_ui.planning import (
@@ -472,6 +485,10 @@ class WorkspaceSession:
     top_level_dirs: list[str] = field(default_factory=list)
     inventory: str = ""
     runs: list[RunRecord] = field(default_factory=list)
+    # Why the workspace cannot be listed, when it cannot. It exists (or it
+    # would not be the workspace) but every folder in it is invisible, which
+    # without this reads as an empty workspace rather than a broken mount.
+    workspace_problem: str | None = None
 
     @property
     def persistence_label(self) -> str:
@@ -499,22 +516,31 @@ def _refresh_workspace_view(ws: WorkspaceSession) -> WorkspaceSession:
     """
     ws.scope = resolve_scope(ws.prefs, ws.workspace_root)
     ws.output = resolve_output_dir(ws.prefs, workspace_root=ws.workspace_root)
+    return _survey_workspace(ws)
+
+
+def _survey_workspace(ws: WorkspaceSession) -> WorkspaceSession:
+    """What is in the workspace, given the session's scope and output directory."""
+    root = ws.workspace_root
+    ws.workspace_problem = explain_unreadable(root) if root and not is_readable_dir(root) else None
     # The output directory usually sits inside the workspace and gains a run
     # folder per query; it is a destination, never an input, so keep it out of
-    # the picker and out of what the agent is told it can read.
-    ws.top_level_dirs = list_top_level_dirs(ws.workspace_root, exclude_paths=[ws.output.path])
-    ws.inventory = build_scope_inventory(ws.scope, ws.workspace_root, top_level_dirs=ws.top_level_dirs)
+    # the picker and out of what the agent is told it can read. An unreadable
+    # workspace is not listed at all: why is already known, and the attempt
+    # would only log the same failure again on every start and save.
+    ws.top_level_dirs = [] if ws.workspace_problem else list_top_level_dirs(root, exclude_paths=[ws.output.path])
+    ws.inventory = build_scope_inventory(ws.scope, root, top_level_dirs=ws.top_level_dirs)
     return ws
 
 
-def _build_workspace_session(session_id: str, header_source: object) -> WorkspaceSession:
-    """Resolve identity, load stored preferences and derive the session view.
+def _build_workspace_session(session: SessionIdentity) -> WorkspaceSession:
+    """Load stored preferences for the session's user and derive the session view.
 
     Blocking (filesystem + preference load), so callers must run it in an
     executor. Never raises: any failure degrades to defaults, because a user
     who cannot load their settings should still get a working session.
     """
-    identity = resolve_identity(header_source, session_id=session_id)
+    identity = session.identity
     workspace_root = _resolve_workspace_root()
     prefs_key = identity.scoped_key()
 
@@ -527,7 +553,10 @@ def _build_workspace_session(session_id: str, header_source: object) -> Workspac
         store = build_prefs_store(workspace_root)
         registry = build_run_registry(workspace_root)
     else:
-        store = NullPrefsStore("no authenticated user; set BIOMNI_ALLOW_ANONYMOUS_PERSISTENCE=true to override")
+        # The notice says why there is no signed-in user - gateway headers being
+        # ignored is an operator's fix, while having no gateway at all may be
+        # exactly what the deployment intends.
+        store = NullPrefsStore(session.notice or "no signed-in user")
         registry = RunRegistry(None)
 
     prefs = load_prefs(store, prefs_key)
@@ -545,36 +574,63 @@ def _build_workspace_session(session_id: str, header_source: object) -> Workspac
     # Reconciling here (rather than at write time) is what turns a pod restart
     # into an honest "interrupted" on the user's next visit.
     ws.runs = registry.reconcile(prefs_key)
-    return _refresh_workspace_view(ws)
+    return _survey_workspace(ws)
+
+
+def _as_sentence(text: str) -> str:
+    text = text.strip()
+    return text if not text or text.endswith((".", "!", "?")) else f"{text}."
+
+
+def _output_warnings(output: OutputTarget) -> list[str]:
+    """What a user must know about where results go, before a long run starts.
+
+    Shared by the settings dialog and the message confirming a settings change,
+    so the two can never describe the same directory differently.
+    """
+    if not output.writable:
+        return [_as_sentence(f"⚠️ Results cannot be saved: no output location is writable. {output.reason or ''}")]
+    warnings = []
+    # Shown even when the resolved directory works: a working fallback is
+    # exactly the case where a mis-set BIOMNI_OUTPUT_ROOT goes unnoticed.
+    if output.reason:
+        warnings.append(
+            _as_sentence(
+                f"⚠️ The configured location could not be used, so results go to {output.path} instead. {output.reason}"
+            )
+        )
+    if output.is_ephemeral:
+        warnings.append(
+            "⚠️ This is container-local storage: results are lost when the application restarts. "
+            "Set a path on a mounted volume, or ask an operator to set BIOMNI_OUTPUT_ROOT."
+        )
+    return warnings
 
 
 def _output_dir_description(ws: WorkspaceSession) -> str:
     """Help text for the output-directory field, including its warnings.
 
-    The two warnings used to live in the sidebar panel, and they are the only
-    part of it that was load-bearing: a user whose results are going somewhere
+    The warnings used to live in the sidebar panel, and they are the only part
+    of it that was load-bearing: a user whose results are going somewhere
     unwritable, or somewhere a restart will erase, has to be told before they
-    start a long run rather than after.
+    start a long run rather than after. Paragraphs are separated by blank lines,
+    which ``public/biomni.css`` makes the dialog render as breaks.
     """
-    text = (
-        f"Where run results are written. Currently resolved to {ws.output.path} "
-        f"(source: {ws.output.source}). Leave as-is to keep the deployment default."
+    # The field shows a saved directory even when it cannot be used, so the way
+    # back to the default is to clear it, not to leave it alone.
+    reset = (
+        "Clear the field to use the deployment's default."
+        if ws.prefs.output_dir
+        else "Leave as-is to keep the deployment's default."
     )
-    if not ws.output.writable:
-        text += f"\n\n⚠️ That directory is not writable. {ws.output.reason or ''}".rstrip()
-    else:
-        if ws.output.is_ephemeral:
-            text += (
-                "\n\n⚠️ Container-local storage: results are lost when the application restarts. "
-                "Set a path on a mounted volume, or ask an operator to configure BIOMNI_OUTPUT_ROOT."
-            )
-        # Shown even when the resolved directory is fine: a working fallback is
-        # exactly the case where a mis-set BIOMNI_OUTPUT_ROOT goes unnoticed.
-        if ws.output.reason:
-            text += f"\n\n⚠️ This is not the configured location - {ws.output.reason}."
-    if ws.persistence_label:
-        text += f"\n\nSettings are stored in {ws.persistence_label}."
-    return text
+    return "\n\n".join([f"Where run results are written. {reset}", *_output_warnings(ws.output)])
+
+
+def _remember_settings_description(ws: WorkspaceSession) -> str:
+    """Where settings are kept, or why they cannot be kept at all."""
+    if isinstance(ws.store, NullPrefsStore):
+        return _as_sentence(f"Settings apply to this session only: {ws.store.reason}")
+    return f"Saved in {ws.persistence_label}."
 
 
 def _workspace_settings_widgets(ws: WorkspaceSession) -> list[InputWidget]:
@@ -621,12 +677,17 @@ def _workspace_settings_widgets(ws: WorkspaceSession) -> list[InputWidget]:
             )
         )
 
+    extra_description = "Sub-folders deeper than the top level, e.g. studyA/processed"
+    if ws.workspace_problem:
+        extra_description += "\n\n" + _as_sentence(
+            f"⚠️ The workspace cannot be read, so there are no folders to choose from. {ws.workspace_problem}"
+        )
     widgets.append(
         Tags(
             id="scope_extra_paths",
             label="Additional paths (workspace-relative)",
             initial=[p for p in ws.prefs.scope_paths if p not in known],
-            description="Sub-folders deeper than the top level, e.g. studyA/processed",
+            description=extra_description,
         )
     )
 
@@ -644,6 +705,7 @@ def _workspace_settings_widgets(ws: WorkspaceSession) -> list[InputWidget]:
             id="remember_settings",
             label="Remember these settings for my next session",
             initial=ws.prefs.remember,
+            description=_remember_settings_description(ws),
         )
     )
     return widgets
@@ -747,18 +809,15 @@ def _user_from_identity(identity: UserIdentity) -> cl.User:
     """One place that turns a resolved identity into Chainlit's user.
 
     Shared by both auth paths so preferences, run records and chat threads
-    always key off the same string, whichever way the caller signed in.
+    always key off the same string, whichever way the caller signed in. The
+    metadata carries the whole identity, because the login is the one record of
+    it every websocket connection is guaranteed to have (see
+    ``_resolve_session_identity``).
     """
     return cl.User(
         identifier=identity.scoped_key(),
         display_name=identity.display_name,
-        metadata={
-            "source": identity.source,
-            "email": identity.email or "",
-            "workspace_id": identity.workspace_id or "",
-            "given_name": identity.given_name or "",
-            "family_name": identity.family_name or "",
-        },
+        metadata=identity.to_metadata(),
     )
 
 
@@ -820,17 +879,155 @@ if demo_password():
     logger.info("password sign-in enabled (BIOMNI_DEMO_PASSWORD is set)")
 
 
+def _login_of(user) -> Login | None:
+    """What a Chainlit user object records about the login it came from."""
+    if user is None:
+        return None
+    return Login(getattr(user, "identifier", None), getattr(user, "metadata", None))
+
+
+def _reject_stale_login() -> None:
+    """Refuse a login cookie that names someone other than the gateway does.
+
+    A Chainlit login outlives the platform session that created it by days, and
+    the browser only signs in again when it has no valid cookie. So when a second
+    person signs in to the platform on a shared machine, the gateway names them
+    on every request while the leftover cookie still names the first - who would
+    otherwise be handed the new person's conversations, preferences and model
+    usage.
+
+    Every Chainlit HTTP endpoint resolves its caller through ``get_current_user``,
+    so overriding that one dependency covers all of them: a contradicted cookie
+    gets a 401, and the browser responds exactly as it does to an expired one,
+    by signing in again as whoever the gateway names. The websocket
+    authenticates separately, and ``_resolve_session_identity`` holds the same
+    line there.
+    """
+    from chainlit.auth import get_current_user, reuseable_oauth
+    from chainlit.server import app
+    from fastapi import Depends, HTTPException, Request
+
+    # Chainlit's own token extractor (cookie or bearer header), so the override
+    # reads the login exactly the way the dependency it replaces does.
+    async def gateway_checked_user(request: Request, token: str | None = Depends(reuseable_oauth)):
+        user = await get_current_user(token)
+        login = _login_of(user)
+        if login is not None and not login_is_current(login, request.headers):
+            logger.warning("refusing a login that names a different user than the authentication gateway")
+            raise HTTPException(status_code=401, detail="login does not match the authentication gateway")
+        return user
+
+    app.dependency_overrides[get_current_user] = gateway_checked_user
+
+
+# Only behind a gateway: without one there is nothing to check a login against.
+if trust_auth_headers():
+    try:
+        _reject_stale_login()
+    except Exception:  # pragma: no cover - defensive: never block startup
+        logger.warning("Could not install the stale-login check", exc_info=True)
+
+
+def _log_access_config() -> None:
+    """One structured line saying how callers are identified and models reached.
+
+    The two settings interact - the LLM proxy can only bill a gateway identity -
+    and the failure when they disagree is an error on every model call, long
+    after startup. Saying so here is what makes it a one-line diagnosis.
+    """
+    proxy = describe_llm_proxy()
+    emit_event(
+        "access_config",
+        logger=logger,
+        **describe_auth_config(),
+        password_login=bool(demo_password()),
+        llm_proxy=proxy,
+    )
+    for warning in auth_config_warnings():
+        logger.warning(warning)
+    if proxy.get("error"):
+        logger.error("LLM proxy misconfigured: %s", proxy["error"])
+    elif proxy.get("enabled"):
+        if not proxy.get("token_configured"):
+            logger.error("BIOMNI_LLM_PROXY_URL is set but BIOMNI_LLM_PROXY_API_KEY is not; every model call will fail")
+        if not trust_auth_headers():
+            logger.error(
+                "the LLM proxy needs each caller's platform user and workspace id, which only a trusted "
+                "authentication gateway supplies; with BIOMNI_TRUST_AUTH_HEADERS off every model call will be "
+                "refused"
+            )
+
+
+_log_access_config()
+
+
+def _log_storage_check() -> None:
+    """One structured line per storage location the app depends on, at startup.
+
+    Storage problems otherwise surface one user at a time, in a settings
+    dialog, as a sentence an operator has to ask for a screenshot of. These are
+    logged before any session exists, from what only the pod can see: the live
+    mount options, the owner and mode this process meets, and whether it can
+    read and write - enough to tell a share mounted without ownership options
+    from one whose new options have not reached the node yet.
+    """
+    workspace = _resolve_workspace_root()
+    if workspace is None:
+        configured = ", ".join(f"{env}={path}" for env, path in _resolve_user_data_roots())
+        if configured:
+            logger.error("no configured workspace directory exists: %s", configured)
+    else:
+        facts = storage_facts(workspace)
+        level = logging.INFO if facts["readable"] else logging.ERROR
+        emit_event("storage_check", logger=logger, level=level, location="workspace", **facts)
+
+    # Where results go for a user with no preference - which also logs, once,
+    # why each configured location before it was passed over.
+    output = resolve_output_dir(default_prefs(), workspace_root=workspace)
+    if not output.writable:
+        level = logging.ERROR
+    elif output.reason or output.is_ephemeral:
+        # Working, but not where the deployment meant results to go, or not
+        # somewhere they survive a restart.
+        level = logging.WARNING
+    else:
+        level = logging.INFO
+    emit_event(
+        "storage_check",
+        logger=logger,
+        level=level,
+        location="outputs",
+        output_source=output.source,
+        ephemeral=output.is_ephemeral,
+        passed_over=output.reason,
+        **storage_facts(output.path),
+    )
+
+    state_dir = os.getenv("BIOMNI_STATE_DIR", "").strip()
+    if state_dir:
+        facts = storage_facts(state_dir)
+        level = logging.INFO if facts["writable"] else logging.WARNING
+        emit_event("storage_check", logger=logger, level=level, location="state_dir", **facts)
+
+
+try:
+    _log_storage_check()
+except Exception:  # pragma: no cover - defensive: a diagnostic must never block startup
+    logger.warning("Could not check storage locations", exc_info=True)
+
+
 @cl.data_layer
 def data_layer():
     """Durable storage for conversations, or ``None`` to keep them in memory.
 
     Enabled only where the storage key is stable enough for a user to find their
-    own threads again: behind a gateway, or in the explicitly opted-in
-    single-user mode. Under a per-connection anonymous key every page load would
-    start a fresh identity, so the sidebar would fill with orphaned threads that
-    nobody could ever reopen.
+    own threads again: behind a gateway, behind the demo password (the username
+    is the key), or in the explicitly opted-in single-user mode. Under a
+    per-connection anonymous key every page load would start a fresh identity,
+    so the sidebar would fill with orphaned threads that nobody could ever
+    reopen.
     """
-    if not (trust_auth_headers() or single_user_mode()):
+    if not (trust_auth_headers() or single_user_mode() or demo_password()):
         logger.info(
             "chat history is disabled: no authentication gateway is configured. "
             "Set BIOMNI_TRUST_AUTH_HEADERS (behind a gateway) or "
@@ -860,50 +1057,6 @@ async def run_in_executor(fn, *args):
     ctx = capture_context()
     loop = asyncio.get_event_loop()
     return await loop.run_in_executor(None, lambda: ctx.run(fn, *args))
-
-
-async def stream_langgraph(agent_app, inputs, config):
-    """Yield LangGraph state dicts asynchronously from a sync stream.
-
-    The graph runs in a worker thread, which cancellation cannot reach: an
-    asyncio task that is cancelled stops *reading*, and a thread that nobody
-    reads goes right on calling the model. Stop therefore used to end the
-    conversation while the run it stopped kept working - for as long as the
-    whole plan took. The flag below is the cooperative half of the stop: the
-    producer checks it between graph nodes, so the run ends after the step it
-    was already in.
-    """
-    queue: asyncio.Queue = asyncio.Queue()
-    loop = asyncio.get_event_loop()
-    stop = threading.Event()
-
-    def _producer():
-        try:
-            for state in agent_app.stream(inputs, stream_mode="values", config=config):
-                asyncio.run_coroutine_threadsafe(queue.put(state), loop)
-                if stop.is_set():
-                    break
-        finally:
-            asyncio.run_coroutine_threadsafe(queue.put(None), loop)  # sentinel
-
-    executor = ThreadPoolExecutor(max_workers=1)
-    # Capture the active context here (caller thread) and replay it in the
-    # producer thread so the agent graph's logs (LLM calls, code-execution
-    # audit) carry the session_id/run_id.
-    ctx = capture_context()
-    executor.submit(ctx.run, _producer)
-
-    try:
-        while True:
-            state = await queue.get()
-            if state is None:
-                break
-            yield state
-    finally:
-        stop.set()
-        # Not waited on: the worker may be mid-node, and holding the event loop
-        # for it would freeze the UI. It exits at the next check.
-        executor.shutdown(wait=False)
 
 
 # ---------------------------------------------------------------------------
@@ -949,7 +1102,7 @@ AD1_STARTERS = [
             "For each gene: (1) pull GWAS significance from any local summary stats "
             "(GCST90027158, NG00075, or NG00052), (2) check brain eQTL evidence in NG00105 or "
             "SingleBrain, (3) look up proteomic levels in NG00102 if available, and "
-            "(4) find CRISPR dependency scores from CRISPRbrain relevant screen from the biomni-AD datalake."
+            "(4) find CRISPR dependency scores from the relevant CRISPRbrain screen in the biomni-AD data lake. "
             "Compile everything into a single comparison table and a radar chart per gene."
         ),
         icon="/public/avatars/ad1.png",
@@ -1046,15 +1199,21 @@ async def on_chat_resume(thread: dict):
     the tab and came back - it is redirected into this connection, so the rest
     of it streams in here instead of into a socket nobody is holding.
     """
-    history = _history_from_thread(thread)
-    reattached = await _follow_live_run(thread.get("id"))
-    emit_event(
-        "chat_resume",
-        steps=len(thread.get("steps") or []),
-        history_turns=len(history),
-        reattached=reattached,
-    )
-    await _start_session(resumed_history=history)
+    await _start_session(resumed_thread=thread)
+
+
+def _withhold_transcript(thread: dict) -> None:
+    """Keep a refused session from receiving the conversation it asked to reopen.
+
+    Chainlit sends the stored transcript to the browser after the resume handler
+    returns, whatever the handler decided - and it sends the very dict it handed
+    the handler, so emptying that is what makes refusing the session refuse the
+    conversation too. The first line of defence is ``_reject_stale_login``: a
+    browser holding a contradicted login is sent to sign in again before it ever
+    opens a websocket. This is the second.
+    """
+    thread["steps"] = []
+    thread["elements"] = []
 
 
 async def _follow_live_run(thread_id: str | None) -> bool:
@@ -1077,6 +1236,35 @@ async def _follow_live_run(thread_id: str | None) -> bool:
 # How long to let the browser finish restoring a conversation before telling it
 # the conversation is still busy.
 _RESUME_ANNOUNCE_DELAY_S = 1.0
+
+
+async def _send_notice(content: str, *, resumed: bool = False) -> None:
+    """Tell the user something about this session, outside the conversation.
+
+    Never stored with the conversation. A notice describes the session it was
+    sent in - a workspace that could not be read, a sign-in that changed - and a
+    stored copy would be shown again, and replayed to the model as something it
+    said, every time the conversation was reopened, long after the cause was
+    fixed.
+
+    On a reopened conversation it is sent once the browser has restored the
+    transcript, which would otherwise replace it (see :func:`_announce_live_run`).
+    """
+    if resumed:
+        asyncio.create_task(_send_notice_after_resume(content))
+        return
+    message = cl.Message(content=content)
+    # Chainlit stores a message on its first send unless told it already has.
+    message.persisted = True
+    await message.send()
+
+
+async def _send_notice_after_resume(content: str) -> None:
+    try:
+        await asyncio.sleep(_RESUME_ANNOUNCE_DELAY_S)
+        await _send_notice(content)
+    except Exception:
+        logger.warning("Could not deliver a session notice", exc_info=True)
 
 
 async def _announce_live_run() -> None:
@@ -1123,7 +1311,7 @@ def _history_from_thread(thread: dict) -> list[dict]:
     return history
 
 
-async def _start_session(resumed_history: list[dict] | None = None) -> None:
+async def _start_session(resumed_thread: dict | None = None) -> None:
     """Build everything one chat session needs. Shared by start and resume."""
     # One correlation id per chat session, bound for the lifetime of this
     # handler so agent-init logs carry it. on_message rebinds it per message.
@@ -1136,6 +1324,47 @@ async def _start_session(resumed_history: list[dict] | None = None) -> None:
     # is new or a reopened conversation.
     ACTIVITY.session_opened("chat")
 
+    # Who this session belongs to is settled once, here, and everything after
+    # uses that answer: preferences, run records, and every model call made on
+    # the user's behalf (the LLM proxy bills them by these ids). Cheap - header
+    # parsing only - so it runs before the agent is built, which a refused
+    # session never needs.
+    resumed = resumed_thread is not None
+    session_identity = _resolve_session_identity(thread_id)
+    if session_identity.conflict:
+        emit_event("identity_conflict", logger=logger, level=logging.WARNING, resumed=resumed)
+        if resumed_thread is not None:
+            _withhold_transcript(resumed_thread)
+        await _send_notice(f"⚠️ Sign-in changed: {session_identity.notice}.", resumed=resumed)
+        return
+
+    resumed_history: list[dict] | None = None
+    if resumed_thread is not None:
+        resumed_history = _history_from_thread(resumed_thread)
+        # Only once the session is known to be its owner's: a run is never
+        # handed to a connection that is about to be refused.
+        reattached = await _follow_live_run(resumed_thread.get("id"))
+        emit_event(
+            "chat_resume",
+            steps=len(resumed_thread.get("steps") or []),
+            history_turns=len(resumed_history),
+            reattached=reattached,
+        )
+
+    identity = session_identity.identity
+    set_current_identity(identity)
+    cl.user_session.set("identity", identity)
+    if llm_proxy_settings() is not None:
+        problem = proxy_identity_problem(identity)
+        if problem:
+            # Said now rather than as an error on the first question: every
+            # model call in this session would be refused for the same reason.
+            logger.error("session cannot use the LLM proxy: %s", problem)
+            await _send_notice(
+                f"⚠️ **The assistant cannot answer in this session.** {problem[:1].upper()}{problem[1:]}",
+                resumed=resumed,
+            )
+
     # Determine agent type: CLI env var > chat profile selection > default AD1
     if FORCE_AGENT in ("a1", "ad1"):
         agent_type = FORCE_AGENT
@@ -1144,7 +1373,7 @@ async def _start_session(resumed_history: list[dict] | None = None) -> None:
         agent_type = "a1" if str(profile).upper() == "A1" else "ad1"
 
     label = "AD1" if agent_type == "ad1" else "A1"
-    emit_event("chat_start", agent_type=agent_type, llm=DEFAULT_LLM, resumed=resumed_history is not None)
+    emit_event("chat_start", agent_type=agent_type, llm=DEFAULT_LLM, resumed=resumed)
     try:
         if agent_type == "ad1":
             from biomni.agent.ad1 import AD1
@@ -1160,7 +1389,7 @@ async def _start_session(resumed_history: list[dict] | None = None) -> None:
         cl.user_session.set("thread_id", thread_id)
     except Exception as exc:
         logger.exception("Failed to initialize %s agent", label)
-        await cl.Message(content=f"Failed to initialize {label}: {exc}").send()
+        await _send_notice(f"Failed to initialize {label}: {exc}", resumed=resumed)
         return
 
     # Resolve identity, preferences, data scope and output directory, then tell
@@ -1171,7 +1400,7 @@ async def _start_session(resumed_history: list[dict] | None = None) -> None:
     # than failing an otherwise usable one.
     ws = None
     try:
-        ws = await run_in_executor(_build_workspace_session, thread_id, _session_header_source())
+        ws = await run_in_executor(_build_workspace_session, session_identity)
         cl.user_session.set("workspace", ws)
         _apply_scope_to_agent(agent, ws)
         emit_event(
@@ -1180,6 +1409,7 @@ async def _start_session(resumed_history: list[dict] | None = None) -> None:
             has_workspace=bool(ws.workspace_root),
             scope_folders=len(ws.scope.roots),
             scope_is_default=ws.scope.is_default,
+            workspace_readable=ws.workspace_problem is None,
             output_source=ws.output.source,
             output_ephemeral=ws.output.is_ephemeral,
             prefs_persisted=not isinstance(ws.store, NullPrefsStore),
@@ -1193,6 +1423,15 @@ async def _start_session(resumed_history: list[dict] | None = None) -> None:
         )
     except Exception:
         logger.exception("Failed to resolve workspace session (continuing with defaults)")
+
+    if ws is not None and ws.workspace_problem:
+        # Said up front: every question about the user's own data would
+        # otherwise be answered as if the workspace were empty.
+        await _send_notice(
+            f"⚠️ **This app cannot read your workspace**, so none of your data is visible to it. "
+            f"{_as_sentence(ws.workspace_problem[:1].upper() + ws.workspace_problem[1:])}",
+            resumed=resumed,
+        )
 
     # Expose the scope / output controls.
     if ws is not None:
@@ -1236,15 +1475,31 @@ def _session_header_source() -> object:
     """The gateway headers for this session, or None outside a request context.
 
     Chainlit keeps the connection's WSGI/ASGI environ on the session; that is
-    where an authentication gateway's forwarded headers arrive. Best-effort by
-    design - with no gateway (local dev, today's deployment) this yields None
-    and identity falls back to an anonymous, session-scoped key.
+    where an authentication gateway's forwarded headers arrive, when it forwards
+    them on the websocket upgrade as well as on plain requests.
     """
     try:
         session = cl.context.session
     except Exception:
         return None
     return getattr(session, "environ", None) or getattr(session, "http_headers", None)
+
+
+def _resolve_session_identity(session_id: str) -> SessionIdentity:
+    """Who this chat session belongs to (see ``identity.resolve_session_identity``).
+
+    Two witnesses, reconciled there: the login Chainlit authenticated the
+    connection with - which records what the gateway, or the demo password,
+    established at sign-in - and the gateway's headers on the connection itself.
+    Deriving it from the headers alone, as this app used to, cost every
+    password login its own preferences and made the gateway's headers
+    mandatory on websocket upgrades, which not every gateway forwards.
+    """
+    try:
+        user = getattr(cl.context.session, "user", None)
+    except Exception:
+        user = None
+    return resolve_session_identity(_login_of(user), _session_header_source(), session_id=session_id)
 
 
 def _apply_scope_to_agent(agent, ws: WorkspaceSession) -> None:
@@ -1320,13 +1575,8 @@ async def on_settings_update(settings: dict):
         summary = "**Data scope cleared.** The agent will only look inside workspace folders a task points it to."
 
     summary += f"\n\nOutputs: `{ws.output.path}`"
-    if not ws.output.writable:
-        summary += f"\n\n⚠️ That directory is not writable. {ws.output.reason or ''}".rstrip()
-    else:
-        if ws.output.is_ephemeral:
-            summary += "\n\n⚠️ Container-local storage: results are lost when the application restarts."
-        if ws.output.reason:
-            summary += f"\n\n⚠️ This is not the configured location - {ws.output.reason}."
+    for warning in _output_warnings(ws.output):
+        summary += f"\n\n{warning}"
 
     if ws.prefs.remember and not persisted:
         # NullPrefsStore knows exactly why it cannot persist - no signed-in user
@@ -1337,6 +1587,16 @@ async def on_settings_update(settings: dict):
         summary += f" ({detail})._" if detail else "._"
 
     await cl.Message(content=summary).send()
+
+    # The dialog's help text describes the state it was built from - where
+    # results go and why, what cannot be read - so it is rebuilt from the
+    # settings just applied. Otherwise it goes on describing the session as it
+    # began: a folder the user has just chosen, and that cannot be used, would go
+    # unmentioned the next time they open it.
+    try:
+        await cl.ChatSettings(_workspace_settings_widgets(ws)).send()
+    except Exception:
+        logger.exception("Failed to refresh workspace settings (session remains usable)")
 
 
 # ---------------------------------------------------------------------------
@@ -1423,8 +1683,15 @@ async def on_message(message: cl.Message):
     started = time.monotonic()
     # An agent run is the work /status exists to report: it holds the process
     # for minutes, and the monitoring framework must never see the pod as idle
-    # while one is in flight.
-    with bind_run(session_id=thread_id, run_id=run_id), ACTIVITY.track_job("agent_run"):
+    # while one is in flight. The session's identity rides along with the ids:
+    # each message is its own task, and every model call made for it - triage,
+    # planning, the agent's turns, a tool's own lookups - must name the user it
+    # is made for (see biomni.llm_proxy).
+    with (
+        bind_run(session_id=thread_id, run_id=run_id),
+        bound_identity(cl.user_session.get("identity")),
+        ACTIVITY.track_job("agent_run"),
+    ):
         try:
             await _process_message(message)
         finally:
@@ -1445,7 +1712,7 @@ async def on_stop():
     happened. Cancelling the run makes its handler unwind normally: the record
     closes out and the page is told the task ended.
     """
-    if LIVE_RUNS.cancel(_thread_key()):
+    if LIVE_RUNS.cancel(_thread_key(), _websocket_session()):
         emit_event("run_stopped_by_user")
 
 
@@ -1522,12 +1789,22 @@ async def _process_message(message: cl.Message):
                     step.output = "Using the full tool set."
             except Exception as exc:
                 logger.warning("Tool retrieval failed; falling back to full tool set", exc_info=True)
-                step.output = f"⚠️ Tool retrieval failed ({exc}); proceeding with all tools."
+                step.output = f"⚠️ Could not narrow the tool set: {describe_llm_failure(exc)} Proceeding with all tools."
 
     # ------------------------------------------------------------------
     # Phase 3: Interactive planning
     # ------------------------------------------------------------------
-    prompt = await _interactive_planning(agent, prompt, agent_type=agent_type, selected_data_lake=selected_data_lake)
+    try:
+        prompt = await _interactive_planning(
+            agent, prompt, agent_type=agent_type, selected_data_lake=selected_data_lake
+        )
+    except Exception as exc:
+        # Only raised when the model is out of reach altogether; the run could
+        # not get past its first step, so it is not started.
+        logger.warning("Planning could not reach the language model; not starting the run", exc_info=True)
+        emit_event("run_not_started", logger=logger, level=logging.WARNING, error_type=type(exc).__name__)
+        await cl.Message(content=f"⚠️ **Could not start this request.** {describe_llm_failure(exc)}").send()
+        return
     if prompt is None:
         # User cancelled
         await cl.Message(content="Execution cancelled.").send()
@@ -1617,10 +1894,14 @@ async def _process_message(message: cl.Message):
         )
         run_status, run_error = "completed", None
     except Exception as exc:
-        # Close the record out before the exception propagates, otherwise the
-        # run stays "running" until a later session reconciles it as stale.
+        # Recorded as failed here - otherwise the run stays "running" until a
+        # later session reconciles it as stale - and told to the user in words
+        # rather than as Chainlit's raw exception text.
         run_status, run_error = "failed", str(exc)
-        raise
+        logger.exception("Agent run failed")
+        emit_event("run_failed", logger=logger, level=logging.WARNING, error_type=type(exc).__name__)
+        await cl.Message(content=f"⚠️ **The run stopped before it finished.** {describe_llm_failure(exc)}").send()
+        return
     finally:
         if record is not None:
             try:
@@ -1715,89 +1996,98 @@ async def _stream_execution(
         # can tell a slow-but-alive run from one whose process died.
         on_tick=on_heartbeat,
     ):
-        async for state in stream_langgraph(agent.app, inputs, config):
-            final_state = state
-            message = state["messages"][-1]
-            content = message.content if isinstance(message.content, str) else ""
+        try:
+            async for state in stream_langgraph(agent.app, inputs, config):
+                final_state = state
+                message = state["messages"][-1]
+                content = message.content if isinstance(message.content, str) else ""
 
-            if not content or content == prompt:
-                continue
+                if not content or content == prompt:
+                    continue
 
-            # ------------------------------------------------------------------
-            # Parse XML tags from the agent's raw output
-            # ------------------------------------------------------------------
+                # ------------------------------------------------------------------
+                # Parse XML tags from the agent's raw output
+                # ------------------------------------------------------------------
 
-            # Locate first structural tag to separate reasoning prefix
-            tag_positions = []
-            for tag in ["<execute>", "<solution>", "<observation>"]:
-                pos = content.find(tag)
-                if pos != -1:
-                    tag_positions.append(pos)
+                # Locate first structural tag to separate reasoning prefix
+                tag_positions = []
+                for tag in ["<execute>", "<solution>", "<observation>"]:
+                    pos = content.find(tag)
+                    if pos != -1:
+                        tag_positions.append(pos)
 
-            # 1. Reasoning / thinking (text before the first tag)
-            if tag_positions:
-                first_tag = min(tag_positions)
-                thinking = content[:first_tag].strip()
-                if thinking:
-                    async with cl.Step(name="🤔 Thinking", type="llm", show_input=False) as step:
-                        step.output = thinking
+                # 1. Reasoning / thinking (text before the first tag)
+                if tag_positions:
+                    first_tag = min(tag_positions)
+                    thinking = content[:first_tag].strip()
+                    if thinking:
+                        async with cl.Step(name="🤔 Thinking", type="llm", show_input=False) as step:
+                            step.output = thinking
 
-            # 2. Solution (final answer)
-            solution_match = re.search(r"<solution>(.*?)</solution>", content, re.DOTALL)
-            if solution_match and not solution_found:
-                solution_found = True
-                solution_text = solution_match.group(1).strip()
-                await cl.Message(content=solution_text).send()
+                # 2. Solution (final answer)
+                solution_match = re.search(r"<solution>(.*?)</solution>", content, re.DOTALL)
+                if solution_match and not solution_found:
+                    solution_found = True
+                    solution_text = solution_match.group(1).strip()
+                    await cl.Message(content=solution_text).send()
 
-            # 3. Code execution block
-            execute_match = re.search(r"<execute>(.*?)</execute>", content, re.DOTALL)
-            if execute_match:
-                code = execute_match.group(1).strip()
-                language = "python"
-                if code.startswith("#!R"):
-                    language = "r"
-                    code = re.sub(r"^#!R\s*", "", code, count=1)
-                elif code.startswith("#!BASH") or code.startswith("#!CLI"):
-                    language = "bash"
-                    code = re.sub(r"^#!(BASH|CLI)\s*", "", code, count=1)
+                # 3. Code execution block
+                execute_match = re.search(r"<execute>(.*?)</execute>", content, re.DOTALL)
+                if execute_match:
+                    code = execute_match.group(1).strip()
+                    language = "python"
+                    if code.startswith("#!R"):
+                        language = "r"
+                        code = re.sub(r"^#!R\s*", "", code, count=1)
+                    elif code.startswith("#!BASH") or code.startswith("#!CLI"):
+                        language = "bash"
+                        code = re.sub(r"^#!(BASH|CLI)\s*", "", code, count=1)
 
-                code_step = cl.Step(name=f"⚡ Executing {language.upper()}", type="run", show_input=False)
-                await code_step.__aenter__()
-                code_step.output = f"```{language}\n{code}\n```"
-                code_steps.append(code_step)
-                # Tick an elapsed-time line while the (blocking) code runs so the
-                # step doesn't look frozen; cancelled when the observation lands.
-                code_timers.append(asyncio.create_task(_tick_step_timer(code_step, language, code, time.monotonic())))
-                # Do NOT exit the step yet; we close it when the observation arrives
+                    code_step = cl.Step(name=f"⚡ Executing {language.upper()}", type="run", show_input=False)
+                    await code_step.__aenter__()
+                    code_step.output = f"```{language}\n{code}\n```"
+                    code_steps.append(code_step)
+                    # Tick an elapsed-time line while the (blocking) code runs so the
+                    # step doesn't look frozen; cancelled when the observation lands.
+                    code_timers.append(
+                        asyncio.create_task(_tick_step_timer(code_step, language, code, time.monotonic()))
+                    )
+                    # Do NOT exit the step yet; we close it when the observation arrives
 
-            # 4. Observation (result of code execution)
-            obs_match = re.search(r"<observation>(.*?)</observation>", content, re.DOTALL)
-            if obs_match:
-                observation = obs_match.group(1).strip()
+                # 4. Observation (result of code execution)
+                obs_match = re.search(r"<observation>(.*?)</observation>", content, re.DOTALL)
+                if obs_match:
+                    observation = obs_match.group(1).strip()
 
-                # Close the pending code step now that we have a result
-                if code_timers:
-                    await _cancel_task(code_timers.pop())
-                if code_steps:
-                    finished_step = code_steps.pop()
-                    await finished_step.__aexit__(None, None, None)
+                    # Close the pending code step now that we have a result
+                    if code_timers:
+                        await _cancel_task(code_timers.pop())
+                    if code_steps:
+                        finished_step = code_steps.pop()
+                        await finished_step.__aexit__(None, None, None)
 
-                async with cl.Step(name="👁 Observation", type="tool", show_input=False) as obs_step:
-                    # Truncate very long output for display
-                    display_obs = observation[:3000] + "\n...[truncated]" if len(observation) > 3000 else observation
-                    obs_step.output = display_obs
+                    async with cl.Step(name="👁 Observation", type="tool", show_input=False) as obs_step:
+                        # Truncate very long output for display
+                        display_obs = (
+                            observation[:3000] + "\n...[truncated]" if len(observation) > 3000 else observation
+                        )
+                        obs_step.output = display_obs
 
-                    # Display any generated images mentioned in the observation
-                    await _display_images(observation)
+                        # Display any generated images mentioned in the observation
+                        await _display_images(observation)
+        finally:
+            # Close any code steps/timers that never received an observation -
+            # including those of a run that failed or was stopped mid-step, which
+            # would otherwise keep spinning in the transcript.
+            for timer in code_timers:
+                await _cancel_task(timer)
+            for step in code_steps:
+                await step.__aexit__(None, None, None)
 
-    # Close any code steps/timers that never received an observation (edge case)
-    for timer in code_timers:
-        await _cancel_task(timer)
-    for step in code_steps:
-        await step.__aexit__(None, None, None)
-
-    # If no <solution> tag was found, surface the last message content
-    if not solution_found and final_state:
+    # If no <solution> tag was found, surface the last message content - the
+    # agent's, never the user's own question, which is what the last message is
+    # when the model produced nothing at all.
+    if not solution_found and final_state and not isinstance(final_state["messages"][-1], HumanMessage):
         last_content = final_state["messages"][-1].content
         if isinstance(last_content, str):
             cleaned = re.sub(r"<execute>.*?</execute>", "", last_content, flags=re.DOTALL)

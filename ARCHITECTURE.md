@@ -36,32 +36,32 @@ graph TB
         Chainlit[Chainlit UI<br/>Plan-Approve]
         API[Python API]
     end
-    
+
     subgraph Agent Layer
         A1[A1 Agent<br/>General Purpose]
         AD1[AD1 Agent<br/>AD Specialized]
         ReAct[ReAct Engine]
     end
-    
+
     subgraph Intelligence Layer
         LLM[LLM Providers<br/>Claude/GPT/Gemini/Bedrock]
         Retriever[Tool Retriever]
         KnowHow[Know-How Library]
     end
-    
+
     subgraph Tool Layer
         ToolRegistry[Tool Registry]
         Tools[180+ Domain Tools]
         Database[Database Queries]
         MCP[MCP Servers]
     end
-    
+
     subgraph Data Layer
-        DataLake[Data Lake<br/>77+ Files ~11GB]
+        DataLake[Data Lake<br/>76 Files ~15GB]
         ADData[AD-Specific Data<br/>30+ Datasets]
         External[External APIs<br/>20+ Databases]
     end
-    
+
     CLI --> A1
     Gradio --> A1
     Chainlit --> AD1
@@ -236,13 +236,13 @@ Each tool has a corresponding schema in `biomni/tool/tool_description/`:
 
 ### Overview
 
-The data lake contains **77 curated datasets** (~11GB), catalogued in `biomni/env_desc.py` regardless of what's on disk.
+The data lake contains **76 curated datasets** (about 15 GB), catalogued in `biomni/env_desc.py` regardless of what's on disk.
 Individual files are fetched lazily from S3, the first time a query actually selects them (`A1._ensure_data_lake_files`) - not downloaded in bulk on agent construction.
 Layout once files are present:
 
 ```
 ./data/
-├── data_lake/           # ~11GB of curated datasets
+├── data_lake/           # ~15GB of curated datasets
 │   ├── *.parquet        # Tabular data files
 │   ├── *.pkl            # Serialized Python objects
 │   ├── *.csv            # CSV files
@@ -273,12 +273,12 @@ Layout once files are present:
 
 | Dataset | Description | Size |
 |---------|-------------|------|
-| `BindingDB_All_202409.tsv` | Drug-target binding affinities | Large |
-| `DepMap_CRISPRGeneEffect.csv` | Genome-wide CRISPR effects | ~2GB |
-| `gtex_tissue_gene_tpm.parquet` | GTEx expression across tissues | ~500MB |
-| `gwas_catalog.pkl` | GWAS association results | ~100MB |
-| `kg.csv` | Precision medicine knowledge graph (17,080 diseases, 4M+ relationships) | ~200MB |
-| `DisGeNET.parquet` | Gene-disease associations | ~100MB |
+| `BindingDB_All_202409.tsv` | Drug-target binding affinities | 6.3 GB |
+| `DepMap_CRISPRGeneEffect.csv` | Genome-wide CRISPR effects | 430 MB |
+| `gtex_tissue_gene_tpm.parquet` | GTEx expression across tissues | 11 MB |
+| `gwas_catalog.pkl` | GWAS association results | 180 MB |
+| `kg.csv` | Precision medicine knowledge graph (17,080 diseases, 4M+ relationships) | 980 MB |
+| `DisGeNET.parquet` | Gene-disease associations | 3 MB |
 
 ---
 
@@ -556,7 +556,7 @@ graph LR
     ACA --> AAnth
 
     subgraph Data
-        DataLake[Azure Files<br/>shared /app/data<br/>Biomni data lake ~11GB<br/>read-only]
+        DataLake[Azure Files<br/>shared /app/data<br/>Biomni data lake ~15GB<br/>read-only]
         ADDI[ADDI Workbench Mount<br/>controlled-access datasets<br/>read-only]
     end
     ACA --> DataLake
@@ -575,15 +575,15 @@ graph LR
 | Concern | Azure Service | Maps to in Biomni-AD |
 |---------|---------------|----------------------|
 | **Edge / TLS / WAF** | Azure Front Door + WAF policy | Public ingress, OWASP rule set, DDoS Standard |
-| **Identity** | Authentication gateway (GRIP) | **[Implemented]** The gateway validates access and forwards the caller as HTTP headers; `biomni/identity.py` reads them and keys per-user preferences and run records off the asserted subject. GRIP sends two composite headers, each a comma-separated `key=value` list - `Ai-App-User-Context` (`sub`, `email`, `given_name`, `family_name`) and `Ai-App-Workspace-Context` (`uuid`) - and `sub` is the stable subject everything is keyed by. Single-value headers from other gateways (oauth2-proxy, Envoy/ext_authz) fill in anything the context headers did not carry, so a non-GRIP deployment keeps working. Header names are configurable via `BIOMNI_AUTH_*_HEADER`, and the headers are ignored unless `BIOMNI_TRUST_AUTH_HEADERS` is set - it fails closed so an unprotected deployment cannot be impersonated. The app never authenticates anyone itself, so the gateway **must** strip client-supplied copies of these headers. The same identity is registered as Chainlit's `header_auth_callback`, so preferences, run records and chat threads all key off one string. With no gateway in front, identity falls back to a per-session anonymous key and nothing persists across sessions - unless `BIOMNI_ALLOW_ANONYMOUS_PERSISTENCE` declares the deployment single-user, which makes every session one shared local user. |
+| **Identity** | Authentication gateway (GRIP) | **[Implemented]** The gateway validates access and forwards the caller as HTTP headers; `biomni/identity.py` reads them and keys per-user preferences and run records off the asserted subject. GRIP sends two composite headers, each a comma-separated `key=value` list - `Ai-App-User-Context` (`sub`, `email`, `given_name`, `family_name`) and `Ai-App-Workspace-Context` (`uuid`) - and `sub` is the stable subject everything is keyed by. Single-value headers from other gateways (oauth2-proxy, Envoy/ext_authz) are read for a request that carries neither context header, so a non-GRIP deployment keeps working; next to GRIP's they are ignored, since a gateway strips only its own headers from what clients send and a client could otherwise fill in a field GRIP left out. A context header that valid CSV cannot produce - an unterminated quote, or `sub`, `email`, `iss` or `uuid` given twice - is ignored whole, and on the websocket the raw ASGI header list is read rather than the `HTTP_*` environ keys, which fold a client's `Ai_App_User_Context` into the gateway's header. Header names are configurable via `BIOMNI_AUTH_*_HEADER`, and the headers are ignored unless `BIOMNI_TRUST_AUTH_HEADERS` is set - it fails closed so an unprotected deployment cannot be impersonated. The app never authenticates anyone itself, so the gateway **must** strip client-supplied copies of these headers. The same identity is registered as Chainlit's `header_auth_callback`, so preferences, run records and chat threads all key off one string, and each chat session takes its identity from that login (`resolve_session_identity`) rather than re-deriving it. A login cookie naming a different user than the gateway's headers - someone else signing in on the same browser - or one that cannot say whom it was issued for, such as a cookie from an earlier release, is refused on every HTTP endpoint (`get_current_user` is overridden), and the page signs in afresh as the gateway's user; a websocket that gets through regardless is refused a session, a reopened conversation's transcript and its live run. The context headers are only ever parsed: a single-value override pointed at one of them has no effect and is logged as such at startup, and names sent as UTF-8 are repaired from the latin-1 decoding HTTP servers apply. With no gateway in front, identity falls back to a per-session anonymous key and nothing persists across sessions - unless `BIOMNI_ALLOW_ANONYMOUS_PERSISTENCE` declares the deployment single-user, which makes every session one shared local user. |
 | **App runtime** | **Azure Container Apps** (preferred) or AKS | Runs the existing `Dockerfile` (micromamba + `chainlit run`) unmodified; per-revision rollouts |
-| **Image registry** | Azure Container Registry (mirror of GHCR) | **[Implemented]** `.github/workflows/docker.yml` builds the `Dockerfile` on every PR and publishes to GHCR (`ghcr.io/kaimen-inc/biomni-ad`) on push to `main` / `feat/adworkbench` / tags. Tags: `:<sha>`, `:<branch>`, plus semver aliases for git tags. For ACR-based deployments, mirror from GHCR rather than rebuilding. |
-| **Secrets** | Azure Key Vault + Container Apps secret refs | `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `AZURE_*` keys, DB password - never baked into the image |
-| **Shared data lake** | Azure Files (Premium, SMB), mounted **read-only** at `/app/data` | The 77-file ~11GB Biomni data lake; downloaded once into the file share, then mounted by every replica |
+| **Image registry** | Azure Container Registry (mirror of GHCR) | **[Implemented]** `.github/workflows/docker.yml` builds the `Dockerfile` on every PR and publishes to GHCR (`ghcr.io/kaimen-inc/biomni-ad`) on push to `main` / `feat/adworkbench` / tags. Tags: `:sha-<short sha>`, `:<branch>`, plus semver aliases for git tags. For ACR-based deployments, mirror from GHCR rather than rebuilding. |
+| **Secrets** | Azure Key Vault + Container Apps secret refs | `BIOMNI_LLM_PROXY_API_KEY` on GRIP, otherwise `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `AZURE_*` keys; DB password - never baked into the image |
+| **Shared data lake** | Azure Files (Premium, SMB) at `BIOMNI_DATA_LAKE_PATH` | The Biomni data lake plus the `biomniAD` subtree, about 16.5 GB in all. **[Implemented]** each dataset is downloaded the first time a question needs it, so the location must be writable; `deploy/k8s/biomni-ad.yaml` puts it on the state volume. **[Target]** a share filled once and mounted by every replica. |
 | **Per-user scratch** | Azure Files (per-user share) at `/app/user-data` | User uploads + downloaded AD catalog files (`biomniAD/<dataset_id>/`) |
-| **Run artifacts** | Persistent volume, optionally tiered to Blob | **[Implemented]** The output root resolves to the user's setting, then `BIOMNI_OUTPUT_ROOT`, then `<workspace>/biomni-outputs/`, then container-local `./runs/` - which is flagged in the UI as ephemeral because a restart destroys it. `deploy/k8s/biomni-ad.yaml` mounts a PVC at `/data` for this. **[Target]** lifecycle rules to cool/archive tiers. |
+| **Run artifacts** | Persistent volume, optionally tiered to Blob | **[Implemented]** The output root resolves to the user's setting, then `BIOMNI_OUTPUT_ROOT`, then `<workspace>/biomni-outputs/`, then container-local `./runs/` - which is flagged in the UI as ephemeral because a restart destroys it. `deploy/k8s/biomni-ad.yaml` mounts a PVC at `/app/runs` for this, as the GRIP deployment does. **[Target]** lifecycle rules to cool/archive tiers. |
 | **Chat history** | PostgreSQL Flexible Server | **[Implemented]** Chainlit's SQLAlchemy data layer, wired in `chainlit_ui/persistence.py`: conversations are listed in the left sidebar, reopened, and continued (`on_chat_resume`). Defaults to SQLite on the state volume - which assumes a single replica, like the file-backed preferences - and switches to Postgres by setting `BIOMNI_THREADS_DB_URL`. Small attachments are archived inline with the conversation so a reopened thread renders as it did live; the SQLite schema is created on boot (and additively upgraded, since a column the data layer writes but the table lacks fails the insert *silently*), any other database is an operator migration. A run is not bound to the browser: closing the tab leaves it executing and writing into its conversation, and reopening that conversation redirects the run's output into the new connection (`chainlit_ui/live_runs.py`) so it streams on live and Stop cancels the run rather than the tab. It is still bound to the process - a restart ends it, recorded as `interrupted`. |
-| **LLM** | Azure OpenAI **and/or** Azure AI Foundry Claude | Set `LLM_SOURCE=AzureOpenAI` / `AzureAnthropic` + endpoint/deployment env vars; no code change |
+| **LLM** | Azure AI Foundry through the platform LLM proxy (GRIP); Azure OpenAI or Foundry Claude directly elsewhere | **[Implemented]** With `BIOMNI_LLM_PROXY_URL` set, `biomni/llm.py` routes every model call through the platform's proxy, ahead of any provider setting, in the OpenAI (`/v1/chat/completions`) or Anthropic (`/v1/messages`) schema per `BIOMNI_LLM_PROXY_SCHEMA`. Each request authenticates with the proxy's bearer token and names the session's user and workspace (`X-User-Id` = `sub`, `X-Workspace-Id` = `uuid`), read per request from the identity bound to the running session (`biomni/identity.py::bound_identity`, carried into worker threads by `capture_context`), so one model instance can never speak for another user. A call without a gateway identity is refused before it is sent (`biomni/llm_proxy.py`), and the proxy's refusals reach the user in plain words (`chainlit_ui/llm_failures.py`). The Claude web-search tool, which would call Anthropic directly, is withheld while the proxy is configured (`biomni/tool/availability.py`). Elsewhere, set `LLM_SOURCE=AzureOpenAI` / `Anthropic` + endpoint/deployment env vars; no code change. |
 | **Observability** | Application Insights + Log Analytics | **[Implemented]** Chainlit + stdlib `logging` write to stdout; Container Apps ships container logs to Log Analytics out of the box. **[Target]** OpenTelemetry instrumentation around LangGraph node transitions and tool calls - not wired up today; recommended before production rollout so per-turn latency and tool error rates are queryable. |
 | **CI/CD** | GitHub Actions → GHCR → Container Apps revision | **[Implemented]** GHCR publish on push (see Image registry row). **[Target]** Container Apps revision rollout from GHCR (`az containerapp update --image ghcr.io/...:<sha>`) with blue/green via traffic splits - operator-side wiring. |
 | **Container liveness** | Container Apps HTTP / TCP probe | **[Implemented]** `HEALTHCHECK` baked into the Dockerfile (TCP probe on `:8000` via `python -c`). `docker compose` inherits this directly; no duplicate block in `docker-compose.yml`. **[Target]** Container Apps probes are configured separately via `ingress.targetPort` + `probes.{startupProbe,livenessProbe}` in the app spec - Container Apps does **not** read Dockerfile `HEALTHCHECK`/`EXPOSE` directives. Point both probes at `:8000` to match. |
@@ -626,8 +626,8 @@ The Alzheimer's Disease Data Initiative workbench provides a hosted Azure-based 
 - **Image source.** Pull from public ACR (or GitHub Container Registry mirror) - no rebuild inside ADDI.
 - **Data lake.** Use the ADDI-provided read-only mount for the shared Biomni data lake instead of provisioning Azure Files separately.
 - **Controlled-access AD datasets.** Reference catalog URIs only; the agent reads bytes from the ADDI mount path (e.g., `/workbench/niagads/<dataset_id>/…`) when present, otherwise falls back to the public download path. The `BIOMNI_DATA_PATH` env var pins this.
-- **Identity.** ADDI's existing OIDC flow gates Chainlit; no separate Entra ID tenant.
-- **LLM.** Workbench-provided Azure OpenAI / Foundry Claude deployment by default; user-provided keys via the Chainlit settings panel for those who prefer their own quota.
+- **Identity.** The platform's authentication gateway signs users in and forwards them in the `Ai-App-*` headers (see the Identity row above); no separate Entra ID tenant.
+- **LLM.** Workbench-provided Azure AI Foundry models, reached through the platform's LLM proxy, which meters usage per user and per workspace (see the LLM row above and [docs/grip_deployment.md](docs/grip_deployment.md)).
 - **Egress.** Constrained to ADDI's allowed endpoints (LLM, NIAGADS, AD Workbench dataset APIs). The agent's database query tools that hit external public APIs (UniProt, Ensembl, etc.) are routed via the ADDI egress proxy.
 
 ### 7. Scaling & Cost Model
@@ -686,7 +686,7 @@ The app is built to be operable as many pods behind a managed Kubernetes/Contain
 
 **Perceived liveness.** While a code step blocks, the Chainlit UI ticks an elapsed-time line on the running step (so it doesn't look frozen), and the backend `run_heartbeat` provides the same signal in the log pipeline.
 
-**Health probes.** `GET /healthz` (liveness: process up, dependency-free) and `GET /readyz` (readiness: data dir mounted + an LLM credential present → `503` otherwise) are registered ahead of Chainlit's SPA catch-all. See [`deploy/k8s/biomni-ad.yaml`](deploy/k8s/biomni-ad.yaml) for probe wiring.
+**Health probes.** `GET /healthz` (liveness: process up, dependency-free) and `GET /readyz` (readiness: the workspace mounted when one is configured, and a model reachable - an LLM credential, or the platform proxy's token with gateway trust on - → `503` otherwise) are registered ahead of Chainlit's SPA catch-all. See [`deploy/k8s/biomni-ad.yaml`](deploy/k8s/biomni-ad.yaml) for probe wiring.
 
 **Platform status endpoint.** `GET /status` answers the platform monitoring framework's question - is this application doing anything? - in its agreed schema:
 

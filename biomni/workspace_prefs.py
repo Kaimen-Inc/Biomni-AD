@@ -33,6 +33,8 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
+import stat
 import tempfile
 from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime
@@ -292,35 +294,86 @@ def _nearest_existing(path: str) -> str:
 # exactly what a restart discards.
 _RAM_FSTYPES = frozenset({"tmpfs", "ramfs", "devtmpfs"})
 _CONTAINER_LAYER_FSTYPES = frozenset({"overlay", "overlayfs", "aufs"})
+# Network filesystems whose ownership the kubelet cannot change: fsGroup is
+# silently ignored on them, so they need their own remedy.
+_SMB_FSTYPES = frozenset({"cifs", "smb3", "smbfs"})
+_NFS_FSTYPES = frozenset({"nfs", "nfs4"})
+# SMB options under which the file server's ACLs, not the mount options,
+# decide a file's owner and mode.
+_SMB_ACL_OPTIONS = ("cifsacl", "modefromsid")
+
+_MOUNTS_FILE = "/proc/self/mounts"
+_OCTAL_ESCAPE_RE = re.compile(r"\\([0-7]{3})")
 
 
-def _mount_fstype(path: str) -> str | None:
-    """Filesystem type backing ``path``, per ``/proc/self/mounts``.
+@dataclass(frozen=True)
+class MountInfo:
+    """One line of the mount table: what is mounted where, and how."""
+
+    mountpoint: str
+    source: str
+    fstype: str
+    options: tuple[str, ...]
+
+    def option(self, name: str) -> str | None:
+        """The value of ``name=value`` among the options, or ``None``."""
+        prefix = f"{name}="
+        for option in self.options:
+            if option.startswith(prefix):
+                return option[len(prefix) :]
+        return None
+
+    @property
+    def read_only(self) -> bool:
+        return "ro" in self.options
+
+
+def _unescape_mount_field(field: str) -> str:
+    # /proc escapes whitespace and backslashes octal-style (a space is \040).
+    return _OCTAL_ESCAPE_RE.sub(lambda m: chr(int(m.group(1), 8)), field)
+
+
+def mount_info(path: str) -> MountInfo | None:
+    """The mount backing ``path``, per ``/proc/self/mounts``.
 
     ``None`` when the mount table is unavailable (macOS, a container with no
     ``/proc``), which callers treat as "cannot tell" rather than as an answer.
     The longest matching mount point wins, since mount points nest.
+
+    Symlinks are resolved first: a configured path that links onto a share is
+    stored on the share, not on whatever holds the link. And the table is read
+    the way the OS reads file names, since the kernel escapes only whitespace
+    and backslashes and passes any other byte of a mount point through as is.
     """
     try:
-        with open("/proc/self/mounts", encoding="utf-8") as handle:
+        with open(_MOUNTS_FILE, encoding="utf-8", errors="surrogateescape") as handle:
             lines = handle.readlines()
     except OSError:
         return None
 
-    target = os.path.abspath(path)
-    best_mountpoint = ""
-    fstype: str | None = None
+    target = os.path.realpath(path)
+    best: MountInfo | None = None
     for line in lines:
         fields = line.split()
-        if len(fields) < 3:
+        if len(fields) < 4:
             continue
-        # Mount points are escaped octal-style in /proc (a space is \040).
-        mountpoint = fields[1].replace("\\040", " ")
+        mountpoint = _unescape_mount_field(fields[1])
         if target != mountpoint and not target.startswith(mountpoint.rstrip("/") + "/"):
             continue
-        if len(mountpoint) >= len(best_mountpoint):
-            best_mountpoint, fstype = mountpoint, fields[2]
-    return fstype
+        if best is None or len(mountpoint) >= len(best.mountpoint):
+            best = MountInfo(
+                mountpoint=mountpoint,
+                source=_unescape_mount_field(fields[0]),
+                fstype=fields[2],
+                options=tuple(fields[3].split(",")),
+            )
+    return best
+
+
+def _mount_fstype(path: str) -> str | None:
+    """Filesystem type backing ``path``, or ``None`` when it cannot be told."""
+    info = mount_info(path)
+    return info.fstype if info else None
 
 
 def on_mounted_volume(path: str) -> bool:
@@ -366,6 +419,202 @@ def is_writable_dir(path: str | None) -> bool:
     if not target or not os.path.isdir(target):
         return False
     return os.access(target, os.W_OK | os.X_OK)
+
+
+def _process_ids() -> tuple[int | None, int | None, frozenset[int]]:
+    """This process's uid, primary gid and every group it belongs to."""
+    if not hasattr(os, "getuid"):
+        return None, None, frozenset()
+    return os.getuid(), os.getgid(), frozenset({os.getgid(), *os.getgroups()})
+
+
+def _mode_allows(st: os.stat_result, uid: int, groups: frozenset[int], *, write: bool) -> bool:
+    """Whether owner, group and mode bits alone let ``uid`` list (or add to) a directory."""
+    if uid == 0:
+        return True
+    need = stat.S_IWUSR if write else stat.S_IRUSR
+    mode = st.st_mode
+    if st.st_uid == uid:
+        return bool(mode & need and mode & stat.S_IXUSR)
+    if st.st_gid in groups:
+        return bool(mode & (need >> 3) and mode & stat.S_IXGRP)
+    return bool(mode & (need >> 6) and mode & stat.S_IXOTH)
+
+
+def _is_read_only(target: str, info: MountInfo | None) -> bool:
+    try:
+        return bool(os.statvfs(target).f_flag & os.ST_RDONLY)
+    except (OSError, AttributeError):
+        return bool(info and info.read_only)
+
+
+def _explain_access(target: str, *, write: bool, wanted: str | None = None) -> str:
+    """Why this process cannot read or write the existing directory ``target``.
+
+    Written for whoever has to fix it: who owns the directory, what storage it
+    is on, and the remedy for that kind of storage. "Not writable by uid 57439"
+    was true and still cost the GRIP team a round trip, because a share mounted
+    without ownership options, one mounted read-only, and one whose new options
+    had not reached the node yet all read exactly the same.
+
+    ``wanted`` is the directory the caller actually needs, when ``target`` is
+    only its nearest existing parent.
+    """
+    if not os.path.isdir(target):
+        return f"{target} is not a directory" if os.path.exists(target) else f"{target} does not exist"
+    info = mount_info(target)
+    share = _without_server(info.source) if info else ""
+    on = f" ({info.fstype} mount of {share})" if info else ""
+    in_image = bool(info and info.fstype in _CONTAINER_LAYER_FSTYPES)
+    if write and _is_read_only(target, info):
+        if in_image:
+            # readOnlyRootFilesystem: there is no volume here to remount.
+            return (
+                f"{target} is inside the container image, which is mounted read-only; "
+                f"mount a writable volume at {wanted or target}"
+            )
+        return f"{target} is on a read-only mount{on}; mount the volume read-write"
+    try:
+        st = os.stat(target)
+    except OSError as exc:
+        return f"{target} cannot be inspected ({exc.strerror or exc})"
+
+    uid, gid, groups = _process_ids()
+    owner = f"owned by uid {st.st_uid}, gid {st.st_gid} with mode {stat.S_IMODE(st.st_mode):04o}"
+    if uid is None:
+        return f"{target} is {owner}"
+    access = "writing" if write else "reading"
+    if _mode_allows(st, uid, groups, write=write):
+        return (
+            f"{target} is {owner}, which permits {access}, so something else refuses it: an ACL, "
+            "SELinux or AppArmor, or the file server itself"
+        )
+    if info and info.fstype in _SMB_FSTYPES:
+        acl = next((name for name in _SMB_ACL_OPTIONS if name in info.options), None)
+        if acl:
+            return (
+                f"{target} is {owner} on an SMB share ({share}) mounted with {acl}, so its owner and mode come "
+                f"from the file server's ACLs; grant uid {uid} {'write' if write else 'read'} access in the "
+                f"share's ACLs, or mount it without {acl} and with uid={uid},gid={gid},dir_mode=0770,"
+                "file_mode=0770"
+            )
+        # SMB has no Unix ownership of its own: the client presents whatever the
+        # mount options say, so the live options are the diagnosis.
+        live = ",".join(f"{name}={info.option(name)}" for name in ("uid", "gid", "dir_mode") if info.option(name))
+        return (
+            f"{target} is {owner} on an SMB share ({share}). Its owner and mode come only from the mount "
+            f"options, which are {live or 'unset (uid=0,gid=0)'} on the mount this container sees. Mount it with "
+            f"uid={uid},gid={gid},dir_mode=0770,file_mode=0770; new options only apply once the share is "
+            "mounted afresh on the node"
+        )
+    if info and info.fstype in _NFS_FSTYPES:
+        return (
+            f"{target} is {owner} on an NFS export ({share}), which ignores fsGroup; "
+            f"grant uid {uid} {'write' if write else 'read'} access on the NFS server"
+        )
+    if info and info.fstype.startswith("fuse"):
+        # blobfuse2, s3fs, gcsfuse...: the driver presents ownership from its own
+        # options, and the kubelet cannot change it. The driver is named in the
+        # type ("fuse.s3fs") or, for plain "fuse", as the source ("blobfuse2").
+        driver = info.fstype.partition(".")[2] or share
+        return (
+            f"{target} is {owner} on a FUSE mount ({driver}), which ignores fsGroup; mount it "
+            f"with the driver's options that let uid {uid} {'write' if write else 'read'} (allow_other, and "
+            "its uid, gid or umask options)"
+        )
+    if in_image:
+        # Usually a volume that is not mounted where the setting says. Opening
+        # up the image would not help: whatever is written there is lost when
+        # the pod restarts.
+        return (
+            f"{target} is {owner}, inside the container image rather than on a mounted volume; "
+            f"mount {'a writable' if write else 'the'} volume at {wanted or target}"
+        )
+    if st.st_uid == uid:
+        # Already ours: ownership advice would send someone chowning a
+        # directory to the uid that owns it.
+        return (
+            f"{target} is {owner}{on}, which denies its own owner (uid {uid}); give the owner access with chmod u+rwx"
+        )
+    if st.st_gid in groups:
+        return f"{target} is {owner}{on}, which denies its group; give the group access with chmod g+rwx"
+    return (
+        f"{target} is {owner}{on}; set securityContext.fsGroup: {gid} on the pod (it does not apply to hostPath "
+        f"volumes), or chown it to uid {uid}"
+    )
+
+
+def _without_server(source: str) -> str:
+    """A mount source minus the server it names.
+
+    ``//acct.file.core.windows.net/share`` becomes ``/share`` and
+    ``nfs.example:/export`` becomes ``/export``. The server of an Azure Files
+    share is the storage account, which stays out of what users are shown and
+    what is logged - the same reason :func:`storage_facts` drops the
+    ``username=`` option. Devices and pseudo filesystems pass through.
+    """
+    if source.startswith("//"):
+        return "/" + source[2:].partition("/")[2]
+    server, separator, export = source.partition(":/")
+    if separator and server and "/" not in server:
+        return "/" + export
+    return source
+
+
+def explain_unwritable(path: str) -> str:
+    """Why ``path`` cannot be written (or created), as specifically as the system can tell.
+
+    About the directory actually in the way: ``path`` itself, or for a path
+    that does not exist yet, the nearest parent it would be created in.
+    """
+    return _explain_access(_nearest_existing(path), write=True, wanted=os.path.abspath(path))
+
+
+def is_readable_dir(path: str | None) -> bool:
+    """Whether ``path`` is a directory this process can list and enter."""
+    if not path:
+        return False
+    return os.path.isdir(path) and os.access(path, os.R_OK | os.X_OK)
+
+
+def explain_unreadable(path: str) -> str:
+    """Why ``path`` cannot be listed, as specifically as the system can tell."""
+    return _explain_access(os.path.abspath(path), write=False)
+
+
+# The mount options worth a log line - the ones that decide who may write. The
+# rest (an SMB mount's username, cache settings) are noise at best.
+_LOGGED_FLAGS = frozenset({"ro", "rw", "noperm", "forceuid", "forcegid", "cifsacl", "noexec"})
+_LOGGED_KEYS = frozenset({"uid", "gid", "file_mode", "dir_mode", "vers", "sec"})
+
+
+def storage_facts(path: str) -> dict[str, Any]:
+    """What a log line needs to diagnose ``path`` without shell access to the pod."""
+    target = _nearest_existing(path)
+    facts: dict[str, Any] = {
+        "path": os.path.abspath(path),
+        "checked": target,
+        "readable": is_readable_dir(target),
+        "writable": is_writable_dir(path),
+    }
+    try:
+        st = os.stat(target)
+        facts.update(owner_uid=st.st_uid, owner_gid=st.st_gid, mode=f"{stat.S_IMODE(st.st_mode):04o}")
+    except OSError:
+        pass
+    info = mount_info(target)
+    if info is not None:
+        facts.update(
+            mountpoint=info.mountpoint,
+            fstype=info.fstype,
+            source=_without_server(info.source),
+            options=",".join(o for o in info.options if o in _LOGGED_FLAGS or o.split("=", 1)[0] in _LOGGED_KEYS),
+        )
+    if not facts["readable"]:
+        facts["read_reason"] = explain_unreadable(target)
+    if not facts["writable"]:
+        facts["write_reason"] = explain_unwritable(path)
+    return facts
 
 
 def build_prefs_store(workspace_root: str | None = None) -> PrefsStore:
@@ -473,19 +722,64 @@ def _output_candidates(prefs: WorkspacePrefs, workspace_root: str | None) -> lis
     # nor a writable workspace exists - but flagged as ephemeral so the UI can
     # warn instead of silently losing the user's results.
     candidates.append((os.path.abspath(os.path.join(os.getcwd(), "runs")), "cwd-fallback"))
-    return candidates
+
+    # One entry per directory, under the name that put it first. Setting
+    # BIOMNI_OUTPUT_ROOT to <workspace>/biomni-outputs - the GRIP setup - makes it
+    # the workspace default too, and a directory that cannot be used would
+    # otherwise be reported twice, under two names.
+    unique: dict[str, str] = {}
+    for path, source in candidates:
+        unique.setdefault(path, source)
+    return list(unique.items())
 
 
-def _describe_skipped(entries: list[tuple[str, str]]) -> str:
-    """Human explanation of which configured locations were passed over, and why.
+def _describe_skipped(entries: list[tuple[str, str, str]]) -> str:
+    """Which configured locations were passed over, and exactly why.
 
-    Names the setting and the path, because "fell back from env" told a reader
-    that something was rejected without telling them what to go and fix.
+    ``entries`` are ``(path, source, reason)``. Names the setting and the path,
+    because "fell back from env" told a reader that something was rejected
+    without telling them what to go and fix. Grouped by the directory actually
+    in the way: ``BIOMNI_OUTPUT_ROOT`` and the workspace default usually fail
+    together, on the same mount, and explaining that twice buried the one fix
+    both needed.
     """
+    groups: dict[str, list[tuple[str, str, str]]] = {}
+    for entry in entries:
+        groups.setdefault(_nearest_existing(entry[0]), []).append(entry)
     uid = getattr(os, "getuid", lambda: None)()
     by_whom = f" by uid {uid}" if uid is not None else ""
-    parts = [f"{_SOURCE_LABELS.get(source, source)} ({path}) is not writable{by_whom}" for path, source in entries]
-    return "; ".join(parts)
+    sentences = []
+    for members in groups.values():
+        names = _join_names([f"{_SOURCE_LABELS.get(source, source)} ({path})" for path, source, _ in members])
+        verb = "is" if len(members) == 1 else "are"
+        sentence = f"{names} {verb} not writable{by_whom}: {members[0][2]}"
+        # Most labels start "the ...", and each one starts a sentence.
+        sentences.append(sentence[0].upper() + sentence[1:])
+    return ". ".join(sentences)
+
+
+def _join_names(names: list[str]) -> str:
+    """``a``, ``a and b``, ``a, b and c``."""
+    return names[0] if len(names) == 1 else f"{', '.join(names[:-1])} and {names[-1]}"
+
+
+# (source, path, reason) combinations already warned about. Resolution runs
+# several times a session, and the same unwritable mount repeated on every one
+# buried everything else in the log; a changed reason is new, and is logged.
+_warned_unwritable: set[tuple[str, str, str]] = set()
+
+
+def _warn_unwritable_once(source: str, path: str, reason: str) -> None:
+    key = (source, path, reason)
+    if key in _warned_unwritable:
+        return
+    _warned_unwritable.add(key)
+    logger.warning(
+        "output location %s (%s) is not writable, falling back to the next candidate: %s",
+        _SOURCE_LABELS.get(source, source),
+        path,
+        reason,
+    )
 
 
 def resolve_output_dir(prefs: WorkspacePrefs, *, workspace_root: str | None = None) -> OutputTarget:
@@ -502,36 +796,28 @@ def resolve_output_dir(prefs: WorkspacePrefs, *, workspace_root: str | None = No
     tell the two apart.
     """
     candidates = _output_candidates(prefs, workspace_root)
-    skipped: list[tuple[str, str]] = []
+    skipped: list[tuple[str, str, str]] = []
 
     for path, source in candidates:
         if is_writable_dir(path):
-            reason = None
-            if skipped:
-                reason = f"fell back from {_describe_skipped(skipped)}"
             return OutputTarget(
                 path=path,
                 source=source,
                 writable=True,
-                reason=reason,
+                reason=_describe_skipped(skipped) if skipped else None,
                 mounted_volume=on_mounted_volume(path),
             )
+        # Worked out once: it reads the mount table and asks the file system,
+        # which on an SMB share is a round trip to the server.
+        reason = explain_unwritable(path)
         if source != "cwd-fallback":
-            logger.warning(
-                "output location %s (%s) is not writable; falling back to the next candidate",
-                _SOURCE_LABELS.get(source, source),
-                path,
-            )
-        skipped.append((path, source))
+            _warn_unwritable_once(source, path, reason)
+        skipped.append((path, source, reason))
 
     path, source = candidates[-1]
-    logger.error("no writable output location found; tried %s", _describe_skipped(skipped))
-    return OutputTarget(
-        path=path,
-        source=source,
-        writable=False,
-        reason="no writable output location found; set BIOMNI_OUTPUT_ROOT to a mounted volume",
-    )
+    tried = _describe_skipped(skipped)
+    logger.error("no writable output location found: %s", tried)
+    return OutputTarget(path=path, source=source, writable=False, reason=tried)
 
 
 def ensure_output_dir(target: OutputTarget) -> bool:

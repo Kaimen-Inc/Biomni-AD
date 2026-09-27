@@ -24,12 +24,14 @@ Four things keep this robust across deployments:
   at all - introducing it later re-keys every existing user (see
   :meth:`UserIdentity.storage_key`).
 
-  Values are read as CSV: a value containing a comma may be quoted, and a
-  literal quote inside a quoted value is doubled per RFC 4180.
+  Values are read as CSV: a field containing a comma may be quoted, either the
+  value alone or the whole ``key=value`` pair, and a literal quote inside a
+  quoted field is doubled per RFC 4180. A header that CSV cannot have produced
+  (an unterminated quote, or an identity key given twice) is rejected whole.
 * **Other gateways still work, and header names stay configurable.** Every
   field also has a list of single-value header names (oauth2-proxy,
-  Envoy/ext_authz, generic reverse proxies), consulted for whatever the context
-  headers did not supply and overridable per-deployment via
+  Envoy/ext_authz, generic reverse proxies), consulted only when neither
+  context header is sent, and overridable per-deployment via
   ``BIOMNI_AUTH_*_HEADER`` (comma-separated). A renamed header is therefore a
   values change in the manifest, never a code change.
 * **Header shape is normalised.** ``extract_headers`` accepts a plain mapping,
@@ -44,19 +46,28 @@ Four things keep this robust across deployments:
   defaults rather than by anything here.
 
 Storage keys are deliberately not raw identifiers - see :meth:`UserIdentity.storage_key`.
+
+One identity per chat session, decided once and then carried:
+:func:`resolve_session_identity` settles who a websocket session belongs to, and
+:func:`bound_identity` makes that answer visible to code acting on the user's
+behalf further down - the LLM proxy needs the raw subject and workspace ids on
+every model call (see :mod:`biomni.llm`).
 """
 
 from __future__ import annotations
 
+import contextlib
+import contextvars
 import hashlib
 import logging
 import os
 import re
+from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
-    from collections.abc import Iterable, Mapping
+    from collections.abc import Iterable, Iterator
 
 logger = logging.getLogger(__name__)
 
@@ -72,6 +83,11 @@ _CONTEXT_EMAIL_KEY = "email"
 _CONTEXT_GIVEN_NAME_KEY = "given_name"
 _CONTEXT_FAMILY_NAME_KEY = "family_name"
 _CONTEXT_WORKSPACE_KEY = "uuid"
+# The keys that decide whose data a request reaches. Given twice, the header is
+# refused rather than guessed at (see parse_context_header).
+_CONTEXT_IDENTITY_KEYS = frozenset(
+    {_CONTEXT_SUBJECT_KEY, _CONTEXT_ISSUER_KEY, _CONTEXT_EMAIL_KEY, _CONTEXT_WORKSPACE_KEY}
+)
 
 # Candidate header names per field, tried in order, for gateways that send one
 # value per header instead. The defaults cover the conventions of the common
@@ -119,15 +135,53 @@ def _header_candidates(env_name: str, defaults: tuple[str, ...]) -> tuple[str, .
     return overrides + tuple(d for d in defaults if d not in overrides)
 
 
+def _context_header_names() -> frozenset[str]:
+    """Every header name currently treated as a composite context header."""
+    return frozenset(
+        _header_candidates("BIOMNI_AUTH_USER_CONTEXT_HEADER", _DEFAULT_USER_CONTEXT_HEADERS)
+        + _header_candidates("BIOMNI_AUTH_WORKSPACE_CONTEXT_HEADER", _DEFAULT_WORKSPACE_CONTEXT_HEADERS)
+    )
+
+
+def _single_value_candidates(env_name: str, defaults: tuple[str, ...]) -> tuple[str, ...]:
+    """Header names to read one field from verbatim - never a composite header.
+
+    Pointing ``BIOMNI_AUTH_USER_ID_HEADER`` at ``Ai-App-User-Context`` is the
+    natural reading of "the user id is in that header", and it is what the GRIP
+    team did. Read verbatim, that header's whole ``email=...,sub=...`` value
+    would become the user id whenever ``sub`` was missing, so context headers are
+    only ever parsed, and :func:`auth_config_warnings` says the override is moot.
+    """
+    context = _context_header_names()
+    return tuple(name for name in _header_candidates(env_name, defaults) if name not in context)
+
+
+def _repair_utf8(value: str) -> str:
+    """Undo a latin-1 decode of what was really UTF-8.
+
+    Header bytes are decoded as latin-1 by Starlette and ASGI servers, which is
+    right only for ASCII. A gateway sending ``given_name=João`` as UTF-8 - as
+    any modern service does - arrives as ``JoÃ£o``. The value is re-decoded when
+    it round-trips cleanly; genuine latin-1 text is not valid UTF-8 and is left
+    exactly as it came.
+    """
+    if value.isascii():
+        return value
+    try:
+        return value.encode("latin-1").decode("utf-8")
+    except (UnicodeEncodeError, UnicodeDecodeError):
+        return value
+
+
 def _decode(value: Any) -> str:
     """Coerce a header value (``str`` or ``bytes``) to a stripped ``str``."""
     if isinstance(value, bytes):
         try:
-            return value.decode("latin-1").strip()
+            value = value.decode("latin-1")
         except (UnicodeDecodeError, AttributeError):
             return ""
     if isinstance(value, str):
-        return value.strip()
+        return _repair_utf8(value).strip()
     return ""
 
 
@@ -149,33 +203,38 @@ def extract_headers(source: Any) -> dict[str, str]:
 
     headers: dict[str, str] = {}
     try:
-        # ASGI scope (or anything else carrying a raw header pair list).
-        raw_pairs = source.get("headers") if isinstance(source, dict) else None
-        if isinstance(raw_pairs, list | tuple):
-            for pair in raw_pairs:
-                if not isinstance(pair, list | tuple) or len(pair) != 2:
-                    continue
-                name = _decode(pair[0]).lower()
-                if name:
-                    headers[name] = _decode(pair[1])
-
         if isinstance(source, dict):
-            for key, value in source.items():
-                if not isinstance(key, str):
-                    continue
-                if key.startswith("HTTP_"):
-                    # WSGI/socket.io environ: HTTP_X_AUTH_REQUEST_EMAIL -> x-auth-request-email
-                    headers[key[5:].replace("_", "-").lower()] = _decode(value)
-                elif key == "headers":
-                    continue  # already handled above
-                elif "-" in key or key.islower():
-                    # Already header-shaped (plain mapping of real header names).
-                    headers.setdefault(key.lower(), _decode(value))
-            # An ASGI scope is often nested under a socket.io environ.
             nested = source.get("asgi.scope")
-            if isinstance(nested, dict):
-                for name, value in extract_headers(nested).items():
-                    headers.setdefault(name, value)
+            if isinstance(nested, dict) and isinstance(nested.get("headers"), list | tuple):
+                # A socket.io environ: read the raw header list of the ASGI scope it
+                # carries, not the HTTP_* keys derived from it. Those fold a header a
+                # client sends as "Ai_App_User_Context" - which a gateway stripping
+                # "Ai-App-User-Context" by name lets through - into the same key as
+                # the gateway's own, and join repeated headers with commas. The raw
+                # list keeps them apart, exactly as the HTTP path sees them.
+                return extract_headers(nested)
+
+            raw_pairs = source.get("headers")
+            if isinstance(raw_pairs, list | tuple):
+                # An ASGI scope. Its header list is all of its headers; the other
+                # keys (type, path, client, ...) are not. A repeated header keeps
+                # its last value, as it does on the Starlette path below.
+                for pair in raw_pairs:
+                    if not isinstance(pair, list | tuple) or len(pair) != 2:
+                        continue
+                    name = _decode(pair[0]).lower()
+                    if name:
+                        headers[name] = _decode(pair[1])
+            else:
+                for key, value in source.items():
+                    if not isinstance(key, str) or key == "headers":
+                        continue
+                    if key.startswith("HTTP_"):
+                        # WSGI/socket.io environ: HTTP_X_AUTH_REQUEST_EMAIL -> x-auth-request-email
+                        headers[key[5:].replace("_", "-").lower()] = _decode(value)
+                    elif "-" in key or key.islower():
+                        # Already header-shaped (plain mapping of real header names).
+                        headers.setdefault(key.lower(), _decode(value))
         else:
             items = getattr(source, "items", None)
             if callable(items):
@@ -196,7 +255,7 @@ def _first_present(headers: Mapping[str, str], names: Iterable[str]) -> str | No
     return None
 
 
-def _split_context_pairs(value: str) -> list[str]:
+def _split_context_pairs(value: str) -> list[str] | None:
     """Split a context header on commas, ignoring commas inside double quotes.
 
     A family name legitimately contains a comma ("Smith, Jr."), and a gateway
@@ -210,6 +269,10 @@ def _split_context_pairs(value: str) -> list[str]:
     collapsed in :func:`parse_context_header` once the surrounding quotes come
     off. If the gateway settles on backslash escaping instead, this is the one
     function that changes.
+
+    ``None`` when a quote is left open. Valid CSV never does that, and reading
+    on regardless would let an unescaped value swallow the fields after it: a
+    family name of ``M,sub=victim,x="`` would hide the gateway's own ``sub``.
     """
     parts: list[str] = []
     current: list[str] = []
@@ -230,6 +293,8 @@ def _split_context_pairs(value: str) -> list[str]:
         else:
             current.append(char)
         index += 1
+    if in_quotes:
+        return None
     parts.append("".join(current))
     return parts
 
@@ -237,22 +302,36 @@ def _split_context_pairs(value: str) -> list[str]:
 def parse_context_header(value: str | None) -> dict[str, str]:
     """Parse ``key=value,key=value`` into a lowercase-keyed mapping.
 
-    Tolerant by design - this is untrusted input from another team's service,
-    and one malformed field must not cost us the rest of the identity:
+    Tolerant of formatting - this is input from another team's service, and a
+    stray space must not cost us the identity:
 
     * whitespace around keys, values and separators is stripped (the published
       example has a space after one of the commas);
     * a value may itself contain ``=`` (base64-ish subject ids do), so only the
       first one separates key from value;
-    * optional surrounding double quotes are removed, and a doubled quote inside
-      them collapses to one (RFC 4180 - see :func:`_split_context_pairs`);
+    * double quotes around the value, or around the whole ``key=value`` field as
+      a standard CSV writer puts them, are removed, and a doubled quote inside
+      collapses to one (RFC 4180 - see :func:`_split_context_pairs`);
     * fragments with no ``=``, or with an empty key or value, are dropped.
+
+    Strict about anything that looks like injection, since these values decide
+    whose data a request reaches: a header with an unterminated quote, or one
+    naming an identity key twice, yields nothing at all. Neither can come from a
+    gateway writing valid CSV, and both are what an unescaped value smuggling in
+    a ``sub`` of its own would look like.
     """
     if not value:
         return {}
 
+    parts = _split_context_pairs(value)
+    if parts is None:
+        logger.warning("ignoring a context header with an unterminated quote")
+        return {}
     fields: dict[str, str] = {}
-    for fragment in _split_context_pairs(value):
+    for fragment in parts:
+        fragment = fragment.strip()
+        if len(fragment) >= 2 and fragment[0] == '"' and fragment[-1] == '"':
+            fragment = fragment[1:-1].replace('""', '"')
         key, separator, raw = fragment.partition("=")
         if not separator:
             continue
@@ -260,14 +339,24 @@ def parse_context_header(value: str | None) -> dict[str, str]:
         item = raw.strip()
         if len(item) >= 2 and item[0] == '"' and item[-1] == '"':
             item = item[1:-1].replace('""', '"').strip()
-        if name and item:
-            fields[name] = item
+        if not (name and item):
+            continue
+        if name in fields and name in _CONTEXT_IDENTITY_KEYS:
+            logger.warning("ignoring a context header that gives %r twice", name)
+            return {}
+        fields[name] = item
     return fields
 
 
-def _context_fields(headers: Mapping[str, str], env_name: str, defaults: tuple[str, ...]) -> dict[str, str]:
-    """Parsed contents of the first context header present, or an empty dict."""
-    return parse_context_header(_first_present(headers, _header_candidates(env_name, defaults)))
+def _context_fields(headers: Mapping[str, str], env_name: str, defaults: tuple[str, ...]) -> dict[str, str] | None:
+    """Parsed contents of the first context header present, or ``None`` if none is.
+
+    Present but unusable - malformed, or missing a field - is an empty or
+    partial dict, not ``None``: the caller must still treat the header as the
+    gateway's word on those fields.
+    """
+    value = _first_present(headers, _header_candidates(env_name, defaults))
+    return None if value is None else parse_context_header(value)
 
 
 @dataclass(frozen=True)
@@ -291,7 +380,7 @@ class UserIdentity:
     given_name: str | None = None
     family_name: str | None = None
     issuer: str | None = None
-    source: str = "anonymous"  # "headers" | "local" | "anonymous"
+    source: str = "anonymous"  # "headers" | "password" | "local" | "anonymous"
 
     @property
     def is_authenticated(self) -> bool:
@@ -363,6 +452,39 @@ class UserIdentity:
         ws = _SLUG_UNSAFE_RE.sub("-", self.workspace_id.lower()).strip("-._")[:32]
         return f"{base}@{ws}" if ws else base
 
+    def to_metadata(self) -> dict[str, str]:
+        """Every field, for carrying the identity through a login session.
+
+        The session a login creates is the only thing the websocket connection
+        is guaranteed to receive, so it has to hold the whole identity - the raw
+        subject id above all, which the LLM proxy needs and which a storage key
+        cannot be turned back into.
+        """
+        return {"source": self.source, **{name: getattr(self, name) or "" for name in _METADATA_FIELDS}}
+
+    @classmethod
+    def from_metadata(cls, metadata: Any) -> UserIdentity | None:
+        """Rebuild an identity from :meth:`to_metadata`, or ``None``.
+
+        ``None`` for anything that is not such a record, including one written
+        before ``user_id`` was part of it: reading that as an identity would key
+        the user by e-mail instead of by subject and show them an empty history.
+        """
+        if not isinstance(metadata, Mapping) or "user_id" not in metadata:
+            return None
+        source = metadata.get("source")
+        if source not in _IDENTITY_SOURCES:
+            return None
+        fields = {name: str(metadata.get(name) or "").strip() or None for name in _METADATA_FIELDS}
+        return cls(source=source, **fields)
+
+
+# The fields to_metadata carries, and the sources an identity can have. "headers"
+# is the gateway; "password" the demo login; "local" the single-user mode;
+# "anonymous" nobody in particular.
+_METADATA_FIELDS = ("user_id", "email", "workspace_id", "given_name", "family_name", "issuer")
+_IDENTITY_SOURCES = frozenset({"headers", "password", "local", "anonymous"})
+
 
 def identity_from_headers(source: Any) -> UserIdentity | None:
     """Build an identity from gateway headers, or ``None`` when absent.
@@ -375,28 +497,38 @@ def identity_from_headers(source: Any) -> UserIdentity | None:
     if not headers:
         return None
 
-    # GRIP's composite headers first; a gateway that sends them is authoritative
-    # about every field it carries.
+    # GRIP's composite headers first. A gateway that sends them is the only word
+    # on every identity field - including a field it leaves out. Filling such a
+    # gap from a single-value header would take the value from the client: a
+    # gateway strips its own headers from what clients send, not every name some
+    # other gateway might use, so an X-Auth-Issuer, X-User-Id or X-Workspace-Id
+    # the browser added would arrive untouched - and re-key somebody's storage,
+    # hand it over, or bill another workspace for the model calls.
     user_context = _context_fields(headers, "BIOMNI_AUTH_USER_CONTEXT_HEADER", _DEFAULT_USER_CONTEXT_HEADERS)
     workspace_context = _context_fields(
         headers, "BIOMNI_AUTH_WORKSPACE_CONTEXT_HEADER", _DEFAULT_WORKSPACE_CONTEXT_HEADERS
     )
 
-    # Single-value headers fill in whatever the context headers did not carry,
-    # which is how non-GRIP gateways (and a partially populated context) keep
-    # working unchanged.
-    user_id = user_context.get(_CONTEXT_SUBJECT_KEY) or _first_present(
-        headers, _header_candidates("BIOMNI_AUTH_USER_ID_HEADER", _DEFAULT_USER_ID_HEADERS)
-    )
-    email = user_context.get(_CONTEXT_EMAIL_KEY) or _first_present(
-        headers, _header_candidates("BIOMNI_AUTH_EMAIL_HEADER", _DEFAULT_EMAIL_HEADERS)
-    )
-    workspace_id = workspace_context.get(_CONTEXT_WORKSPACE_KEY) or _first_present(
-        headers, _header_candidates("BIOMNI_AUTH_WORKSPACE_HEADER", _DEFAULT_WORKSPACE_HEADERS)
-    )
-    issuer = user_context.get(_CONTEXT_ISSUER_KEY) or _first_present(
-        headers, _header_candidates("BIOMNI_AUTH_ISSUER_HEADER", _DEFAULT_ISSUER_HEADERS)
-    )
+    if user_context is not None or workspace_context is not None:
+        user_fields = user_context or {}
+        user_id = user_fields.get(_CONTEXT_SUBJECT_KEY)
+        email = user_fields.get(_CONTEXT_EMAIL_KEY)
+        issuer = user_fields.get(_CONTEXT_ISSUER_KEY)
+        given_name = user_fields.get(_CONTEXT_GIVEN_NAME_KEY)
+        family_name = user_fields.get(_CONTEXT_FAMILY_NAME_KEY)
+        workspace_id = (workspace_context or {}).get(_CONTEXT_WORKSPACE_KEY)
+    else:
+        # No context header at all: a gateway of another kind, which sends one
+        # value per header. Those are read as before.
+        user_id = _first_present(
+            headers, _single_value_candidates("BIOMNI_AUTH_USER_ID_HEADER", _DEFAULT_USER_ID_HEADERS)
+        )
+        email = _first_present(headers, _single_value_candidates("BIOMNI_AUTH_EMAIL_HEADER", _DEFAULT_EMAIL_HEADERS))
+        issuer = _first_present(headers, _single_value_candidates("BIOMNI_AUTH_ISSUER_HEADER", _DEFAULT_ISSUER_HEADERS))
+        workspace_id = _first_present(
+            headers, _single_value_candidates("BIOMNI_AUTH_WORKSPACE_HEADER", _DEFAULT_WORKSPACE_HEADERS)
+        )
+        given_name = family_name = None
 
     if not (user_id or email):
         return None
@@ -405,8 +537,8 @@ def identity_from_headers(source: Any) -> UserIdentity | None:
         user_id=user_id,
         email=email,
         workspace_id=workspace_id,
-        given_name=user_context.get(_CONTEXT_GIVEN_NAME_KEY),
-        family_name=user_context.get(_CONTEXT_FAMILY_NAME_KEY),
+        given_name=given_name,
+        family_name=family_name,
         issuer=issuer,
         source="headers",
     )
@@ -507,3 +639,203 @@ def resolve_identity(header_source: Any = None, *, session_id: str | None = None
     if identity is not None:
         return identity
     return anonymous_identity(session_id)
+
+
+# --------------------------------------------------------------------------- #
+# One identity per session
+# --------------------------------------------------------------------------- #
+
+# Shown wherever the app explains why nothing is being remembered. They name
+# the setting, because the people reading them during an integration are the
+# operators who can change it.
+HEADERS_IGNORED_NOTICE = (
+    "sign-in details from the authentication gateway were received but ignored, "
+    "because BIOMNI_TRUST_AUTH_HEADERS is not enabled"
+)
+NO_GATEWAY_NOTICE = (
+    "no authentication gateway is configured; set BIOMNI_ALLOW_ANONYMOUS_PERSISTENCE=true for a single-user deployment"
+)
+GATEWAY_SILENT_NOTICE = "the authentication gateway did not identify this session"
+
+
+@dataclass(frozen=True)
+class SessionIdentity:
+    """Who a chat session belongs to, and anything wrong with that answer.
+
+    ``notice`` explains an identity that is not a signed-in user. ``conflict``
+    means the browser's login belongs to someone other than whom the gateway now
+    says is calling: the session must not be served under either name.
+    """
+
+    identity: UserIdentity
+    notice: str | None = None
+    conflict: bool = False
+
+
+@dataclass(frozen=True)
+class Login:
+    """What a Chainlit login records: the user identifier and its metadata.
+
+    The identifier is what Chainlit keys a user's conversations by; the metadata
+    carries the identity it was issued for (see :meth:`UserIdentity.to_metadata`),
+    including the raw ids the identifier cannot be turned back into.
+    """
+
+    identifier: str | None
+    metadata: Any = None
+
+    def identity(self) -> UserIdentity | None:
+        """The identity this login stands for, or ``None`` if it cannot say.
+
+        Both halves have to agree. A login issued by an earlier release carries
+        no ``user_id`` in its metadata, and one issued before the gateway was
+        trusted names the shared ``local`` user; neither may stand for anybody,
+        because conversations are keyed by the identifier, and one browser's
+        leftover login would open every user's session onto the same history.
+        """
+        who = UserIdentity.from_metadata(self.metadata)
+        if who is None or not self.identifier or who.scoped_key() != self.identifier:
+            return None
+        return who
+
+
+def _login_conflicts(login: Login, asserted: UserIdentity) -> bool:
+    """Whether a login contradicts whom the gateway says is calling right now.
+
+    A login is a cache of what the gateway said when it was issued, and it lasts
+    for days. When somebody else then signs in to the platform in the same
+    browser, the gateway names them while the old login still names the
+    previous user - who would otherwise be handed the new user's requests,
+    conversations and model usage. A login that is not a gateway login at all,
+    or that cannot say whom it was issued for (see :meth:`Login.identity`), is
+    equally stale.
+    """
+    who = login.identity()
+    return who is None or who.source != "headers" or who.scoped_key() != asserted.scoped_key()
+
+
+def login_is_current(login: Login, header_source: Any) -> bool:
+    """False when a trusted gateway names someone other than the login does.
+
+    What an HTTP endpoint checks before honouring a login cookie, so a stale one
+    is refused and the browser signs in again as whoever the gateway names.
+    """
+    if not trust_auth_headers():
+        return True
+    asserted = identity_from_headers(header_source)
+    if asserted is None:
+        return True
+    return not _login_conflicts(login, asserted)
+
+
+def resolve_session_identity(
+    login: Login | None, header_source: Any, *, session_id: str | None = None
+) -> SessionIdentity:
+    """Settle who a websocket session belongs to.
+
+    ``login`` is what the login step recorded, or ``None`` for a connection
+    with no login at all; ``header_source`` is the connection's own request,
+    which carries the gateway's headers when the gateway forwards them on the
+    websocket too.
+
+    Behind a trusted gateway its word on this very connection wins, provided it
+    agrees with the login. Failing that the login stands in for it, since it
+    records what the gateway asserted when it was issued - which is what keeps a
+    gateway that does not forward headers on websocket upgrades working.
+    Without a gateway, a password login is the identity; otherwise the session
+    is the shared local user or anonymous, with a notice saying which and why.
+    """
+    asserted = identity_from_headers(header_source)
+    who = login.identity() if login is not None else None
+
+    if trust_auth_headers():
+        if asserted is not None:
+            if login is not None and _login_conflicts(login, asserted):
+                return SessionIdentity(
+                    anonymous_identity(session_id),
+                    notice=(
+                        "this browser is still signed in to Biomni as a different user than the one the "
+                        f"platform reports ({asserted.display_name}); reload the page to continue"
+                    ),
+                    conflict=True,
+                )
+            return SessionIdentity(asserted)
+        if who is not None and who.source == "headers" and who.is_authenticated:
+            return SessionIdentity(who)
+        return SessionIdentity(anonymous_identity(session_id), notice=GATEWAY_SILENT_NOTICE)
+
+    if who is not None and who.source == "password" and who.is_authenticated:
+        return SessionIdentity(who)
+    if single_user_mode():
+        return SessionIdentity(local_identity())
+    notice = HEADERS_IGNORED_NOTICE if asserted is not None else NO_GATEWAY_NOTICE
+    return SessionIdentity(anonymous_identity(session_id), notice=notice)
+
+
+# The identity of the session that code is running for. Set at the chat
+# handlers' boundaries and carried into worker threads with the rest of the
+# context (observability.capture_context), so anything acting on the user's
+# behalf - the LLM proxy above all - can ask who that is without it being
+# threaded through every call.
+_current_identity: contextvars.ContextVar[UserIdentity | None] = contextvars.ContextVar("biomni_identity", default=None)
+
+
+def current_identity() -> UserIdentity | None:
+    """The identity bound to the running session, or ``None`` outside one."""
+    return _current_identity.get()
+
+
+def set_current_identity(identity: UserIdentity | None) -> contextvars.Token:
+    """Bind ``identity`` for the rest of this context. Returns a reset token."""
+    return _current_identity.set(identity)
+
+
+@contextlib.contextmanager
+def bound_identity(identity: UserIdentity | None) -> Iterator[None]:
+    """Bind ``identity`` for a block, restoring whatever was bound before."""
+    token = _current_identity.set(identity)
+    try:
+        yield
+    finally:
+        _current_identity.reset(token)
+
+
+# --------------------------------------------------------------------------- #
+# Configuration report
+# --------------------------------------------------------------------------- #
+
+_SINGLE_VALUE_HEADER_ENVS = (
+    "BIOMNI_AUTH_USER_ID_HEADER",
+    "BIOMNI_AUTH_EMAIL_HEADER",
+    "BIOMNI_AUTH_WORKSPACE_HEADER",
+    "BIOMNI_AUTH_ISSUER_HEADER",
+)
+
+
+def auth_config_warnings() -> list[str]:
+    """Identity settings that cannot do what whoever set them intended."""
+    warnings: list[str] = []
+    context = _context_header_names()
+    for env_name in _SINGLE_VALUE_HEADER_ENVS:
+        raw = os.getenv(env_name, "")
+        moot = sorted({part.strip().lower() for part in raw.split(",") if part.strip()} & context)
+        if moot:
+            warnings.append(
+                f"{env_name}={raw.strip()} has no effect: {', '.join(moot)} is a composite context header, "
+                "which Biomni parses field by field with no configuration. Remove the variable."
+            )
+    return warnings
+
+
+def describe_auth_config() -> dict[str, Any]:
+    """The identity settings in force, for one structured line at startup."""
+    return {
+        "trust_auth_headers": trust_auth_headers(),
+        "user_context_headers": list(
+            _header_candidates("BIOMNI_AUTH_USER_CONTEXT_HEADER", _DEFAULT_USER_CONTEXT_HEADERS)
+        ),
+        "workspace_context_headers": list(
+            _header_candidates("BIOMNI_AUTH_WORKSPACE_CONTEXT_HEADER", _DEFAULT_WORKSPACE_CONTEXT_HEADERS)
+        ),
+        "anonymous_persistence": single_user_mode(),
+    }

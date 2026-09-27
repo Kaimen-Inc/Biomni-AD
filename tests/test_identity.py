@@ -8,13 +8,18 @@ writes a user's e-mail address into a filename.
 
 from __future__ import annotations
 
+import asyncio
+import threading
+
 import pytest
 from biomni import identity
+from biomni.observability import capture_context
 
 _ENV_TO_CLEAR = (
     "BIOMNI_AUTH_USER_ID_HEADER",
     "BIOMNI_AUTH_EMAIL_HEADER",
     "BIOMNI_AUTH_WORKSPACE_HEADER",
+    "BIOMNI_AUTH_ISSUER_HEADER",
     "BIOMNI_AUTH_USER_CONTEXT_HEADER",
     "BIOMNI_AUTH_WORKSPACE_CONTEXT_HEADER",
     "BIOMNI_TRUST_AUTH_HEADERS",
@@ -71,6 +76,37 @@ def test_extract_headers_from_environ_with_nested_asgi_scope():
     assert identity.extract_headers(environ)["x-user-id"] == "nested-1"
 
 
+def test_the_raw_asgi_headers_win_over_the_environ_keys_derived_from_them():
+    """socket.io folds "Ai_App_User_Context" into the key of the real header.
+
+    A gateway that strips client copies of ``Ai-App-User-Context`` by name lets
+    the underscore spelling through, so the environ's HTTP_* keys are not the
+    gateway's word - the raw header list next to them is.
+    """
+    environ = {
+        "HTTP_AI_APP_USER_CONTEXT": "sub=victim",
+        "asgi.scope": {
+            "headers": [(b"ai_app_user_context", b"sub=victim"), (b"ai-app-user-context", b"sub=real")],
+        },
+    }
+    headers = identity.extract_headers(environ)
+    assert headers["ai-app-user-context"] == "sub=real"
+    who = identity.identity_from_headers(environ)
+    assert who is not None and who.user_id == "real"
+
+
+def test_an_asgi_scope_yields_only_its_headers():
+    scope = {"type": "websocket", "path": "/ws/socket.io/", "headers": [(b"x-user-id", b"u1")]}
+    assert identity.extract_headers(scope) == {"x-user-id": "u1"}
+
+
+def test_a_repeated_header_resolves_to_its_last_value():
+    """A gateway that appends its own copy puts it last; both carriers agree."""
+    scope = {"headers": [(b"ai-app-user-context", b"sub=client"), (b"ai-app-user-context", b"sub=gateway")]}
+    who = identity.identity_from_headers(scope)
+    assert who is not None and who.user_id == "gateway"
+
+
 def test_extract_headers_tolerates_junk():
     assert identity.extract_headers(None) == {}
     assert identity.extract_headers(object()) == {}
@@ -115,6 +151,28 @@ def test_parse_context_header_respects_quoted_commas():
 @pytest.mark.parametrize("raw", ["", None, "not-a-pair", "=novalue", "novalue=", ",,,"])
 def test_parse_context_header_survives_junk(raw):
     assert identity.parse_context_header(raw) == {}
+
+
+def test_a_whole_quoted_field_is_unquoted():
+    """How a standard CSV writer quotes a field that contains a comma."""
+    fields = identity.parse_context_header('"family_name=Smith, Jr.",sub=s1')
+    assert fields == {"family_name": "Smith, Jr.", "sub": "s1"}
+
+
+def test_an_unterminated_quote_rejects_the_whole_header():
+    """An unescaped value must not swallow - or supply - the fields after it."""
+    assert identity.parse_context_header('email=a@b.org,family_name="M,sub=victim') == {}
+
+
+def test_an_identity_key_given_twice_rejects_the_whole_header():
+    """What an unescaped family name smuggling in a ``sub`` of its own looks like."""
+    assert identity.parse_context_header('family_name=M,sub=victim,x=",sub=real') == {}
+    assert identity.parse_context_header("sub=a,sub=b") == {}
+    assert identity.parse_context_header("uuid=w1,uuid=w2") == {}
+
+
+def test_a_display_field_given_twice_keeps_the_identity():
+    assert identity.parse_context_header("sub=s1,given_name=A,given_name=B") == {"sub": "s1", "given_name": "B"}
 
 
 def test_parse_context_header_keeps_the_good_fields_from_a_malformed_header():
@@ -192,14 +250,34 @@ def test_context_headers_win_over_single_value_headers():
     assert (who.user_id, who.workspace_id) == ("grip-1", "grip-ws")
 
 
-def test_single_value_headers_fill_gaps_the_context_left():
+def test_single_value_headers_never_fill_gaps_the_context_left():
+    """The gateway strips its own headers, not every name another gateway uses.
+
+    Anything it left out of the context header therefore comes from the client
+    if read from elsewhere - an issuer that re-keys storage, or a workspace that
+    another workspace's quota pays for.
+    """
     who = identity.identity_from_headers(
-        {"ai-app-user-context": "sub=grip-1", "x-auth-request-email": "a@b.org", "x-workspace-id": "proxy-ws"}
+        {
+            "ai-app-user-context": "sub=grip-1",
+            "x-auth-request-email": "a@b.org",
+            "x-auth-issuer": "https://attacker.example",
+            "x-workspace-id": "proxy-ws",
+        }
     )
     assert who is not None
     assert who.user_id == "grip-1"
-    assert who.email == "a@b.org"
-    assert who.workspace_id == "proxy-ws"
+    assert (who.email, who.issuer, who.workspace_id) == (None, None, None)
+
+
+def test_a_workspace_context_alone_still_silences_the_single_value_headers():
+    who = identity.identity_from_headers({"ai-app-workspace-context": "uuid=w1", "x-user-id": "victim"})
+    assert who is None
+
+
+def test_a_malformed_context_header_does_not_fall_back_to_single_value_headers():
+    who = identity.identity_from_headers({"ai-app-user-context": "sub=a,sub=b", "x-user-id": "victim"})
+    assert who is None
 
 
 def test_context_header_names_are_configurable(monkeypatch):
@@ -528,3 +606,281 @@ def test_password_identity_rejects_an_unusable_username():
 
 def test_password_identity_is_stable_across_calls():
     assert identity.password_identity("alice").scoped_key() == identity.password_identity("ALICE").scoped_key()
+
+
+# --------------------------------------------------------------------------- #
+# The GRIP team's configuration: one CSV header per context
+# --------------------------------------------------------------------------- #
+
+
+def test_a_composite_header_named_as_a_single_value_header_is_still_parsed(monkeypatch):
+    """Pointing the single-value overrides at the context header must not break anything.
+
+    That is what the GRIP team configured. With ``sub`` present it was harmless;
+    with ``sub`` missing, the whole ``email=...,given_name=...`` string used to
+    become the user id.
+    """
+    monkeypatch.setenv("BIOMNI_AUTH_USER_ID_HEADER", "Ai-App-User-Context")
+    monkeypatch.setenv("BIOMNI_AUTH_EMAIL_HEADER", "Ai-App-User-Context")
+    monkeypatch.setenv("BIOMNI_AUTH_WORKSPACE_HEADER", "Ai-App-Workspace-Context")
+    who = identity.identity_from_headers(
+        {
+            "Ai-App-User-Context": "email=jane.doe@grip.org,given_name=Jane, family_name=Doe,sub=",
+            "Ai-App-Workspace-Context": GRIP_WORKSPACE_CONTEXT,
+        }
+    )
+    assert who is not None
+    assert who.user_id is None
+    assert who.email == "jane.doe@grip.org"
+    assert who.workspace_id == "ws-7a3d-4e21"
+
+
+def test_the_overrides_the_grip_team_set_are_reported_as_moot(monkeypatch):
+    monkeypatch.setenv("BIOMNI_AUTH_USER_ID_HEADER", "Ai-App-User-Context")
+    monkeypatch.setenv("BIOMNI_AUTH_WORKSPACE_HEADER", "X-Workspace-Id, ai-app-workspace-context")
+    warnings = identity.auth_config_warnings()
+    assert len(warnings) == 2
+    assert all("has no effect" in w and "Remove the variable" in w for w in warnings)
+    assert "BIOMNI_AUTH_USER_ID_HEADER" in warnings[0]
+
+
+def test_ordinary_overrides_are_not_reported(monkeypatch):
+    monkeypatch.setenv("BIOMNI_AUTH_USER_ID_HEADER", "X-Remote-User")
+    assert identity.auth_config_warnings() == []
+
+
+def test_a_utf8_name_decoded_as_latin1_is_repaired():
+    """Starlette decodes header bytes as latin-1; a gateway sends UTF-8."""
+    mangled = "given_name=João,sub=s1".encode().decode("latin-1")
+    who = identity.identity_from_headers({"Ai-App-User-Context": mangled})
+    assert who is not None
+    assert who.given_name == "João"
+
+
+def test_a_utf8_name_in_raw_asgi_bytes_is_repaired():
+    scope = {"headers": [(b"ai-app-user-context", "given_name=Zoë,family_name=Brontë,sub=s1".encode())]}
+    who = identity.identity_from_headers(scope)
+    assert who is not None
+    assert (who.given_name, who.family_name) == ("Zoë", "Brontë")
+
+
+def test_genuine_latin1_text_is_left_alone():
+    # "Müller" in latin-1 is not valid UTF-8, so it must come through untouched.
+    assert identity._repair_utf8("Müller") == "Müller"
+    assert identity._repair_utf8("plain ascii") == "plain ascii"
+
+
+def test_describe_auth_config_names_the_headers_in_force(monkeypatch):
+    monkeypatch.setenv("BIOMNI_TRUST_AUTH_HEADERS", "true")
+    report = identity.describe_auth_config()
+    assert report["trust_auth_headers"] is True
+    assert report["user_context_headers"] == ["ai-app-user-context"]
+    assert report["workspace_context_headers"] == ["ai-app-workspace-context"]
+    assert report["anonymous_persistence"] is False
+
+
+# --------------------------------------------------------------------------- #
+# Carrying an identity through a login
+# --------------------------------------------------------------------------- #
+
+
+def _grip_identity(**overrides) -> identity.UserIdentity:
+    who = identity.identity_from_headers(GRIP_HEADERS)
+    assert who is not None
+    return identity.UserIdentity(**{**who.__dict__, **overrides})
+
+
+def test_metadata_round_trips_every_field():
+    who = _grip_identity(issuer="https://idp.example")
+    assert identity.UserIdentity.from_metadata(who.to_metadata()) == who
+
+
+@pytest.mark.parametrize(
+    "metadata",
+    [
+        None,
+        "not a mapping",
+        # Written before user_id was carried: reading it would key the user by
+        # e-mail instead of subject and show them an empty history.
+        {"source": "headers", "email": "jane.doe@grip.org", "workspace_id": "ws"},
+        {"source": "somewhere-else", "user_id": "u1"},
+    ],
+)
+def test_metadata_that_is_not_an_identity_record_is_rejected(metadata):
+    assert identity.UserIdentity.from_metadata(metadata) is None
+
+
+# --------------------------------------------------------------------------- #
+# One identity per session
+# --------------------------------------------------------------------------- #
+
+
+def _headers_for(sub: str, workspace: str = "ws-7a3d-4e21") -> dict[str, str]:
+    return {
+        "Ai-App-User-Context": f"email={sub}@grip.org,given_name={sub.title()},sub={sub}",
+        "Ai-App-Workspace-Context": f"uuid={workspace}",
+    }
+
+
+def _login_for(sub: str, workspace: str = "ws-7a3d-4e21") -> identity.Login:
+    who = identity.identity_from_headers(_headers_for(sub, workspace))
+    assert who is not None
+    return identity.Login(who.scoped_key(), who.to_metadata())
+
+
+@pytest.fixture
+def trusted(monkeypatch):
+    monkeypatch.setenv("BIOMNI_TRUST_AUTH_HEADERS", "true")
+
+
+def test_behind_the_gateway_its_headers_decide(trusted):
+    session = identity.resolve_session_identity(None, _headers_for("alice"), session_id="s1")
+    assert session.identity.user_id == "alice"
+    assert session.identity.source == "headers"
+    assert not session.conflict and session.notice is None
+
+
+def test_a_login_that_agrees_with_the_gateway_is_accepted(trusted):
+    session = identity.resolve_session_identity(_login_for("alice"), _headers_for("alice"), session_id="s1")
+    assert session.identity.user_id == "alice" and not session.conflict
+
+
+def test_a_login_for_someone_else_is_a_conflict(trusted):
+    """A shared browser: the platform now names bob, the old cookie names alice."""
+    session = identity.resolve_session_identity(_login_for("alice"), _headers_for("bob"), session_id="s1")
+    assert session.conflict
+    assert not session.identity.is_authenticated
+    assert "Bob" in (session.notice or "")
+    assert "reload the page" in (session.notice or "")
+
+
+def test_a_login_for_another_workspace_is_a_conflict(trusted):
+    session = identity.resolve_session_identity(_login_for("alice", "ws-1"), _headers_for("alice", "ws-2"))
+    assert session.conflict
+
+
+def test_a_login_from_before_the_gateway_was_trusted_is_a_conflict(trusted):
+    anonymous = identity.anonymous_identity("old")
+    stale = identity.Login(anonymous.scoped_key(), anonymous.to_metadata())
+    assert identity.resolve_session_identity(stale, _headers_for("alice")).conflict
+
+
+# The metadata an earlier release wrote to its login cookies, which carries no
+# user_id. The shared "local" login is what every browser of a single-user
+# deployment holds; honoured, it would open every user's session onto one history.
+_RELEASED_LOCAL_LOGIN = identity.Login(
+    "local", {"source": "local", "email": "", "workspace_id": "", "given_name": "", "family_name": ""}
+)
+
+
+def test_a_login_cookie_from_the_previous_release_is_a_conflict(trusted):
+    assert identity.resolve_session_identity(_RELEASED_LOCAL_LOGIN, _headers_for("alice")).conflict
+    assert not identity.login_is_current(_RELEASED_LOCAL_LOGIN, _headers_for("alice"))
+
+
+def test_a_gateway_login_from_the_previous_release_is_a_conflict(trusted):
+    """Same person, but the cookie cannot say so: it predates the raw subject id."""
+    current = _login_for("alice")
+    released = identity.Login(
+        current.identifier, {k: v for k, v in current.metadata.items() if k not in {"user_id", "issuer"}}
+    )
+    assert identity.resolve_session_identity(released, _headers_for("alice")).conflict
+
+
+def test_a_login_whose_identifier_and_metadata_disagree_is_a_conflict(trusted):
+    bob = _login_for("bob")
+    forged = identity.Login(_login_for("alice").identifier, bob.metadata)
+    assert identity.resolve_session_identity(forged, _headers_for("bob")).conflict
+    assert identity.resolve_session_identity(identity.Login(None, bob.metadata), _headers_for("bob")).conflict
+
+
+def test_a_login_that_cannot_say_who_it_is_does_not_stand_in(trusted):
+    session = identity.resolve_session_identity(_RELEASED_LOCAL_LOGIN, None, session_id="s1")
+    assert not session.identity.is_authenticated
+    assert session.notice == identity.GATEWAY_SILENT_NOTICE
+
+
+def test_the_login_stands_in_when_the_websocket_carries_no_headers(trusted):
+    """Not every gateway forwards its headers on the websocket upgrade."""
+    session = identity.resolve_session_identity(_login_for("alice"), None, session_id="s1")
+    assert session.identity.user_id == "alice"
+    assert session.identity.workspace_id == "ws-7a3d-4e21"
+
+
+def test_no_headers_and_no_login_is_anonymous_with_a_reason(trusted):
+    session = identity.resolve_session_identity(None, None, session_id="s1")
+    assert not session.identity.is_authenticated
+    assert session.notice == identity.GATEWAY_SILENT_NOTICE
+
+
+def test_without_trust_gateway_headers_are_ignored_and_the_reason_is_given():
+    """The GRIP symptom: headers arrive, nobody is detected, and now it says why."""
+    session = identity.resolve_session_identity(None, GRIP_HEADERS, session_id="s1")
+    assert not session.identity.is_authenticated
+    assert session.notice == identity.HEADERS_IGNORED_NOTICE
+    assert "BIOMNI_TRUST_AUTH_HEADERS" in session.notice
+
+
+def test_without_a_gateway_a_password_login_is_the_identity():
+    jane = identity.password_identity("Jane")
+    login = identity.Login(jane.scoped_key(), jane.to_metadata())
+    session = identity.resolve_session_identity(login, None, session_id="s1")
+    assert session.identity.source == "password"
+    assert session.identity.is_authenticated
+
+
+def test_without_a_gateway_a_header_login_is_not_trusted():
+    session = identity.resolve_session_identity(_login_for("alice"), None, session_id="s1")
+    assert not session.identity.is_authenticated
+    assert session.notice == identity.NO_GATEWAY_NOTICE
+
+
+def test_single_user_mode_gives_the_shared_local_identity(monkeypatch):
+    monkeypatch.setenv("BIOMNI_ALLOW_ANONYMOUS_PERSISTENCE", "true")
+    session = identity.resolve_session_identity(None, None, session_id="s1")
+    assert session.identity.source == "local"
+
+
+def test_login_is_current_only_checks_behind_a_trusted_gateway(monkeypatch):
+    assert identity.login_is_current(_login_for("alice"), _headers_for("bob"))
+    monkeypatch.setenv("BIOMNI_TRUST_AUTH_HEADERS", "true")
+    assert not identity.login_is_current(_login_for("alice"), _headers_for("bob"))
+    assert identity.login_is_current(_login_for("alice"), _headers_for("alice"))
+    # A request the gateway did not annotate cannot contradict anything.
+    assert identity.login_is_current(_login_for("alice"), {})
+
+
+# --------------------------------------------------------------------------- #
+# The bound identity follows the work into threads
+# --------------------------------------------------------------------------- #
+
+
+def test_bound_identity_restores_what_was_bound_before():
+    outer, inner = _grip_identity(), _grip_identity(user_id="someone-else")
+    with identity.bound_identity(outer):
+        with identity.bound_identity(inner):
+            assert identity.current_identity() == inner
+        assert identity.current_identity() == outer
+    assert identity.current_identity() is None
+
+
+def test_the_identity_reaches_a_worker_thread_through_capture_context():
+    """How run_in_executor and run_with_timeout hand work to threads."""
+    seen = []
+    who = _grip_identity()
+    with identity.bound_identity(who):
+        ctx = capture_context()
+    thread = threading.Thread(target=ctx.run, args=(lambda: seen.append(identity.current_identity()),))
+    thread.start()
+    thread.join()
+    assert seen == [who]
+
+
+def test_the_identity_reaches_asyncio_to_thread():
+    who = _grip_identity()
+
+    async def main():
+        with identity.bound_identity(who):
+            return await asyncio.to_thread(identity.current_identity)
+
+    assert asyncio.run(main()) == who

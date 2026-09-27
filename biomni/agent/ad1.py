@@ -12,6 +12,7 @@ from langchain_core.messages import HumanMessage
 from biomni.agent.a1 import A1
 from biomni.agent.ad_data_downloader import download_ad_catalog_data
 from biomni.fs_scan import scan_directory
+from biomni.tool.availability import CLAUDE_WEB_SEARCH
 
 try:
     from rich.console import Console
@@ -662,6 +663,9 @@ class AD1(A1):
                     ad_sourcing_content = f.read()
 
                 data_root_dir = getattr(self, "data_root_dir", "not set")
+                web_search = "search_google()"
+                if self._advertises_tool(CLAUDE_WEB_SEARCH):
+                    web_search = f"{CLAUDE_WEB_SEARCH}(), search_google()"
 
                 ad_instruction = f"""
 
@@ -669,7 +673,7 @@ AD/DEMENTIA TOOL PRIORITY - ALWAYS FOLLOW THIS ORDER:
 1. **Local data first**: Scan the built-in data lake ({getattr(self, "data_lake_dir", "not set")}) and user data directory ({data_root_dir}) for any locally available AD datasets.
    Use os.listdir() on both locations - the data lake has curated datasets; the user directory may contain additional data.
 2. **BiomniAD catalogs second**: Load JSON catalogs from biomni/know_how/resource/ to find datasets with download URIs.
-3. **Web & literature search third**: Use advanced_web_search(), search_pubmed(), search_biorxiv() to supplement.
+3. **Web & literature search third**: Use {web_search}, query_pubmed(), query_arxiv() to supplement.
 4. **Code generation last**: Write custom Python/R code only when the above cannot answer directly.
 Do NOT simulate or fabricate data at any step.
 

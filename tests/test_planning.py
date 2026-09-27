@@ -314,3 +314,123 @@ def test_plan_action_names_are_stable() -> None:
     planning = _import_planning()
     assert [name for name, _label in planning.PLAN_ACTIONS] == ["approve", "revise", "cancel"]
     assert "Nothing was run" in planning.STALE_PLAN_ACTION_NOTE
+
+
+# --------------------------------------------------------------------------- #
+# Model calls: whose they are, and what happens when they fail
+# --------------------------------------------------------------------------- #
+
+
+class _FakeStep:
+    """Stands in for cl.Step: an async context manager with an ``output``."""
+
+    last: _FakeStep | None = None
+
+    def __init__(self, **_kwargs) -> None:
+        self.output = None
+
+    async def __aenter__(self) -> _FakeStep:
+        _FakeStep.last = self
+        return self
+
+    async def __aexit__(self, *exc) -> bool:
+        return False
+
+
+class _RecordingLLM:
+    """Records the identity bound when it is invoked, then answers or raises."""
+
+    def __init__(self, reply: str = "NEEDS_PLAN", error: Exception | None = None) -> None:
+        self.seen: list[object] = []
+        self.reply = reply
+        self.error = error
+
+    def invoke(self, _messages):
+        from biomni.identity import current_identity
+
+        self.seen.append(current_identity())
+        if self.error is not None:
+            raise self.error
+        return types.SimpleNamespace(content=self.reply)
+
+
+def _agent_with(llm: _RecordingLLM) -> _Agent:
+    agent = _Agent()
+    agent.llm = llm
+    return agent
+
+
+def _grip_user():
+    from biomni.identity import UserIdentity
+
+    return UserIdentity(user_id="u1", workspace_id="ws-1", source="headers")
+
+
+def test_triage_runs_its_model_call_as_the_session(monkeypatch) -> None:
+    """The LLM proxy bills each call to the session's user; a thread hop must not lose it."""
+    import asyncio
+
+    from biomni.identity import bound_identity
+
+    planning = _import_planning()
+    monkeypatch.delenv("BIOMNI_ALWAYS_PLAN", raising=False)
+    llm = _RecordingLLM(reply="It is in studyA.")
+    who = _grip_user()
+
+    async def ask():
+        with bound_identity(who):
+            return await planning.quick_answer(_agent_with(llm), "where is my file?")
+
+    assert asyncio.run(ask()) == "It is in studyA."
+    assert llm.seen == [who]
+
+
+def test_planning_runs_its_model_call_as_the_session(monkeypatch) -> None:
+    import asyncio
+
+    from biomni.identity import bound_identity
+
+    planning = _import_planning()
+    monkeypatch.setattr(planning, "cl", types.SimpleNamespace(Step=_FakeStep))
+    # A failure that is not about access ends planning with the original prompt,
+    # which is all this test needs after the call has been observed.
+    llm = _RecordingLLM(error=ValueError("malformed"))
+    who = _grip_user()
+
+    async def plan():
+        with bound_identity(who):
+            return await planning.interactive_planning(_agent_with(llm), "analyse studyA", agent_type="ad1")
+
+    assert asyncio.run(plan()) == "analyse studyA"
+    assert llm.seen == [who]
+    assert "Could not generate a plan: ValueError: malformed." in _FakeStep.last.output
+
+
+def test_an_unreachable_model_stops_the_run_instead_of_carrying_on_without_a_plan(monkeypatch) -> None:
+    """Proceeding would only fail again, identically, at the agent's first step."""
+    import asyncio
+
+    from biomni.llm_proxy import LLMProxyIdentityError
+
+    planning = _import_planning()
+    monkeypatch.setattr(planning, "cl", types.SimpleNamespace(Step=_FakeStep))
+    error = LLMProxyIdentityError("the LLM proxy needs the user and workspace every model call is made for, and ...")
+    llm = _RecordingLLM(error=error)
+
+    with pytest.raises(LLMProxyIdentityError):
+        asyncio.run(planning.interactive_planning(_agent_with(llm), "analyse studyA", agent_type="ad1"))
+    # Closed with a readable line, not the raw exception text Chainlit would
+    # have written had the error escaped from inside the step.
+    assert _FakeStep.last.output == "⚠️ Could not reach the language model."
+
+
+def test_the_a1_planning_prompt_names_only_tools_that_exist() -> None:
+    """A tool the plan names but the agent lacks is a failed first step."""
+    import re
+
+    from biomni.tool.tool_description import literature
+
+    planning = _import_planning()
+    named = set(re.findall(r"\b(?:search|query)_[a-z_]+\b", planning.PLANNING_SYSTEM_PROMPT))
+    known = {api["name"] for api in literature.description}
+    assert named and named <= known

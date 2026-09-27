@@ -1,11 +1,15 @@
+import functools
 import logging
 import os
+import re
 from typing import TYPE_CHECKING, Any, Literal, Optional, cast, get_args
 
 from dotenv import load_dotenv
 from langchain_core.language_models.chat_models import BaseChatModel
+from pydantic import SecretStr
 
 from biomni import credentials
+from biomni.llm_proxy import LLMProxySettings, llm_proxy_settings, proxy_identity_headers
 
 load_dotenv(override=True)
 
@@ -14,8 +18,138 @@ logger = logging.getLogger(__name__)
 if TYPE_CHECKING:
     from biomni.config import BiomniConfig
 
-SourceType = Literal["OpenAI", "AzureOpenAI", "Anthropic", "Ollama", "Gemini", "Bedrock", "Groq", "Custom"]
+SourceType = Literal["OpenAI", "AzureOpenAI", "Anthropic", "Ollama", "Gemini", "Bedrock", "Groq", "Custom", "LLMProxy"]
 ALLOWED_SOURCES: set[str] = set(get_args(SourceType))
+
+
+# --------------------------------------------------------------------------- #
+# The platform LLM proxy
+# --------------------------------------------------------------------------- #
+#
+# Settings and the identity rule live in biomni.llm_proxy (import-light, shared
+# with the readiness probe); what follows is how our chat models carry them.
+
+# Reasoning models reject a non-default temperature and stop sequences, on the
+# proxy exactly as on OpenAI's own API (see the gpt-5 handling in get_llm).
+_REASONING_MODEL_RE = re.compile(r"^(?:gpt-5|o\d)", re.IGNORECASE)
+
+
+def _with_identity_headers(payload: dict) -> dict:
+    """Add the proxy's identity headers to one request's SDK arguments.
+
+    Both SDKs take ``extra_headers`` on every create call, and both langchain
+    wrappers build every request - sync or async, streamed or not - through
+    ``_get_request_payload``, which is why that is the one place this happens.
+    """
+    payload["extra_headers"] = {**(payload.get("extra_headers") or {}), **proxy_identity_headers()}
+    return payload
+
+
+@functools.cache
+def _openai_proxy_class() -> type:
+    from langchain_openai import ChatOpenAI
+
+    class ChatOpenAIViaProxy(ChatOpenAI):
+        """ChatOpenAI that names the calling session on every request."""
+
+        def _get_request_payload(self, input_, *, stop=None, **kwargs):  # type: ignore[override]
+            payload = super()._get_request_payload(input_, stop=stop, **kwargs)
+            if _REASONING_MODEL_RE.match(self.model_name or ""):
+                payload.pop("stop", None)
+                payload.pop("temperature", None)
+            return _with_identity_headers(payload)
+
+    return ChatOpenAIViaProxy
+
+
+@functools.cache
+def _anthropic_proxy_class() -> type:
+    from functools import cached_property
+
+    import anthropic
+    from langchain_anthropic import ChatAnthropic
+
+    class ChatAnthropicViaProxy(ChatAnthropic):
+        """ChatAnthropic that authenticates to the proxy and names the session."""
+
+        @cached_property
+        def _client_params(self) -> dict[str, Any]:
+            params: dict[str, Any] = {
+                # The proxy takes a bearer token, not an API key. Left as None
+                # the SDK would fill api_key from ANTHROPIC_API_KEY and forward a
+                # direct Anthropic credential to the proxy, so the header it
+                # would travel in is omitted outright.
+                "api_key": None,
+                "auth_token": self.anthropic_api_key.get_secret_value(),
+                "base_url": self.anthropic_api_url,
+                "max_retries": self.max_retries,
+                "default_headers": {**(self.default_headers or {}), "X-Api-Key": anthropic.Omit()},
+            }
+            if self.default_request_timeout is None or self.default_request_timeout > 0:
+                params["timeout"] = self.default_request_timeout
+            return params
+
+        def _get_request_payload(self, input_, *, stop=None, **kwargs):  # type: ignore[override]
+            return _with_identity_headers(super()._get_request_payload(input_, stop=stop, **kwargs))
+
+    return ChatAnthropicViaProxy
+
+
+def _proxy_chat_model(
+    settings: LLMProxySettings,
+    model: str,
+    *,
+    temperature: float,
+    stop_sequences: list[str] | None,
+    max_retries: int,
+    request_timeout: float | None,
+) -> BaseChatModel:
+    """A chat model that reaches ``model`` through the platform LLM proxy."""
+    if not settings.api_key:
+        raise ValueError("BIOMNI_LLM_PROXY_URL is set but BIOMNI_LLM_PROXY_API_KEY is not; the proxy needs its token.")
+    if settings.schema == "anthropic":
+        return cast(
+            "BaseChatModel",
+            _anthropic_proxy_class()(
+                model=model,
+                temperature=temperature,
+                max_tokens=8192,
+                stop_sequences=stop_sequences,
+                max_retries=max_retries,
+                default_request_timeout=request_timeout,
+                api_key=_secret(settings.api_key),
+                base_url=settings.anthropic_base_url,
+            ),
+        )
+    return cast(
+        "BaseChatModel",
+        _openai_proxy_class()(
+            model=model,
+            temperature=temperature,
+            stop_sequences=stop_sequences,
+            base_url=settings.openai_base_url,
+            api_key=_secret(settings.api_key),
+            max_retries=max_retries,
+            timeout=request_timeout,
+        ),
+    )
+
+
+def _secret(value: str | None) -> SecretStr | None:
+    """A credential as the chat-model classes type it, or ``None`` when unset."""
+    return SecretStr(value) if value else None
+
+
+def _own_key(env_name: str, provider: str) -> SecretStr:
+    """A provider's own key for an OpenAI-compatible endpoint, or a clear error.
+
+    Never ``None``: given no key, ChatOpenAI falls back to ``OPENAI_API_KEY`` -
+    and would send the OpenAI key to Google or Groq.
+    """
+    value = credentials.getenv(env_name)
+    if not value:
+        raise ValueError(f"{provider} models need {env_name}, which is not set")
+    return SecretStr(value)
 
 
 def _openai_key_kwargs() -> dict[str, Any]:
@@ -44,17 +178,28 @@ def resolve_source(
     independently so callers (e.g. the A1 agent) can know the resolved
     source without re-implementing the heuristic.
 
-    Precedence: explicit ``source`` arg -> ``LLM_SOURCE`` / ``BIOMNI_SOURCE``
-    env vars -> model-name prefix heuristics -> ``base_url`` presence ->
-    Azure-Anthropic env detection. Raises ``ValueError`` if the source can't
-    be determined.
+    Precedence: a configured LLM proxy (``BIOMNI_LLM_PROXY_URL``) -> explicit
+    ``source`` arg -> ``LLM_SOURCE`` / ``BIOMNI_SOURCE`` env vars -> model-name
+    prefix heuristics -> ``base_url`` presence -> Azure-Anthropic env detection.
+    Raises ``ValueError`` if the source can't be determined.
+
+    The proxy outranks even an explicit ``source``: on a platform that routes
+    model access through one, it is the only way to a model, and a call site
+    that hardcodes a provider would otherwise bypass the metering the platform
+    requires - or simply fail for want of a key the deployment does not have.
     """
+    if llm_proxy_settings() is not None:
+        return "LLMProxy"
     if source is not None:
         if source not in ALLOWED_SOURCES:
             raise ValueError(f"Unknown source: {source!r}. Valid: {sorted(ALLOWED_SOURCES)}")
+        if source == "LLMProxy":
+            raise ValueError("source 'LLMProxy' needs BIOMNI_LLM_PROXY_URL to be set")
         return source
 
     env_source = os.getenv("LLM_SOURCE") or os.getenv("BIOMNI_SOURCE")
+    if env_source == "LLMProxy":
+        raise ValueError("LLM_SOURCE=LLMProxy needs BIOMNI_LLM_PROXY_URL to be set")
     if env_source in ALLOWED_SOURCES:
         return cast("SourceType", env_source)
 
@@ -104,11 +249,13 @@ def get_llm(
     """
     Get a language model instance based on the specified model name and source.
     This function supports models from OpenAI, Azure OpenAI, Anthropic, Ollama, Gemini, Bedrock, and custom model serving.
+    When ``BIOMNI_LLM_PROXY_URL`` is set, every model is reached through that LLM proxy instead, whatever the
+    other arguments say (see :func:`llm_proxy_settings`).
     Args:
         model (str): The model name to use
         temperature (float): Temperature setting for generation
         stop_sequences (list): Sequences that will stop generation
-        source (str): Source provider: "OpenAI", "AzureOpenAI", "Anthropic", "Ollama", "Gemini", "Bedrock", or "Custom"
+        source (str): Source provider: "OpenAI", "AzureOpenAI", "Anthropic", "Ollama", "Gemini", "Bedrock", "Groq" or "Custom"
                       If None, will attempt to auto-detect from model name
         base_url (str): The base URL for custom model serving (e.g., "http://localhost:8000/v1"), default is None
         api_key (str): The API key for the custom llm
@@ -136,7 +283,12 @@ def get_llm(
 
     # Use defaults if still not specified
     if model is None:
-        model = "claude-3-5-sonnet-20241022"
+        # The deployment's configured model (BIOMNI_LLM), not a hardcoded id:
+        # a pinned model is retired sooner or later, and one the deployment
+        # never set up is one its proxy or key cannot reach anyway.
+        from biomni.config import default_config
+
+        model = default_config.llm
     if temperature is None:
         temperature = 0.7
     if api_key is None:
@@ -147,6 +299,18 @@ def get_llm(
         # Only default-fill when no config was passed; explicit None from a
         # configured caller means "disable per-call timeout".
         request_timeout = 120.0
+
+    proxy = llm_proxy_settings()
+    if proxy is not None:
+        return _proxy_chat_model(
+            proxy,
+            model,
+            temperature=temperature,
+            stop_sequences=stop_sequences,
+            max_retries=max_retries,
+            request_timeout=request_timeout,
+        )
+
     # Resolve source via shared helper (auto-detection + env precedence).
     source = resolve_source(model, source, base_url)
 
@@ -225,10 +389,10 @@ def get_llm(
                 return payload
 
         return _AzureChatOpenAINoTemp(
-            openai_api_key=credentials.getenv("AZURE_OPENAI_API_KEY") or credentials.getenv("OPENAI_API_KEY"),
+            api_key=_secret(credentials.getenv("AZURE_OPENAI_API_KEY") or credentials.getenv("OPENAI_API_KEY")),
             azure_endpoint=os.getenv("ENDPOINT_URL") or os.getenv("OPENAI_ENDPOINT"),
             azure_deployment=deployment,
-            openai_api_version=API_VERSION,
+            api_version=API_VERSION,
             temperature=1,  # default; will be stripped from payload by subclass
             max_retries=max_retries,
             timeout=request_timeout,
@@ -289,7 +453,10 @@ def get_llm(
         if anthropic_base_url:
             anthropic_kwargs["base_url"] = anthropic_base_url
 
-        return ChatAnthropic(
+        # Field names, not ChatAnthropic's legacy aliases (model_name,
+        # max_tokens_to_sample, stop, timeout). Its model accepts both, but a
+        # type checker without the pydantic plugin only knows the aliases.
+        return ChatAnthropic(  # type: ignore[call-arg]
             model=model,
             temperature=temperature,
             max_tokens=8192,
@@ -315,7 +482,7 @@ def get_llm(
         return ChatOpenAI(
             model=model,
             temperature=temperature,
-            api_key=credentials.getenv("GEMINI_API_KEY"),
+            api_key=_own_key("GEMINI_API_KEY", "Gemini"),
             base_url="https://generativelanguage.googleapis.com/v1beta/openai/",
             stop_sequences=stop_sequences,
             max_retries=max_retries,
@@ -332,7 +499,7 @@ def get_llm(
         return ChatOpenAI(
             model=model,
             temperature=temperature,
-            api_key=credentials.getenv("GROQ_API_KEY"),
+            api_key=_own_key("GROQ_API_KEY", "Groq"),
             base_url="https://api.groq.com/openai/v1",
             stop_sequences=stop_sequences,
             max_retries=max_retries,
@@ -348,7 +515,7 @@ def get_llm(
             )
         # ChatOllama exposes a transport-level timeout, not max_retries; pass
         # what's supported and let local Ollama retries stay manual.
-        ollama_kwargs: dict[str, object] = {"model": model, "temperature": temperature}
+        ollama_kwargs: dict[str, Any] = {"model": model, "temperature": temperature}
         if request_timeout is not None:
             ollama_kwargs["timeout"] = request_timeout
         return ChatOllama(**ollama_kwargs)
@@ -363,7 +530,7 @@ def get_llm(
         # Bedrock retry config lives on the boto3 client; pass through via
         # ``config`` kwarg when available. Older langchain-aws versions don't
         # accept ``config`` directly, so build defensively.
-        bedrock_kwargs: dict[str, object] = {
+        bedrock_kwargs: dict[str, Any] = {
             "model": model,
             "temperature": temperature,
             "stop_sequences": stop_sequences,
@@ -383,10 +550,10 @@ def get_llm(
         llm = ChatOpenAI(
             model=model,
             temperature=temperature,
-            max_tokens=8192,
+            max_completion_tokens=8192,
             stop_sequences=stop_sequences,
             base_url=base_url,
-            api_key=api_key,
+            api_key=_secret(api_key),
             max_retries=max_retries,
             timeout=request_timeout,
         )
@@ -394,5 +561,5 @@ def get_llm(
 
     else:
         raise ValueError(
-            f"Invalid source: {source}. Valid options are 'OpenAI', 'AzureOpenAI', 'Anthropic', 'Gemini', 'Groq', 'Bedrock', or 'Ollama'"
+            f"Invalid source: {source}. Valid options are 'OpenAI', 'AzureOpenAI', 'Anthropic', 'Gemini', 'Groq', 'Bedrock', 'Ollama' or 'Custom'"
         )

@@ -44,6 +44,7 @@ The underlying **Biomni** platform is a general-purpose biomedical AI agent that
 | [docs/configuration.md](docs/configuration.md) | Configuration management guide |
 | [docs/known_conflicts.md](docs/known_conflicts.md) | Known package conflicts and workarounds |
 | [docs/docker_vm_deployment.md](docs/docker_vm_deployment.md) | Docker and VM deployment guide |
+| [docs/grip_deployment.md](docs/grip_deployment.md) | Deploying on the AD Workbench (GRIP): identity headers, the LLM proxy, storage, `/status`, resources |
 | [docs/mcp_integration.md](docs/mcp_integration.md) | Model Context Protocol (MCP) server integration |
 | [docs/building_documentation.md](docs/building_documentation.md) | Building Sphinx API documentation |
 
@@ -145,10 +146,10 @@ AWS_BEARER_TOKEN_BEDROCK=your_bedrock_api_key_here
 AWS_REGION=us-east-1
 
 # Optional: Custom model serving configuration
-# CUSTOM_MODEL_BASE_URL=http://localhost:8000/v1
-# CUSTOM_MODEL_API_KEY=your_custom_api_key_here
+# BIOMNI_CUSTOM_BASE_URL=http://localhost:8000/v1
+# BIOMNI_CUSTOM_API_KEY=your_custom_api_key_here
 
-# Optional: Biomni data path (defaults to ./data)
+# Optional: Biomni data path (defaults to ~/.biomni/data)
 # BIOMNI_DATA_PATH=/path/to/your/data
 
 # Optional: Timeout settings (defaults to 600 seconds)
@@ -257,7 +258,7 @@ The recommended way to run Biomni-AD is the **Chainlit UI** with its **plan-then
 **Setup (one-time):**
 ```bash
 conda activate biomni_e1
-pip install "chainlit>=1.0"
+pip install -e ".[chainlit]"   # the Chainlit version the app is tested against, and its database drivers
 ```
 
 **Single instance:**
@@ -328,10 +329,11 @@ docker compose up -d
 Then open `http://localhost:8000` (or your VM public IP).
 
 For full VM deployment instructions (firewall/security group, operations, and hardening), see [docs/docker_vm_deployment.md](docs/docker_vm_deployment.md).
+For the AD Workbench (GRIP) platform, see [docs/grip_deployment.md](docs/grip_deployment.md).
 
 #### Controlling Datalake Loading
 
-Biomni does not download the full datalake (~11GB) when you create an agent.
+Biomni does not download the full datalake (about 15 GB) when you create an agent.
 Individual files are fetched lazily, the first time a query actually needs them - a session that never touches DepMap never pays to fetch it.
 Set `BIOMNI_DATA_LAKE_PATH` if the datalake should live somewhere other than the repo-local `data/` folder, e.g. a dedicated volume or a different disk on the server.
 

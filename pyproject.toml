@@ -37,22 +37,28 @@ Upstream = "https://github.com/snap-stanford/biomni"
 
 [project.optional-dependencies]
 # LLM provider extras - install the ones you need.
-anthropic = ["langchain-anthropic>=0.2,<0.4"]
+# 0.3.1 is the first to build its client from _client_params, which is where the
+# LLM proxy's bearer token replaces the API key header (biomni/llm.py).
+anthropic = ["langchain-anthropic>=0.3.1,<0.4"]
 bedrock = ["langchain-aws>=0.2,<0.4"]
 ollama = ["langchain-ollama>=0.2,<0.4"]
 # UI extras
 gradio = ["gradio>=5.0,<6.0"]
-# The UI persists chat threads through Chainlit's SQLAlchemy data layer:
-# "custom-data" pulls in SQLAlchemy, aiosqlite drives the default SQLite store.
-chainlit = ["chainlit[custom-data]>=2.8,<3", "aiosqlite>=0.20,<1.0"]
+# The UI persists chat threads through Chainlit's SQLAlchemy data layer, with
+# aiosqlite for the default SQLite store and asyncpg for Postgres. Chainlit is
+# pinned to the version the app is tested against, as in the Dockerfile: the app
+# hooks its login dependency and styles its settings dialog.
+chainlit = ["chainlit==2.11.1", "sqlalchemy>=2.0.28,<3", "aiosqlite>=0.20,<1.0", "asyncpg>=0.30,<1"]
 # Convenience meta-extra
 all = [
-    "langchain-anthropic>=0.2,<0.4",
+    "langchain-anthropic>=0.3.1,<0.4",
     "langchain-aws>=0.2,<0.4",
     "langchain-ollama>=0.2,<0.4",
     "gradio>=5.0,<6.0",
-    "chainlit[custom-data]>=2.8,<3",
+    "chainlit==2.11.1",
+    "sqlalchemy>=2.0.28,<3",
     "aiosqlite>=0.20,<1.0",
+    "asyncpg>=0.30,<1",
 ]
 
 [tool.setuptools]

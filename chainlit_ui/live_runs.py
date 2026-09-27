@@ -24,8 +24,13 @@ is exactly what Chainlit itself does on a websocket reconnect
 (``restore_existing_session``), which is why two plain attribute assignments are
 enough - ``ChainlitEmitter.emit`` reads ``session.emit`` on every call.
 
-Sessions are held by duck type (anything with ``emit``/``emit_call``), so this
-module stays importable without Chainlit and the bookkeeping stays testable.
+A run is only ever handed to - or stopped from - a connection signed in as the
+user who started it. Chainlit already lets nobody but a conversation's author
+reopen it, so this is the second line of that defence, not the first.
+
+Sessions are held by duck type (anything with ``emit``/``emit_call``, and the
+``user`` Chainlit signed it in as), so this module stays importable without
+Chainlit and the bookkeeping stays testable.
 """
 
 from __future__ import annotations
@@ -35,6 +40,11 @@ from dataclasses import dataclass
 from typing import Any
 
 logger = logging.getLogger(__name__)
+
+
+def _owner(session: Any) -> str | None:
+    """Who a session is signed in as: the identifier of its Chainlit login."""
+    return getattr(getattr(session, "user", None), "identifier", None)
 
 
 @dataclass
@@ -97,6 +107,9 @@ class LiveRuns:
         live = self._runs.get(thread_id)
         if live is None or live.session is session:
             return False
+        if _owner(live.session) != _owner(session):
+            logger.warning("refused to hand the run for thread %s to a connection of another user", thread_id)
+            return False
         try:
             live.session.emit = session.emit
             live.session.emit_call = session.emit_call
@@ -106,19 +119,23 @@ class LiveRuns:
         logger.info("reattached a live run to the reopened conversation %s", thread_id)
         return True
 
-    def cancel(self, thread_id: str | None) -> bool:
+    def cancel(self, thread_id: str | None, session: Any) -> bool:
         """Stop the run executing in ``thread_id``. True if one was cancelled.
 
         Chainlit's Stop cancels the *clicking* session's task, which for a
         reopened conversation is not the task doing the work. This cancels the
         run itself, and its own cleanup then closes the record out and tells the
-        page the task ended.
+        page the task ended. ``session`` is the one the click arrived on; only
+        the user who started the run can stop it.
         """
         if not thread_id:
             return False
         live = self._runs.get(thread_id)
         task = live.task if live else None
-        if task is None or task.done():
+        if live is None or task is None or task.done():
+            return False
+        if _owner(live.session) != _owner(session):
+            logger.warning("refused a stop for thread %s from a connection of another user", thread_id)
             return False
         task.cancel()
         logger.info("cancelled the run for conversation %s", thread_id)

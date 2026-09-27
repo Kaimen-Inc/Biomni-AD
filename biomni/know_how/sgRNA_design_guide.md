@@ -87,13 +87,13 @@ print(results_filtered[['Target_Gene', 'Target_Sequence',
 
 **CRITICAL**: Even if Method 1 found no results, you MUST perform this literature search before moving to Option 2. Many validated sgRNAs are published in literature but not in the Addgene database.
 
-Use `advanced_web_search_claude` from `biomni.tool.literature` to find validated sgRNAs from literature and databases:
+Search the literature and databases for validated sgRNAs with the web search tool your tool list offers: `advanced_web_search_claude` from `biomni.tool.literature` where it is listed, otherwise `search_google` from the same module:
 
 ```python
-from biomni.tool.literature import advanced_web_search_claude
+from biomni.tool.literature import search_google
 
 # Example usage
-results = advanced_web_search_claude("sgRNA TP53 validated H. sapiens experimental")
+print(search_google("sgRNA TP53 validated H. sapiens experimental", num_results=10))
 ```
 
 **Search queries to try (use multiple):**

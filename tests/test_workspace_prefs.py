@@ -11,6 +11,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import stat
 
 import pytest
 from biomni import workspace_prefs as wp
@@ -248,7 +249,7 @@ def test_unwritable_preference_falls_through_to_next_candidate(tmp_path):
         prefs = wp.WorkspacePrefs(output_dir=str(ro / "nope"))
         target = wp.resolve_output_dir(prefs, workspace_root=str(tmp_path))
         assert target.source == "workspace"
-        assert target.reason and "preference" in target.reason
+        assert target.reason and target.reason.startswith("The output directory you configured")
     finally:
         ro.chmod(0o700)
 
@@ -435,3 +436,349 @@ def test_delete_forgets_stored_preferences(tmp_path):
 
 def test_null_store_delete_is_a_no_op():
     assert wp.NullPrefsStore().delete("k") is False
+
+
+# --------------------------------------------------------------------------- #
+# Explaining an unusable directory
+# --------------------------------------------------------------------------- #
+#
+# GRIP runs the app as uid 57439 against an Azure Files (SMB) share. What the
+# process meets there is decided by the mount table and by who the process is,
+# so both are substituted: a mount table written for the test, and a process
+# identity that is not the owner of the test's directories.
+
+_GRIP_UID = 57439
+
+
+def _mount_table(tmp_path, monkeypatch, *lines: str) -> None:
+    table = tmp_path / "mounts"
+    table.write_text("".join(f"{line}\n" for line in lines))
+    monkeypatch.setattr(wp, "_MOUNTS_FILE", str(table))
+
+
+def _as_grip_uid(monkeypatch) -> None:
+    monkeypatch.setattr(wp, "_process_ids", lambda: (_GRIP_UID, _GRIP_UID, frozenset({_GRIP_UID})))
+
+
+def _share(tmp_path, mode: int = 0o755):
+    share = tmp_path / "user-data"
+    share.mkdir()
+    share.chmod(mode)
+    return share
+
+
+def test_mount_info_reads_escaped_paths_and_options(tmp_path, monkeypatch):
+    _mount_table(
+        tmp_path,
+        monkeypatch,
+        "overlay / overlay rw,relatime 0 0",
+        "//acct.file.core.windows.net/share /app/user\\040data cifs rw,vers=3.1.1,uid=0,gid=0,dir_mode=0777 0 0",
+    )
+    info = wp.mount_info("/app/user data/studyA")
+    assert info is not None
+    assert (info.mountpoint, info.fstype, info.source) == (
+        "/app/user data",
+        "cifs",
+        "//acct.file.core.windows.net/share",
+    )
+    assert info.option("uid") == "0" and info.option("dir_mode") == "0777"
+    assert not info.read_only
+
+
+def test_the_last_mount_on_a_mountpoint_is_the_one_in_effect(tmp_path, monkeypatch):
+    """Mounting again over the same point hides the first mount."""
+    _mount_table(
+        tmp_path,
+        monkeypatch,
+        "//acct/share /app/user-data cifs rw,uid=0,gid=0 0 0",
+        "//acct/share /app/user-data cifs rw,uid=57439,gid=57439 0 0",
+    )
+    assert wp.mount_info("/app/user-data").option("uid") == "57439"
+
+
+def test_a_mount_point_matches_whole_path_components_only(tmp_path, monkeypatch):
+    """/app/user-data is not a parent of /app/user."""
+    _mount_table(tmp_path, monkeypatch, "overlay / overlay rw 0 0", "//acct/share /app/user-data cifs rw 0 0")
+    assert wp.mount_info("/app/user").mountpoint == "/"
+    assert wp.mount_info("/app/user-data/x").mountpoint == "/app/user-data"
+
+
+def test_a_symlink_onto_a_share_is_on_the_share(tmp_path, monkeypatch):
+    share = _share(tmp_path)
+    link = tmp_path / "workspace-link"
+    link.symlink_to(share)
+    _mount_table(tmp_path, monkeypatch, "overlay / overlay rw 0 0", f"//acct/share {share} cifs rw 0 0")
+    assert wp.mount_info(str(link)).fstype == "cifs"
+    assert wp.mount_info(str(link / "study")).mountpoint == str(share)
+
+
+def test_a_mount_point_that_is_not_utf8_does_not_break_the_lookup(tmp_path, monkeypatch):
+    table = tmp_path / "mounts"
+    table.write_bytes(b"overlay / overlay rw 0 0\n/dev/sdc /mnt/caf\xe9 ext4 rw 0 0\n")
+    monkeypatch.setattr(wp, "_MOUNTS_FILE", str(table))
+    assert wp.mount_info("/app/runs").mountpoint == "/"
+
+
+def test_no_mount_table_means_cannot_tell(tmp_path, monkeypatch):
+    monkeypatch.setattr(wp, "_MOUNTS_FILE", str(tmp_path / "absent"))
+    assert wp.mount_info("/app") is None
+
+
+def test_an_smb_share_is_explained_by_the_options_it_is_actually_mounted_with(tmp_path, monkeypatch):
+    """The GRIP case: new mount options set, but not the ones this container sees."""
+    share = _share(tmp_path)
+    _mount_table(
+        tmp_path, monkeypatch, f"//acct.file.core.windows.net/share {share} cifs rw,uid=0,gid=0,dir_mode=0755 0 0"
+    )
+    _as_grip_uid(monkeypatch)
+
+    reason = wp.explain_unwritable(str(share / "biomni-outputs"))
+    assert f"{share} is owned by uid" in reason
+    # The share, never the storage account that serves it.
+    assert "on an SMB share (/share)" in reason and "acct" not in reason
+    assert "which are uid=0,gid=0,dir_mode=0755 on the mount this container sees" in reason
+    assert "Mount it with uid=57439,gid=57439,dir_mode=0770,file_mode=0770" in reason
+    assert "mounted afresh on the node" in reason
+
+
+def test_an_smb_share_with_no_ownership_options_says_they_are_unset(tmp_path, monkeypatch):
+    share = _share(tmp_path)
+    _mount_table(tmp_path, monkeypatch, f"//acct/share {share} cifs rw,vers=3.1.1 0 0")
+    _as_grip_uid(monkeypatch)
+    assert "which are unset (uid=0,gid=0)" in wp.explain_unwritable(str(share))
+
+
+def test_an_smb_share_under_server_acls_is_not_blamed_on_the_mount_options(tmp_path, monkeypatch):
+    share = _share(tmp_path)
+    _mount_table(tmp_path, monkeypatch, f"//acct/share {share} cifs rw,cifsacl,uid=0,gid=0 0 0")
+    _as_grip_uid(monkeypatch)
+    reason = wp.explain_unwritable(str(share))
+    assert "mounted with cifsacl, so its owner and mode come from the file server's ACLs" in reason
+    assert "grant uid 57439 write access in the share's ACLs" in reason
+    assert "come only from the mount options" not in reason
+
+
+def test_a_share_the_process_cannot_list_is_explained_for_reading(tmp_path, monkeypatch):
+    """dir_mode=0770 applied but uid/gid not: the workspace becomes unreadable, not just read-only."""
+    share = _share(tmp_path, 0o770)
+    try:
+        _mount_table(tmp_path, monkeypatch, f"//acct/share {share} cifs rw,uid=0,gid=0,dir_mode=0770 0 0")
+        _as_grip_uid(monkeypatch)
+        reason = wp.explain_unreadable(str(share))
+        assert "with mode 0770 on an SMB share" in reason
+        assert "uid=0,gid=0,dir_mode=0770" in reason
+        assert "Mount it with uid=57439,gid=57439" in reason
+    finally:
+        share.chmod(0o755)
+
+
+def test_a_read_only_mount_is_named_as_such(tmp_path, monkeypatch):
+    share = _share(tmp_path)
+    _mount_table(tmp_path, monkeypatch, f"/dev/sdb {share} ext4 ro,relatime 0 0")
+    _as_grip_uid(monkeypatch)
+
+    def no_statvfs(_path):
+        raise OSError("unsupported")
+
+    # The mount table is the fallback witness when statvfs cannot answer.
+    monkeypatch.setattr(os, "statvfs", no_statvfs)
+    reason = wp.explain_unwritable(str(share))
+    assert reason == f"{share} is on a read-only mount (ext4 mount of /dev/sdb); mount the volume read-write"
+
+
+def test_a_read_only_container_image_is_not_told_to_remount(tmp_path, monkeypatch):
+    """readOnlyRootFilesystem with the volume missing: there is nothing to remount."""
+    image = _share(tmp_path)
+    _mount_table(tmp_path, monkeypatch, f"overlay {image} overlay ro,relatime 0 0")
+    _as_grip_uid(monkeypatch)
+    monkeypatch.setattr(os, "statvfs", lambda _path: (_ for _ in ()).throw(OSError("unsupported")))
+    reason = wp.explain_unwritable(str(image / "runs"))
+    assert reason == (
+        f"{image} is inside the container image, which is mounted read-only; mount a writable volume at "
+        f"{image / 'runs'}"
+    )
+
+
+def test_an_nfs_export_is_explained_as_ignoring_fsgroup(tmp_path, monkeypatch):
+    share = _share(tmp_path)
+    _mount_table(tmp_path, monkeypatch, f"nfs.example:/export {share} nfs4 rw 0 0")
+    _as_grip_uid(monkeypatch)
+    reason = wp.explain_unwritable(str(share))
+    assert "on an NFS export (/export), which ignores fsGroup" in reason
+    assert "grant uid 57439 write access on the NFS server" in reason
+
+
+def test_a_fuse_mount_is_not_given_the_fsgroup_remedy(tmp_path, monkeypatch):
+    share = _share(tmp_path)
+    _mount_table(tmp_path, monkeypatch, f"blobfuse2 {share} fuse rw,nosuid,nodev 0 0")
+    _as_grip_uid(monkeypatch)
+    reason = wp.explain_unwritable(str(share))
+    assert "on a FUSE mount (blobfuse2), which ignores fsGroup" in reason
+    assert "allow_other" in reason
+    assert "securityContext.fsGroup" not in reason
+
+
+def test_an_ordinary_volume_gets_the_fsgroup_remedy(tmp_path, monkeypatch):
+    share = _share(tmp_path)
+    _mount_table(tmp_path, monkeypatch, f"/dev/sdb {share} ext4 rw 0 0")
+    _as_grip_uid(monkeypatch)
+    assert wp.explain_unwritable(str(share)).endswith(
+        "(ext4 mount of /dev/sdb); set securityContext.fsGroup: 57439 on the pod (it does not apply to hostPath "
+        "volumes), or chown it to uid 57439"
+    )
+
+
+def _dir_stat(mode: int, uid: int, gid: int):
+    return os.stat_result((stat.S_IFDIR | mode, 0, 0, 0, uid, gid, 0, 0, 0, 0))
+
+
+def test_the_owner_class_alone_decides_for_the_owner():
+    """0o577: group and others may write, the owner may not - and the owner is denied."""
+    st = _dir_stat(0o577, uid=1000, gid=1000)
+    assert not wp._mode_allows(st, 1000, frozenset({1000}), write=True)
+    assert wp._mode_allows(st, 1000, frozenset({1000}), write=False)
+    assert wp._mode_allows(st, 2000, frozenset({1000}), write=True)  # group member
+    assert wp._mode_allows(st, 3000, frozenset({3000}), write=True)  # anyone else
+
+
+@pytest.mark.skipif(os.geteuid() == 0, reason="root is never denied by mode bits")
+def test_a_directory_that_denies_its_own_owner_is_not_answered_with_chown(tmp_path, monkeypatch):
+    share = _share(tmp_path, 0o500)
+    try:
+        monkeypatch.setattr(wp, "_MOUNTS_FILE", str(tmp_path / "absent"))
+        reason = wp.explain_unwritable(str(share))
+        assert f"which denies its own owner (uid {os.getuid()})" in reason
+        assert "chmod u+rwx" in reason
+        assert "chown" not in reason
+    finally:
+        share.chmod(0o755)
+
+
+def test_a_mode_that_permits_access_points_at_what_else_can_refuse_it(tmp_path, monkeypatch):
+    share = _share(tmp_path)
+    monkeypatch.setattr(wp, "_MOUNTS_FILE", str(tmp_path / "absent"))
+    uid = os.stat(share).st_uid
+    monkeypatch.setattr(wp, "_process_ids", lambda: (uid, 0, frozenset({0})))
+    assert "which permits writing, so something else refuses it" in wp.explain_unwritable(str(share))
+
+
+def test_storage_facts_carry_what_a_log_reader_needs(tmp_path, monkeypatch):
+    share = _share(tmp_path)
+    _mount_table(
+        tmp_path,
+        monkeypatch,
+        f"//acct/share {share} cifs rw,vers=3.1.1,username=acct,addr=10.0.0.9,uid=0,gid=0,dir_mode=0755,mfsymlinks 0 0",
+    )
+    _as_grip_uid(monkeypatch)
+    facts = wp.storage_facts(str(share / "biomni-outputs"))
+    assert facts["path"] == str(share / "biomni-outputs")
+    assert facts["checked"] == str(share)
+    assert facts["fstype"] == "cifs" and facts["source"] == "/share"
+    assert facts["mode"] == "0755"
+    # Only the options that decide access - no account name, no server address.
+    assert facts["options"] == "rw,vers=3.1.1,uid=0,gid=0,dir_mode=0755"
+    assert not any("acct" in str(value) or "10.0.0.9" in str(value) for value in facts.values())
+    assert {"readable", "writable"} <= facts.keys()
+
+
+def test_storage_facts_explain_what_the_process_cannot_do(tmp_path, monkeypatch):
+    share = _share(tmp_path)
+    monkeypatch.setattr(wp, "_MOUNTS_FILE", str(tmp_path / "absent"))
+    monkeypatch.setattr(wp, "is_writable_dir", lambda _path: False)
+    monkeypatch.setattr(wp, "is_readable_dir", lambda _path: False)
+    _as_grip_uid(monkeypatch)
+    facts = wp.storage_facts(str(share))
+    assert facts["write_reason"].startswith(f"{share} is owned by uid")
+    assert facts["read_reason"].startswith(f"{share} is owned by uid")
+
+
+def test_candidates_failing_on_the_same_directory_are_explained_once(tmp_path, monkeypatch):
+    """BIOMNI_OUTPUT_ROOT and the workspace default usually fail together, on one mount."""
+    workspace = _share(tmp_path, 0o500)
+    try:
+        monkeypatch.setenv("BIOMNI_OUTPUT_ROOT", str(workspace))
+        target = wp.resolve_output_dir(wp.WorkspacePrefs(), workspace_root=str(workspace))
+        assert target.source == "cwd-fallback"
+        assert target.reason is not None
+        assert target.reason.startswith(
+            f"BIOMNI_OUTPUT_ROOT ({workspace}) and the workspace default ({workspace}/biomni-outputs) are not writable"
+        )
+        assert target.reason.count(f"{workspace} is owned by uid") == 1
+    finally:
+        workspace.chmod(0o755)
+
+
+@pytest.mark.skipif(os.geteuid() == 0, reason="root is never denied by mode bits")
+def test_three_locations_failing_together_read_as_a_list(tmp_path, monkeypatch):
+    workspace = _share(tmp_path, 0o500)
+    try:
+        monkeypatch.setenv("BIOMNI_OUTPUT_ROOT", str(workspace / "root"))
+        prefs = wp.WorkspacePrefs(output_dir=str(workspace / "mine"))
+        target = wp.resolve_output_dir(prefs, workspace_root=str(workspace))
+        assert target.reason is not None
+        assert target.reason.startswith(
+            f"The output directory you configured ({workspace}/mine), BIOMNI_OUTPUT_ROOT ({workspace}/root) and the "
+            f"workspace default ({workspace}/biomni-outputs) are not writable"
+        )
+    finally:
+        workspace.chmod(0o755)
+
+
+@pytest.mark.skipif(os.geteuid() == 0, reason="root is never denied by mode bits")
+def test_an_output_root_that_is_the_workspace_default_is_reported_once(tmp_path, monkeypatch):
+    """The GRIP setup: BIOMNI_OUTPUT_ROOT=<workspace>/biomni-outputs."""
+    workspace = _share(tmp_path, 0o500)
+    try:
+        monkeypatch.setenv("BIOMNI_OUTPUT_ROOT", str(workspace / "biomni-outputs"))
+        target = wp.resolve_output_dir(wp.WorkspacePrefs(), workspace_root=str(workspace))
+        assert target.reason is not None
+        assert target.reason.startswith(f"BIOMNI_OUTPUT_ROOT ({workspace}/biomni-outputs) is not writable")
+        assert "the workspace default" not in target.reason
+    finally:
+        workspace.chmod(0o755)
+
+
+@pytest.mark.skipif(os.geteuid() == 0, reason="root is never denied by mode bits")
+def test_each_passed_over_location_starts_a_sentence_of_its_own(tmp_path, monkeypatch):
+    chosen = _share(tmp_path, 0o500)
+    workspace = tmp_path / "workspace"
+    workspace.mkdir(mode=0o500)
+    try:
+        monkeypatch.delenv("BIOMNI_OUTPUT_ROOT", raising=False)
+        target = wp.resolve_output_dir(wp.WorkspacePrefs(output_dir=str(chosen)), workspace_root=str(workspace))
+        assert target.reason is not None
+        assert target.reason.startswith(f"The output directory you configured ({chosen}) is not writable")
+        assert f". The workspace default ({workspace}/biomni-outputs) is not writable" in target.reason
+    finally:
+        chosen.chmod(0o755)
+        workspace.chmod(0o755)
+
+
+def test_a_directory_inside_the_image_is_answered_with_a_volume(tmp_path, monkeypatch):
+    """A setting that points where no volume is mounted: opening up the image would keep nothing."""
+    image = _share(tmp_path)
+    _mount_table(tmp_path, monkeypatch, f"overlay {image} overlay rw,relatime 0 0")
+    _as_grip_uid(monkeypatch)
+    assert wp.explain_unwritable(str(image / "outputs")).endswith(
+        f"inside the container image rather than on a mounted volume; mount a writable volume at {image}/outputs"
+    )
+
+
+def test_an_unwritable_location_is_logged_once_not_on_every_resolution(tmp_path, monkeypatch, caplog):
+    ro = _share(tmp_path, 0o500)
+    try:
+        monkeypatch.setenv("BIOMNI_OUTPUT_ROOT", str(ro))
+        with caplog.at_level(logging.WARNING, logger="biomni.workspace_prefs"):
+            for _ in range(3):
+                wp.resolve_output_dir(wp.WorkspacePrefs(), workspace_root=None)
+        assert sum("BIOMNI_OUTPUT_ROOT" in r.getMessage() for r in caplog.records) == 1
+    finally:
+        ro.chmod(0o755)
+
+
+def test_is_readable_dir(tmp_path):
+    assert wp.is_readable_dir(str(tmp_path))
+    assert not wp.is_readable_dir(None)
+    assert not wp.is_readable_dir(str(tmp_path / "absent"))
+    (tmp_path / "file").write_text("x")
+    assert not wp.is_readable_dir(str(tmp_path / "file"))

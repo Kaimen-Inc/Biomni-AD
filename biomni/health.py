@@ -7,9 +7,10 @@ Kubernetes distinguishes two probe kinds and they must mean different things:
   pod restart. So ``/healthz`` returns 200 as long as the event loop can serve
   a request.
 * **readiness** (``/readyz``) - "should this pod receive traffic *right now*?".
-  Here we verify the agent could actually function: its data directory is
-  mounted and an LLM credential is configured. A misconfigured pod reports 503
-  and is pulled from the Service endpoints instead of failing user requests.
+  Here we verify the agent could actually function: the user's workspace is
+  mounted, when one is configured, and a model can be reached. A misconfigured
+  pod reports 503 and is pulled from the Service endpoints instead of failing
+  user requests.
 
 Both endpoints are registered at the *front* of the router. Chainlit mounts a
 catch-all ``GET /{full_path:path}`` (for the SPA) as its last route; a route
@@ -22,6 +23,8 @@ import os
 from typing import TYPE_CHECKING, Any
 
 from biomni import credentials
+from biomni.identity import trust_auth_headers
+from biomni.llm_proxy import llm_proxy_settings
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -55,29 +58,63 @@ def build_info() -> dict[str, str]:
     return info
 
 
-def _data_path() -> str:
-    """The data directory the app expects to be mounted (honors env overrides)."""
-    # Read env directly rather than importing biomni.config: readiness must
-    # reflect the *current* environment and stay import-light for the probe path.
-    return (
-        os.getenv("BIOMNI_USER_DATA_PATH")
-        or os.getenv("BIOMNI_DATA_PATH")
-        or os.getenv("BIOMNI_PATH")
-        or os.path.join(os.path.expanduser("~"), ".biomni", "data")
-    )
+def _workspace_check() -> dict[str, Any]:
+    """Whether the user's workspace is mounted, when one is configured.
+
+    Worth holding traffic back for: without it every question about the user's
+    own data is answered as if there were none. With no workspace configured
+    there is nothing to wait for. ``BIOMNI_PATH`` is deliberately not consulted:
+    it is the app's own data directory, which the image does not contain and the
+    agent creates the first time it is built - and that takes a chat, which an
+    unready pod never receives.
+    """
+    # Env read directly rather than through biomni.config: readiness must reflect
+    # the *current* environment and stay import-light for the probe path.
+    for env in ("BIOMNI_USER_DATA_PATH", "BIOMNI_DATA_PATH"):
+        path = os.getenv(env, "").strip()
+        if path:
+            return {"ok": os.path.isdir(path), "path": path}
+    return {"ok": True, "path": None}
 
 
-def _has_llm_credential() -> tuple[bool, str]:
-    """Whether some usable LLM credential / endpoint is configured."""
+def _llm_credential_check() -> dict[str, Any]:
+    """Whether some usable LLM credential / endpoint is configured.
+
+    With an LLM proxy configured every model call goes through it, so its token
+    is the only credential that counts: a provider key left over in the
+    environment must not make a pod that cannot reach any model look ready. Nor
+    must a proxy that will refuse every call, because nothing tells it whom the
+    call is for: its user and workspace ids come only from a trusted gateway.
+    """
+    try:
+        proxy = llm_proxy_settings()
+    except ValueError as exc:
+        return {"ok": False, "source": "BIOMNI_LLM_PROXY_URL", "detail": str(exc)}
+    if proxy is not None:
+        if not proxy.api_key:
+            return {
+                "ok": False,
+                "source": "BIOMNI_LLM_PROXY_URL",
+                "detail": "BIOMNI_LLM_PROXY_API_KEY is not set; the proxy needs its token",
+            }
+        if not trust_auth_headers():
+            return {
+                "ok": False,
+                "source": "BIOMNI_LLM_PROXY_URL",
+                "detail": "BIOMNI_TRUST_AUTH_HEADERS is not enabled; the proxy needs the user and workspace ids "
+                "only the authentication gateway supplies",
+            }
+        return {"ok": True, "source": "BIOMNI_LLM_PROXY_URL"}
+
     for env in _PROVIDER_KEY_ENVS:
         # Via the vault, not os.getenv: credentials are hidden from os.environ
         # while generated code runs, and a probe landing in that window must
         # not report the pod unready.
         if credentials.getenv(env):
-            return True, env
+            return {"ok": True, "source": env}
     if os.getenv("BIOMNI_CUSTOM_BASE_URL"):
-        return True, "BIOMNI_CUSTOM_BASE_URL"
-    return False, ""
+        return {"ok": True, "source": "BIOMNI_CUSTOM_BASE_URL"}
+    return {"ok": False, "source": None}
 
 
 def readiness_report() -> tuple[bool, dict[str, Any]]:
@@ -86,14 +123,10 @@ def readiness_report() -> tuple[bool, dict[str, Any]]:
     Returns ``(ok, report)`` where ``report`` carries per-check detail suitable
     for the probe body and for debugging a pod stuck in ``NotReady``.
     """
-    checks: dict[str, dict[str, Any]] = {}
-
-    data_path = _data_path()
-    data_ok = os.path.isdir(data_path)
-    checks["data_path"] = {"ok": data_ok, "path": data_path}
-
-    cred_ok, cred_source = _has_llm_credential()
-    checks["llm_credential"] = {"ok": cred_ok, "source": cred_source or None}
+    checks: dict[str, dict[str, Any]] = {
+        "data_path": _workspace_check(),
+        "llm_credential": _llm_credential_check(),
+    }
 
     ok = all(c["ok"] for c in checks.values())
     report: dict[str, Any] = {"status": "ready" if ok else "not_ready", "checks": checks}

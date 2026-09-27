@@ -29,6 +29,8 @@ repos:
           - id: check-added-large-files
           - id: check-toml
           - id: check-yaml
+            # Kubernetes manifests hold several documents separated by ---.
+            args: [--allow-multiple-documents]
           - id: check-merge-conflict
           - id: no-commit-to-branch
             args: ["--branch=main"]

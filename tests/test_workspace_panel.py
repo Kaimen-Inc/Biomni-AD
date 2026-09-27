@@ -9,6 +9,8 @@ being walked, and a selected one is described from the selected folders only.
 
 from __future__ import annotations
 
+import os
+
 import pytest
 from biomni import fs_scan
 from biomni.workspace_prefs import WorkspacePrefs, resolve_scope
@@ -92,6 +94,20 @@ def test_inventory_without_a_selection_lists_folders_and_forbids_assuming_empty(
     assert "Do not assume the workspace is empty." in text
     # No file was described, only folders.
     assert "a1.csv" not in text
+
+
+@pytest.mark.skipif(os.geteuid() == 0, reason="root can list any directory")
+def test_an_unreadable_workspace_is_described_as_unreadable_not_empty(workspace):
+    """Otherwise the agent tells a user whose data is all there that there is none."""
+    workspace.chmod(0o300)
+    try:
+        scope = resolve_scope(WorkspacePrefs(), str(workspace))
+        text = panel.build_scope_inventory(scope, str(workspace))
+    finally:
+        workspace.chmod(0o755)
+    assert "NOT permitted to read the workspace" in text
+    assert "Do not guess at what the workspace contains." in text
+    assert "No top-level folders" not in text
 
 
 def test_inventory_without_a_selection_does_not_walk_the_workspace(workspace, monkeypatch):

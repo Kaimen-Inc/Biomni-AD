@@ -1,0 +1,12 @@
+/*
+ * Paragraph breaks in the chat settings dialog.
+ *
+ * Chainlit renders a widget's description as plain text in a block that
+ * collapses newlines, so the output-directory help - a sentence, then each
+ * warning on its own - arrived as one unbroken wall of text. pre-line keeps the
+ * line breaks and still folds runs of spaces, so a description written without
+ * breaks renders exactly as before.
+ */
+[role="dialog"] .text-muted-foreground {
+	white-space: pre-line;
+}
