@@ -150,12 +150,39 @@ A refusal ends the run where it is, with what it had produced so far, instead of
 Besides the proxy, the app makes outbound HTTPS requests for its data:
 
 - `https://biomni-release.s3.amazonaws.com`, the public data lake, fetched one dataset at a time as questions need them;
-- `https://www.google.com`, for the agent's web search while the proxy is configured;
-- public biomedical services its tools query, such as NCBI (PubMed), UniProt, Ensembl and the GWAS Catalog;
+- the hosts of its web and literature search, listed [below](#web-and-literature-search);
+- public biomedical services its tools query, such as UniProt, Ensembl and the GWAS Catalog;
 - the hosts in the Alzheimer's dataset catalogues AD1 draws on, chiefly NIAGADS (`st1.niagads.org`, `dss.niagads.org`) and Zenodo (`zenodo.org`), from which the agent's code downloads a dataset when a question needs it.
 
 The analysis code the agent writes can also fetch other public URLs a question or a catalogue points it to.
 An egress allowlist therefore limits which questions can be answered, and a question that needs a blocked host fails at that step with the connection error.
+
+### Web and literature search
+
+| Tool | Searches | Host |
+|---|---|---|
+| `search_google` | the web, read from Google's results page | `www.google.com` |
+| `query_pubmed` | PubMed, through NCBI's E-utilities API | `eutils.ncbi.nlm.nih.gov` |
+| `query_arxiv` | arXiv, through its API | `export.arxiv.org` |
+| `query_scholar` | Google Scholar, read from its results page | `scholar.google.com` |
+
+A search that cannot be made says so instead of coming back empty.
+The agent reads, for example, "Google search is unavailable", the reason, and which tools to use instead.
+The app also logs a warning naming the service and the reason:
+
+```bash
+kubectl logs deploy/biomni-ad | grep "search unavailable"
+```
+
+Two refusals are expected:
+
+- Google answers automated searches with a page that holds no results, so `search_google` reports itself unavailable on every call.
+- arXiv throttles a client that sends it many requests, answering HTTP 406 until it lets up.
+  The app keeps to arXiv's limit of one request every three seconds across all chats.
+  It retries a throttled or failed request for about half a minute, and if arXiv still refuses, leaves it alone for two minutes.
+
+PubMed searches keep to NCBI's limit of three requests a second, and retry when NCBI is busy.
+Set `NCBI_API_KEY` to raise the limit to ten, and `NCBI_EMAIL` to give NCBI a contact address for this deployment (see [configuration.md](configuration.md#literature-search)).
 
 ## Storage
 
@@ -312,6 +339,7 @@ After deploying, sign in through the platform and check, in order:
 | Startup warning "`BIOMNI_AUTH_..._HEADER=...` has no effect" | A single-value header setting points at a context header | Remove the variable |
 | "This app cannot read your workspace" | The workspace share's mount options do not give uid 57439 access | [Azure Files over SMB](#azure-files-over-smb-mount-options) |
 | Settings say "The configured location could not be used, so results go to `<directory>` instead" | `BIOMNI_OUTPUT_ROOT`, or the folder chosen in Settings, is not writable by uid 57439 | The reason shown names the fix; see [Storage](#storage) |
+| The agent reports "Google search is unavailable", "arXiv search is unavailable" or "Google Scholar search is unavailable" | Google refuses automated searches; arXiv is throttling the app; Google Scholar blocked it | Nothing to fix in the deployment: the agent searches with the other tools. See [Web and literature search](#web-and-literature-search) |
 | "The language model usage limit has been reached (HTTP 429)" | The platform's per-user or per-workspace limit | Wait, or raise the limit in the proxy |
 | An HTTP 401, 403 or 404 from "the platform's LLM proxy" | The token, the workspace's access to the model, or the model name | `BIOMNI_LLM_PROXY_API_KEY`, the proxy's policy, or `BIOMNI_LLM` |
 | `/readyz` returns 503 | See `checks` in the response body | Usually the workspace mount, `BIOMNI_LLM_PROXY_API_KEY`, or `BIOMNI_TRUST_AUTH_HEADERS` |

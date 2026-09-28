@@ -55,7 +55,8 @@ description = [
         ],
     },
     {
-        "description": "Query PubMed for papers based on the provided search query.",
+        "description": "Query PubMed for papers based on the provided search query, most relevant first, "
+        "and return each paper's title, abstract, journal, year and PMID.",
         "name": "query_pubmed",
         "optional_parameters": [
             {
@@ -66,7 +67,8 @@ description = [
             },
             {
                 "default": 3,
-                "description": "Maximum number of retry attempts with modified queries.",
+                "description": "When nothing matches, how many times to search again, each time with one more "
+                "word dropped from the end of the query.",
                 "name": "max_retries",
                 "type": "int",
             },
