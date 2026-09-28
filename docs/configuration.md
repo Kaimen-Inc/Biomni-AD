@@ -408,6 +408,13 @@ All are optional; the defaults are what a single-user local run wants.
 | `BIOMNI_ADVERTISE_ALL_LIBRARIES` | off | Skip the check that narrows the advertised library catalogue to what is installed. Normally the agent is only told about libraries it can actually import; set this for a deployment that installs more after the image is built. |
 | `BIOMNI_SCRUB_ENV_EXTRA` / `BIOMNI_SCRUB_ENV_ALLOW` | unset | Add to, or exempt from, the credential-shaped names hidden from generated code while it runs. Both are read once at startup, so code running in the sandbox cannot re-arm them. |
 
+### Literature search
+
+| Variable | Default | What it does |
+|---|---|---|
+| `NCBI_API_KEY` | unset | An NCBI API key for PubMed searches. NCBI takes three requests a second from an IP without one and ten with one, and the app paces its requests to match, across every chat. Like the other credentials it is hidden from generated code, and it is sent in the request body, where an error message cannot quote it. |
+| `NCBI_EMAIL` | unset | A contact address sent with each PubMed request, as NCBI's usage policy asks, so NCBI can get in touch about this deployment's traffic before blocking it. |
+
 ### Monitoring
 
 | Variable | Default | What it does |
