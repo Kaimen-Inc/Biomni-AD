@@ -561,7 +561,7 @@ def advanced_web_search_claude(
     }
 
     delay = random.randint(1, 10)
-
+    error: Exception | None = None
     for attempt in range(1, max_retries + 1):
         try:
             response = client.messages.create(
@@ -586,12 +586,12 @@ def advanced_web_search_claude(
             return formatted_response
 
         except Exception as e:
+            error = e
             if attempt < max_retries:
                 time.sleep(delay)
                 delay *= 2
-                continue
-            print(f"Error performing web search after {max_retries} attempts: {str(e)}")
-            return f"Error performing web search after {max_retries} attempts: {str(e)}"
+    print(f"Error performing web search after {max_retries} attempts: {error}")
+    return f"Error performing web search after {max_retries} attempts: {error}"
 
 
 def extract_url_content(url: str) -> str:
