@@ -32,6 +32,13 @@ from typing import Any
 
 from biomni.workspace_prefs import WORKSPACE_STATE_DIRNAME, is_writable_dir
 
+from chainlit_ui.ui_flags import (
+    DOWNLOADABLE_ELEMENT_TYPES,
+    downloads_disabled,
+    is_withheld_download,
+    withhold_downloads,
+)
+
 logger = logging.getLogger(__name__)
 
 THREADS_DIRNAME = "threads"
@@ -397,7 +404,7 @@ def _inline_element_data_layer_class() -> Any:
     class InlineElementDataLayer(SQLAlchemyDataLayer):
         """Chainlit's SQL data layer, adapted for a SQLite-backed deployment.
 
-        Two adjustments, both found by running the thing:
+        Three adjustments, the first two found by running the thing:
 
         * A size guard on inlined attachments. Base64 in a row is fine for a
           plot and ruinous for a 400 MB parquet file, and the base class has no
@@ -412,6 +419,16 @@ def _inline_element_data_layer_class() -> Any:
           ``userId``, so the visible symptom is not a missing tag: it is a
           permanently empty conversation list, because every thread is written
           with no owner and no title.
+        * With ``BIOMNI_DISABLE_DOWNLOADS`` on, no stored file is handed back
+          for a browser to download. Chainlit reads stored elements through
+          two methods, ``get_all_user_threads`` and ``get_element``. The first
+          is what ``get_thread`` (reopening a conversation, the thread API) and
+          ``list_threads`` (the conversation list the sidebar asks for) are both
+          built on, so filtering there covers all three. Run archives saved
+          before the switch was turned on are the case that needs it: the
+          archive sits in the database as a ``data:`` URL on the old "Run
+          complete" message, so without this it would still be a link in the
+          replayed transcript.
         """
 
         def __init__(self, *args: Any, drop_list_tags: bool = False, **kwargs: Any) -> None:
@@ -442,6 +459,27 @@ def _inline_element_data_layer_class() -> Any:
                 )
                 return None
             return await super().create_element(element)
+
+        async def get_all_user_threads(self, user_id: str | None = None, thread_id: str | None = None) -> Any:
+            threads = await super().get_all_user_threads(user_id=user_id, thread_id=thread_id)
+            if threads and downloads_disabled():
+                for thread in threads:
+                    withhold_downloads(thread)
+            return threads
+
+        async def get_element(self, thread_id: str, element_id: str) -> Any:
+            element = await super().get_element(thread_id, element_id)
+            if element is None or not downloads_disabled() or element.get("type") not in DOWNLOADABLE_ELEMENT_TYPES:
+                return element
+            # The thread's own steps are not at hand here, so ask for the owner.
+            owner = await self._step_type(element.get("forId"))
+            return None if is_withheld_download(element.get("type"), owner) else element
+
+        async def _step_type(self, step_id: str | None) -> str | None:
+            if not step_id:
+                return None
+            rows = await self.execute_sql('SELECT "type" FROM steps WHERE "id" = :id', {"id": step_id})
+            return rows[0].get("type") if isinstance(rows, list) and rows else None
 
     return InlineElementDataLayer
 

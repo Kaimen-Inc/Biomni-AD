@@ -61,14 +61,20 @@ def _utc_now_iso() -> str:
     return datetime.now(UTC).isoformat(timespec="seconds")
 
 
+# What a boolean env var may say, lower-cased. Shared so that a flag which reads
+# its own value (see chainlit_ui.ui_flags) cannot drift from the ones that use env_flag.
+TRUE_VALUES = frozenset({"1", "true", "yes", "on"})
+FALSE_VALUES = frozenset({"0", "false", "no", "off"})
+
+
 def env_flag(name: str, default: bool = False) -> bool:
     """Read a boolean env var. Anything but a recognised true/false is ignored."""
     raw = os.getenv(name, "").strip().lower()
     if not raw:
         return default
-    if raw in {"1", "true", "yes", "on"}:
+    if raw in TRUE_VALUES:
         return True
-    if raw in {"0", "false", "no", "off"}:
+    if raw in FALSE_VALUES:
         return False
     logger.warning("invalid %s=%r; using default %s", name, raw, default)
     return default

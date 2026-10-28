@@ -1,0 +1,22 @@
+/*
+ * biomni.css, plus no "Logout" in the user menu (BIOMNI_HIDE_LOGOUT=true).
+ *
+ * Behind the platform's gateway the app signs a user straight back in, so the
+ * item does nothing a user can see but reload the page. The avatar and the
+ * user's name stay, which is still the one place that says who is signed in.
+ *
+ * Chainlit gives the item no id or test hook, so it is found by its icon: it is
+ * the one menu entry that holds lucide's log-out glyph. The separator above it
+ * goes with it, so the menu does not end on a rule with nothing under it.
+ * Written against Chainlit 2.11.1, the version pinned in pyproject.toml; look at
+ * the user menu in a browser when that pin moves. Should the selectors stop
+ * matching, the item comes back - nothing breaks.
+ *
+ * The page loads one custom stylesheet, so this one imports the other.
+ */
+@import url("biomni.css");
+
+[role="menuitem"]:has(.lucide-log-out),
+[role="menu"]:has(.lucide-log-out) [role="separator"] {
+	display: none;
+}

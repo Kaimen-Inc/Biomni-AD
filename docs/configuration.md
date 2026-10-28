@@ -141,6 +141,14 @@ BIOMNI_AGENT=ad1                             # Default: unset (the user picks AD
 BIOMNI_ALWAYS_PLAN=true                      # Default: false (short questions are answered directly;
                                              #          true sends every question through a plan the
                                              #          user approves)
+BIOMNI_DISABLE_DOWNLOADS=true                # Default: false (true removes every download the app offers:
+                                             #          the run archive, and stored files in reopened
+                                             #          conversations. For a platform that lets results out
+                                             #          only through its own review, as GRIP's airlock does.
+                                             #          Screenshots and copied text are not stopped. A value
+                                             #          that is not true/false counts as true, and is logged.)
+BIOMNI_HIDE_LOGOUT=true                      # Default: false (true removes "Logout" from the user menu,
+                                             #          for a gateway that signs the user straight back in)
 CHAINLIT_HOST=0.0.0.0                        # Default: 0.0.0.0 (container entrypoint only)
 CHAINLIT_PORT=8000                           # Default: 8000    (container entrypoint only)
 
@@ -260,6 +268,10 @@ which the resolver checks against the mount table rather than assuming.
 Set `BIOMNI_OUTPUT_ROOT` to a mounted volume, or make the workspace mount
 read-write, to keep results.
 
+With `BIOMNI_DISABLE_DOWNLOADS` set, results must be somewhere the platform's own export can reach, which on GRIP means inside the workspace.
+The download was the only way to fetch anything written elsewhere.
+The Settings panel and each run's completion message warn when the output folder is outside the workspace.
+
 "First **writable** candidate" is load-bearing, and the usual reason a
 configured `BIOMNI_OUTPUT_ROOT` appears to be ignored is that it is not
 writable by the image's non-root user (UID 57439).
@@ -371,6 +383,7 @@ All are optional; the defaults are what a single-user local run wants.
 | `BIOMNI_DEMO_PASSWORD` | unset | Puts Chainlit's own login in front of the app: one shared password, any username, and the username becomes the identity - so each person gets a separate conversation history. The histories are separate, not private: anyone with the password can sign in under a username someone else used and see that history. For a deployment with **no** authentication gateway. Leave unset behind a gateway, where it would add a second and weaker door in front of a real one. |
 | `BIOMNI_BIND_ADDRESS` | `0.0.0.0` | Address the compose deployment publishes on. Set to `127.0.0.1` when a TLS proxy sits in front, so the app is reachable only through it. Note a `ufw deny` will **not** close a published port - Docker writes iptables rules ahead of ufw's chain - so binding to loopback is the reliable way. |
 | `BIOMNI_TRUST_AUTH_HEADERS` | off | Believe the gateway's identity headers. Fails closed: until this is set, headers are ignored and every session is anonymous. Turn it on in the same change that puts a gateway in front. |
+| `BIOMNI_HIDE_LOGOUT` | off | Removes "Logout" from the menu under the avatar. Behind a gateway the app signs the user straight back in, so the item does nothing but reload the page. The user's name stays in the menu. Done with a stylesheet that finds the item by its icon, written against the pinned Chainlit version: if a Chainlit upgrade changes the markup the item simply reappears, and the selectors in `public/biomni-hide-logout.css` need a look. It replaces the stylesheet named by `custom_css` in `.chainlit/config.toml` (the startup log warns if that is not the stock one); to keep your own, leave this off and `@import url("biomni-hide-logout.css");` from it. |
 | `BIOMNI_AUTH_ISSUER_HEADER` | see identity.py | Header carrying the OIDC issuer. When an issuer is present it is folded into the storage key, because a subject id is unique within a realm rather than globally. **Send it from the first deployment or not at all** - introducing it later re-keys every existing user, who then finds an empty history. |
 
 ### Model access
@@ -395,7 +408,8 @@ All are optional; the defaults are what a single-user local run wants.
 
 | Variable | Default | What it does |
 |---|---|---|
-| `BIOMNI_MAX_PACKAGE_MB` | `200` | A finished run is offered to the user as one downloadable archive. Runs larger than this are reported by size instead - a single run can write a multi-GB intermediate, and zipping that would stall the app and the browser. |
+| `BIOMNI_DISABLE_DOWNLOADS` | off | Removes every download the app offers. A finished run says where its results are saved, and no archive is built or attached; a conversation saved before the switch was turned on loses the run archives it stored, and its completion message is reworded, so the replayed transcript hands out no file and offers none (what a user attached to their own message stays). For a platform that lets results out only through its own review, as GRIP's airlock does, so the app offers no second way. Plots stay visible, and this is not data-loss prevention: a screenshot or copied text is beyond what a web page can stop. Results must be inside the workspace for the platform to reach them, and the app warns when they are not. A value the app cannot read, such as `ture`, counts as on and is logged as an error, so a typo never leaves downloads open. |
+| `BIOMNI_MAX_PACKAGE_MB` | `200` | Unless `BIOMNI_DISABLE_DOWNLOADS` is set, a finished run is offered to the user as one downloadable archive. Runs larger than this are reported by size instead - a single run can write a multi-GB intermediate, and zipping that would stall the app and the browser. |
 | `BIOMNI_MAX_PACKAGES` | `20` | How many archives to keep. Each roughly duplicates the run it came from and the run directories are never deleted, so without a bound the output volume fills about twice as fast. Archives are derived data; dropping one costs only regenerating it. |
 
 ### Execution and memory

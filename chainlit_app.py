@@ -121,6 +121,7 @@ from biomni.workspace_prefs import (
     resolve_scope,
     storage_facts,
 )
+from chainlit.config import config as chainlit_config
 from chainlit.input_widget import InputWidget, MultiSelect, Switch, Tags, TextInput
 from langchain_core.messages import AIMessage, HumanMessage
 
@@ -183,6 +184,13 @@ from chainlit_ui.planning import (
     quick_answer as _quick_answer,
 )
 from chainlit_ui.status_gauges import register_database_gauge, register_session_gauge
+from chainlit_ui.ui_flags import (
+    custom_stylesheet,
+    downloads_disabled,
+    logout_hidden,
+    run_saved_notice,
+    unreachable_output_warning,
+)
 from chainlit_ui.uploads import store_uploads, uploads_dir
 from chainlit_ui.workspace_panel import (
     build_scope_inventory,
@@ -582,7 +590,7 @@ def _as_sentence(text: str) -> str:
     return text if not text or text.endswith((".", "!", "?")) else f"{text}."
 
 
-def _output_warnings(output: OutputTarget) -> list[str]:
+def _output_warnings(output: OutputTarget, workspace_root: str | None = None) -> list[str]:
     """What a user must know about where results go, before a long run starts.
 
     Shared by the settings dialog and the message confirming a settings change,
@@ -604,6 +612,9 @@ def _output_warnings(output: OutputTarget) -> list[str]:
             "⚠️ This is container-local storage: results are lost when the application restarts. "
             "Set a path on a mounted volume, or ask an operator to set BIOMNI_OUTPUT_ROOT."
         )
+    stranded = unreachable_output_warning(output.path, workspace_root)
+    if stranded:
+        warnings.append(stranded)
     return warnings
 
 
@@ -623,7 +634,7 @@ def _output_dir_description(ws: WorkspaceSession) -> str:
         if ws.prefs.output_dir
         else "Leave as-is to keep the deployment's default."
     )
-    return "\n\n".join([f"Where run results are written. {reset}", *_output_warnings(ws.output)])
+    return "\n\n".join([f"Where run results are written. {reset}", *_output_warnings(ws.output, ws.workspace_root)])
 
 
 def _remember_settings_description(ws: WorkspaceSession) -> str:
@@ -959,6 +970,28 @@ def _log_access_config() -> None:
 
 
 _log_access_config()
+
+
+def _apply_ui_flags() -> None:
+    """Apply the deployment's switches for what the page offers, and log them.
+
+    Hiding the logout item is a stylesheet: Chainlit reads ``custom_css`` each
+    time it serves the page, so choosing the stylesheet here, once, is enough.
+    Downloads need nothing at startup - they are decided where a run finishes and
+    where a stored conversation is read - but are logged with it, so an operator
+    can confirm from one line that a setting reached the pod.
+    """
+    chainlit_config.ui.custom_css = custom_stylesheet(chainlit_config.ui.custom_css)
+    emit_event(
+        "ui_flags",
+        logger=logger,
+        downloads_disabled=downloads_disabled(),
+        logout_hidden=logout_hidden(),
+        stylesheet=chainlit_config.ui.custom_css,
+    )
+
+
+_apply_ui_flags()
 
 
 def _log_storage_check() -> None:
@@ -1575,7 +1608,7 @@ async def on_settings_update(settings: dict):
         summary = "**Data scope cleared.** The agent will only look inside workspace folders a task points it to."
 
     summary += f"\n\nOutputs: `{ws.output.path}`"
-    for warning in _output_warnings(ws.output):
+    for warning in _output_warnings(ws.output, ws.workspace_root):
         summary += f"\n\n{warning}"
 
     if ws.prefs.remember and not persisted:
@@ -2289,18 +2322,33 @@ async def _save_run_artifacts_for_agent(
             logger.exception("Artifact saving failed for run %s", run_id)
             step.output = f"⚠️ Artifact saving failed: {exc}"
 
+    await _offer_run_results(current_run_dir, run_id)
+
+
+async def _offer_run_results(run_dir: str, run_id: str) -> None:
+    """Say a run is finished and where its results are, with a download unless the deployment turned it off.
+
+    With ``BIOMNI_DISABLE_DOWNLOADS`` there is no archive to build or attach: the
+    results stay where the run wrote them, and the message points at the
+    workspace's own way out (see :mod:`chainlit_ui.ui_flags`).
+    """
+    if downloads_disabled():
+        ws = cl.user_session.get("workspace")
+        await cl.Message(content=run_saved_notice(run_dir, ws.workspace_root if ws is not None else None)).send()
+        return
+
     # Offer the whole run as one download. The path below is on the server, so
     # for anyone without a shell there the attachment is the only way to get the
     # report, the notebook and the generated files off the box.
-    archive, note = await run_in_executor(_package_run_dir, current_run_dir, run_id)
+    archive, note = await run_in_executor(_package_run_dir, run_dir, run_id)
     if archive:
         await cl.Message(
-            content=f"**Run complete.** Download everything this run produced ({note}), or find it on the server at `{current_run_dir}`.",
+            content=f"**Run complete.** Download everything this run produced ({note}), or find it on the server at `{run_dir}`.",
             elements=[cl.File(name=f"{run_id}.zip", path=archive, display="inline")],
         ).send()
     else:
         await cl.Message(
-            content=f"**Run complete.** Artifacts saved to:\n`{current_run_dir}`\n\n_No download offered: {note}._"
+            content=f"**Run complete.** Artifacts saved to:\n`{run_dir}`\n\n_No download offered: {note}._"
         ).send()
 
 

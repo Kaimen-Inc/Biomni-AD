@@ -46,6 +46,8 @@ Logs are one JSON object per line on stdout.
 | `BIOMNI_LLM_PROXY_SCHEMA` | `openai` (the default) or `anthropic` | The API the proxy speaks for that model. |
 | `BIOMNI_USER_DATA_PATH` | `/app/user-data` | The user's workspace. |
 | `BIOMNI_OUTPUT_ROOT` | a directory on a writable volume, see [Where results go](#where-results-go) | Where each run's results are written. |
+| `BIOMNI_DISABLE_DOWNLOADS` | `true` | Results leave a workspace only through the airlock, so the app offers no download of its own. Results must then be inside the workspace. A value that is not `true` or `false` counts as `true`. See [Export and sign-out](#export-and-sign-out). |
+| `BIOMNI_HIDE_LOGOUT` | `true` | Removes "Logout" from the user menu: behind the gateway it only signs the user straight back in. |
 | `BIOMNI_STATE_DIR` | `/app/state` | Each user's settings, run records and chat history. |
 | `BIOMNI_DATA_LAKE_PATH` | a directory on a volume, for example `/app/state/data_lake` | The reference datasets, downloaded the first time a question needs each one. Left unset they go inside the container, see [Resources](#resources). |
 | `CHAINLIT_AUTH_SECRET` | a long random string, from a Secret | Signs the session cookie. With one replica it can be left unset: the app generates one and keeps it in `BIOMNI_STATE_DIR`. Set it before running more than one replica, or users are signed out whenever a request reaches a different pod. |
@@ -64,11 +66,13 @@ Logs are one JSON object per line on stdout.
 [`deploy/k8s/biomni-ad.yaml`](../deploy/k8s/biomni-ad.yaml) deploys the app with the volumes and paths described under [Storage](#storage): Azure Disks at `/app/state` and `/app/runs`, and an Azure Files share at `/app/user-data`.
 It is a generic manifest.
 It exposes the app through a plain Service with no gateway in front, so it leaves the gateway and the LLM proxy off.
-On GRIP, change three things, each of which the manifest shows where it applies:
+On GRIP, change four things, each of which the manifest shows where it applies:
 
 1. Set `BIOMNI_TRUST_AUTH_HEADERS` to `"true"`, and let traffic reach the Service only through the authentication gateway.
 2. Set `BIOMNI_LLM_PROXY_URL`, `BIOMNI_LLM_PROXY_SCHEMA` and `BIOMNI_LLM`, and in the Secret replace `ANTHROPIC_API_KEY` with `BIOMNI_LLM_PROXY_API_KEY`.
 3. Bind the `biomni-ad-workspace` claim to the workspace's own Azure Files share, through a PersistentVolume with the mount options in [Azure Files over SMB](#azure-files-over-smb-mount-options), instead of letting it provision a new share.
+4. Set `BIOMNI_DISABLE_DOWNLOADS` and `BIOMNI_HIDE_LOGOUT` to `"true"`, and point `BIOMNI_OUTPUT_ROOT` into the workspace, so the airlock can reach the results.
+   See [Export and sign-out](#export-and-sign-out).
 
 ## Identity
 
@@ -261,10 +265,42 @@ Results go to the first of these that the app can write to: the folder the user 
 A location that cannot be written to is passed over, and the app says so in the log and in Settings.
 
 - `BIOMNI_OUTPUT_ROOT=/app/user-data/biomni-outputs` puts results in the workspace, next to the user's other files, once the share is writable by uid 57439.
+  This is the setting to use with `BIOMNI_DISABLE_DOWNLOADS`, since the airlock works on the workspace.
 - `BIOMNI_OUTPUT_ROOT=/app/runs`, on an Azure Disk, keeps results durable in the meantime.
-  Users download each run's results from the app.
+  Users download each run's results from the app, so this works only while `BIOMNI_DISABLE_DOWNLOADS` is off: with it on, results written here have no way out.
 
 Avoid pointing `BIOMNI_OUTPUT_ROOT` at the workspace root itself, since every run's folder would then appear at the top level of the workspace.
+
+## Export and sign-out
+
+On GRIP, results leave a workspace only through its airlock, and the platform's gateway signs users in.
+Two switches remove what that makes redundant or wrong.
+Both are off by default, because the demo and compose deployments have no airlock and rely on the download.
+
+**`BIOMNI_DISABLE_DOWNLOADS=true`** removes every download the app offers:
+
+- A finished run says where its results are saved and, for a folder inside the workspace, that they leave it through the airlock.
+  No archive is built or attached.
+- Conversations saved before the switch was turned on stored the run archives their old "Run complete" messages offered.
+  Those files are no longer handed back, whether a conversation is reopened or only listed in the sidebar, so the replayed transcript carries no download link.
+  The old completion message is reworded to say that downloads are off rather than offering one.
+  What a user attached to their own message is theirs and stays.
+- Plots stay visible: that is what a result is for.
+  This is not data-loss prevention.
+  A page cannot stop a screenshot or copied text, and controlling what leaves a workspace is the airlock's job.
+- Results written outside the workspace could be fetched only through the download, so they are stranded.
+  Settings and each completion message say so when the output folder is outside the workspace, which is the case for the `/app/runs` stopgap above.
+- Archives built before the switch was turned on stay in the hidden `.packages` folder beside the runs.
+  Nothing offers them any more, and each roughly duplicates its run, so delete them if the space matters.
+- A value the app cannot read, such as `ture`, counts as `true` and is logged as an error once, so a typo never leaves downloads open.
+
+**`BIOMNI_HIDE_LOGOUT=true`** removes "Logout" from the menu under the avatar.
+The gateway signs the user straight back in, so the item only reloaded the page.
+The user's name stays in the menu, so the check in the [smoke test](#smoke-test) still works.
+If `custom_css` in `.chainlit/config.toml` points at a stylesheet of your own, the switch replaces it and the startup log warns.
+To keep yours, leave the switch off and put `@import url("biomni-hide-logout.css");` at the top of it.
+
+The startup log has one line, `ui_flags`, giving `downloads_disabled` and `logout_hidden`, to confirm both settings reached the pod.
 
 ## Status and health
 
@@ -327,6 +363,8 @@ After deploying, sign in through the platform and check, in order:
    The run should read the file, draw the chart, and save it in a new run folder under `BIOMNI_OUTPUT_ROOT`.
 3. The proxy's log shows each model call with the user's `sub` as `X-User-Id` and the workspace `uuid` as `X-Workspace-Id`.
 4. Settings, reopened after a page reload, still show what was saved, and the conversation is listed on the left.
+5. With `BIOMNI_DISABLE_DOWNLOADS` and `BIOMNI_HIDE_LOGOUT` set, the finished run in step 2 says where its results are saved and offers no download.
+   The menu under the avatar shows your name with no "Logout".
 
 ## Troubleshooting
 
@@ -339,6 +377,8 @@ After deploying, sign in through the platform and check, in order:
 | Startup warning "`BIOMNI_AUTH_..._HEADER=...` has no effect" | A single-value header setting points at a context header | Remove the variable |
 | "This app cannot read your workspace" | The workspace share's mount options do not give uid 57439 access | [Azure Files over SMB](#azure-files-over-smb-mount-options) |
 | Settings say "The configured location could not be used, so results go to `<directory>` instead" | `BIOMNI_OUTPUT_ROOT`, or the folder chosen in Settings, is not writable by uid 57439 | The reason shown names the fix; see [Storage](#storage) |
+| A finished run, or Settings, says "Downloads are turned off in this deployment, and this folder is outside your workspace" | `BIOMNI_DISABLE_DOWNLOADS` is on and `BIOMNI_OUTPUT_ROOT` (or the folder chosen in Settings) is not under the workspace, so the airlock cannot see the results | Set `BIOMNI_OUTPUT_ROOT` to a folder in the workspace, such as `/app/user-data/biomni-outputs`. See [Where results go](#where-results-go) |
+| "Logout" is still in the avatar menu with `BIOMNI_HIDE_LOGOUT=true` | The setting did not reach the pod (the startup `ui_flags` line says), the browser kept the old stylesheet (reload without the cache), or a Chainlit upgrade changed the menu's markup | Fix the setting, or update the selectors in `public/biomni-hide-logout.css` against the new Chainlit |
 | The agent reports "Google search is unavailable", "arXiv search is unavailable" or "Google Scholar search is unavailable" | Google refuses automated searches; arXiv is throttling the app; Google Scholar blocked it | Nothing to fix in the deployment: the agent searches with the other tools. See [Web and literature search](#web-and-literature-search) |
 | "The language model usage limit has been reached (HTTP 429)" | The platform's per-user or per-workspace limit | Wait, or raise the limit in the proxy |
 | An HTTP 401, 403 or 404 from "the platform's LLM proxy" | The token, the workspace's access to the model, or the model name | `BIOMNI_LLM_PROXY_API_KEY`, the proxy's policy, or `BIOMNI_LLM` |
