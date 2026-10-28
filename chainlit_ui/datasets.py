@@ -103,6 +103,36 @@ AD_DATASET_PROMPTS: list[tuple[str, str, str]] = [
 ]
 
 
+# GNPC, the Global Neurodegeneration Proteomics Consortium's v1 harmonized
+# dataset, is controlled-access: a user who has not been granted it will not find
+# it in their workspace, and what helps them then is where to ask, not an analysis
+# of some other dataset. This is its entry in the AD Discovery Portal, the one the
+# Alzheimer's Disease Data Initiative's own GNPC page names for requesting access.
+# The starter below and biomni/know_how/ad_workbench_data_catalog.md both carry
+# it; tests/test_datasets.py keeps the two in step.
+GNPC_ACCESS_URL = "https://discover.alzheimersdata.org/catalogue/datasets/e2f3536b-d97b-4303-89bd-6864200807a4"
+
+GNPC_STARTER_LABEL = "GNPC plasma proteomics × genetic risk"
+
+# It starts by looking for the data and says what to do when it is not there, so
+# a user without access is told where to ask rather than shown some other
+# dataset. Nothing is assumed about how GNPC is laid out - the catalogue entry
+# does not say - so the agent is left to find the tables itself.
+GNPC_STARTER_MESSAGE = (
+    "First look in my workspace for the GNPC (Global Neurodegeneration Proteomics Consortium) harmonized "
+    "proteomics dataset. If it is not there, stop and do not substitute another dataset on your own: tell me "
+    "that GNPC is controlled-access and that I can request access from its catalogue entry:\n"
+    f"{GNPC_ACCESS_URL}\n\n"
+    "If all you find is a smaller GNPC-derived dataset, such as one research center's cohort, tell me which one "
+    "it is and ask whether to use it. "
+    "If the harmonized dataset is there: (1) load its plasma proteomic and clinical tables and identify the proteins that differ "
+    "most between AD cases and controls, adjusting for age and sex where the data allow, (2) check whether the "
+    "genes encoding those top proteins carry genome-wide significant variants in any local GWAS files "
+    "(NG00075, GCST90027158), and (3) look up their rare-variant burden in RADR. Produce a volcano plot of "
+    "effect size vs. significance and a summary table."
+)
+
+
 def discover_present_dataset_ids(ad_lake: Path) -> set[str]:
     """Return the set of dataset directory names under `ad_lake` that contain
     at least one non-README file.

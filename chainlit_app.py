@@ -171,7 +171,7 @@ def _extract_final_answer(state: dict) -> str:
 # of this file keeps working unchanged. The module-scope prompt constants are
 # intentionally not re-exported - anything that needs them should
 # `from chainlit_ui.planning import PLANNING_SYSTEM_PROMPT, AD1_PLANNING_SYSTEM_PROMPT`.
-from chainlit_ui.datasets import build_suggested_prompts_markdown
+from chainlit_ui.datasets import GNPC_STARTER_LABEL, GNPC_STARTER_MESSAGE, build_suggested_prompts_markdown
 from chainlit_ui.graph_stream import stream_langgraph
 from chainlit_ui.live_runs import LIVE_RUNS
 from chainlit_ui.llm_failures import describe_llm_failure
@@ -1153,15 +1153,8 @@ AD1_STARTERS = [
         icon="/public/avatars/ad1.png",
     ),
     cl.Starter(
-        label="AD plasma biomarker × genetic risk",
-        message=(
-            "Cross-reference AD Workbench plasma/CSF biomarker datasets (e.g. Bio-Hermes, "
-            "BCG-PANDA, NG00133) with genetic risk data: (1) load the biomarker tables and "
-            "identify analytes that differ most between AD cases and controls, (2) check whether "
-            "the genes encoding those top analytes carry genome-wide significant variants in any "
-            "local GWAS files (NG00075, GCST90027158), and (3) look up their rare-variant burden "
-            "in RADR. Produce a dot plot of effect size vs. GWAS p-value and a summary table."
-        ),
+        label=GNPC_STARTER_LABEL,
+        message=GNPC_STARTER_MESSAGE,
         icon="/public/avatars/ad1.png",
     ),
     cl.Starter(
