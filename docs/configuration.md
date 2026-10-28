@@ -255,6 +255,13 @@ thousands of files costs no more than a small one.
 With nothing selected, the workspace is advertised by top-level folder name only
 (one directory listing) and the agent enumerates on demand.
 
+The workspace is read in worker threads, never on the thread that serves the page, so the page stays responsive however long that takes.
+Opening a chat, applying a folder selection and starting a run each read it.
+Once one of them has taken more than 1.5 seconds, the chat shows a notice ("Getting your chat ready", "Reading the folders you selected" or "Getting your workspace ready for this run") and removes it when the work ends.
+Stop works while they run, and ends the listing before a run at its next folder.
+Counting the selected folders is bounded by `BIOMNI_WORKSPACE_MAX_FILES` and `BIOMNI_WORKSPACE_SCAN_TIMEOUT_S`.
+The listing taken when a run starts, which is how the run's new files are told apart afterwards, covers every file under the workspace and is not bounded.
+
 **Output directory** resolves to the first writable candidate:
 
 1. the user's setting in the ⚙️ Settings panel,

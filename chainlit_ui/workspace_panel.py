@@ -23,10 +23,10 @@ from __future__ import annotations
 
 import logging
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
-from biomni.fs_scan import EXCLUDED_DIRS, scan_directory
+from biomni.fs_scan import EXCLUDED_DIRS, ScanResult, scan_directory
 
 if TYPE_CHECKING:
     from collections.abc import Iterable, Sequence
@@ -95,6 +95,11 @@ class ScopeEntrySummary:
     path: str
     file_count: int
     bounded: bool
+    # The scan the counts came from. Kept so that building the inventory from these
+    # summaries does not walk each folder a second time: that second walk comes
+    # from a cache, and a cache entry is gone once the folders ahead of it took
+    # longer to scan than it lives. Not part of what makes two summaries equal.
+    scan: ScanResult | None = field(default=None, repr=False, compare=False)
 
     def count_label(self) -> str:
         return f"{self.file_count}+" if self.bounded else str(self.file_count)
@@ -118,6 +123,7 @@ def summarize_scope(scope: ScopeResolution, workspace_root: str | None) -> list[
                 path=root,
                 file_count=result.file_count,
                 bounded=result.bounded,
+                scan=result,
             )
         )
     return summaries
@@ -228,6 +234,7 @@ def build_scope_inventory(
     workspace_root: str | None,
     *,
     top_level_dirs: Sequence[str] | None = None,
+    summaries: Sequence[ScopeEntrySummary] | None = None,
 ) -> str:
     """The workspace description injected into the agent's system prompt.
 
@@ -235,6 +242,11 @@ def build_scope_inventory(
     one, it is a list of folder names plus an explicit instruction to enumerate
     on demand - the agent must never conclude the workspace is empty just
     because nothing has been indexed yet.
+
+    ``summaries`` is the per-folder count the caller already has from
+    :func:`summarize_scope`. It carries the scans the counts came from, so passing
+    it means each selected folder is walked once, not once to count and again to
+    describe: on a network mount holding large folders that is minutes saved.
     """
     if not workspace_root:
         return ""
@@ -274,8 +286,8 @@ def build_scope_inventory(
         return "\n".join(lines)
 
     sections: list[str] = []
-    for summary in summarize_scope(scope, workspace_root):
-        result = scan_directory(summary.path, max_depth=10)
+    for summary in summaries if summaries is not None else summarize_scope(scope, workspace_root):
+        result = summary.scan if summary.scan is not None else scan_directory(summary.path, max_depth=10)
         preview = result.files[:_INVENTORY_PREVIEW_FILES]
         tree_lines = build_tree_preview_lines(preview, max_lines=_INVENTORY_TREE_LINES, max_depth=6)
         section = f"{summary.label} ({summary.path}) - {summary.count_label()} files:\n" + "\n".join(tree_lines)

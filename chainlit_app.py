@@ -20,9 +20,11 @@ import logging
 import os
 import re
 import sys
+import threading
 import time
 import uuid
 import zipfile
+from contextlib import asynccontextmanager
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 
@@ -72,7 +74,7 @@ except ModuleNotFoundError:
     sys.exit(1)
 
 import chainlit as cl
-from biomni.artifact import build_run_id, get_all_files
+from biomni.artifact import build_run_id, snapshot_files
 from biomni.config import default_config, resolve_data_lake_root, resolve_default_llm
 from biomni.health import register_health_routes
 from biomni.identity import (
@@ -193,6 +195,7 @@ from chainlit_ui.ui_flags import (
 )
 from chainlit_ui.uploads import store_uploads, uploads_dir
 from chainlit_ui.workspace_panel import (
+    ScopeEntrySummary,
     build_scope_inventory,
     list_top_level_dirs,
     scope_choice_items,
@@ -492,6 +495,13 @@ class WorkspaceSession:
     output: OutputTarget
     top_level_dirs: list[str] = field(default_factory=list)
     inventory: str = ""
+    # One entry per selected folder, with its (bounded) file count. Filled by the
+    # same off-loop pass as ``inventory``, so the settings dialog and the message
+    # confirming a change read it instead of scanning again: both run on the event
+    # loop, and a scan there that misses the cache - which happens once the
+    # selected folders take longer to scan than the cache lives - holds every
+    # connection until it finishes.
+    scope_summaries: list[ScopeEntrySummary] = field(default_factory=list)
     runs: list[RunRecord] = field(default_factory=list)
     # Why the workspace cannot be listed, when it cannot. It exists (or it
     # would not be the workspace) but every folder in it is invisible, which
@@ -537,7 +547,8 @@ def _survey_workspace(ws: WorkspaceSession) -> WorkspaceSession:
     # workspace is not listed at all: why is already known, and the attempt
     # would only log the same failure again on every start and save.
     ws.top_level_dirs = [] if ws.workspace_problem else list_top_level_dirs(root, exclude_paths=[ws.output.path])
-    ws.inventory = build_scope_inventory(ws.scope, root, top_level_dirs=ws.top_level_dirs)
+    ws.scope_summaries = summarize_scope(ws.scope, root)
+    ws.inventory = build_scope_inventory(ws.scope, root, top_level_dirs=ws.top_level_dirs, summaries=ws.scope_summaries)
     return ws
 
 
@@ -668,7 +679,8 @@ def _workspace_settings_widgets(ws: WorkspaceSession) -> list[InputWidget]:
             "With nothing selected, the agent is told which folders exist and looks inside "
             "them only when a task calls for it."
         )
-        summaries = summarize_scope(ws.scope, ws.workspace_root)
+        # Read, never recomputed: this runs on the event loop (see WorkspaceSession).
+        summaries = ws.scope_summaries
         if summaries:
             active = ", ".join(f"{s.label} ({s.files_label()})" for s in summaries[:8])
             if len(summaries) > 8:
@@ -1293,6 +1305,54 @@ async def _send_notice_after_resume(content: str) -> None:
         logger.warning("Could not deliver a session notice", exc_info=True)
 
 
+# How long work may run before the user is told about it. Most sessions open and
+# most settings save in far less, and a notice that flashes up and is gone again
+# is worse than none.
+_SLOW_WORK_NOTICE_DELAY_S = 1.5
+
+
+@asynccontextmanager
+async def _slow_work_notice(content: str, *, delay_s: float | None = None):
+    """Say that something is in progress, but only if it turns out to take a while.
+
+    Reading a large folder on a network mount takes a minute or more, during
+    which the page looks idle: nothing says the app is working rather than
+    stuck. The notice goes up once the work has run for ``delay_s`` and is taken
+    away when it ends, so quick work stays silent and slow work explains itself.
+    Like :func:`_send_notice` it is never stored with the conversation.
+    """
+    delay = _SLOW_WORK_NOTICE_DELAY_S if delay_s is None else delay_s
+    notice: cl.Message | None = None
+
+    async def _show_later() -> None:
+        nonlocal notice
+        try:
+            await asyncio.sleep(delay)
+            message = cl.Message(content=content)
+            # Chainlit stores a message on its first send unless told it already has.
+            message.persisted = True
+            # Kept before the send, so a cancellation that lands mid-send still
+            # leaves the message to be taken away below.
+            notice = message
+            await message.send()
+        except Exception:
+            logger.debug("could not show a progress notice", exc_info=True)
+
+    timer = asyncio.create_task(_show_later())
+    try:
+        yield
+    finally:
+        timer.cancel()
+        # Waited for rather than awaited: a cancellation aimed at this handler
+        # must still reach it, not be swallowed with the timer's own.
+        await asyncio.wait({timer})
+        if notice is not None:
+            try:
+                await notice.remove()
+            except Exception:
+                logger.debug("could not remove a progress notice", exc_info=True)
+
+
 async def _announce_live_run() -> None:
     """Put a reopened conversation back into its running state.
 
@@ -1338,7 +1398,25 @@ def _history_from_thread(thread: dict) -> list[dict]:
 
 
 async def _start_session(resumed_thread: dict | None = None) -> None:
-    """Build everything one chat session needs. Shared by start and resume."""
+    """Build everything one chat session needs. Shared by start and resume.
+
+    Opening a session reads the user's workspace, which on a network mount with
+    large folders takes a minute or more, so a notice goes up if it is slow. It
+    says only that the chat is being got ready: the first session after a restart
+    can be slow for reasons that have nothing to do with the workspace.
+
+    On a reopened conversation Chainlit puts the stored transcript up after this
+    returns, replacing whatever was sent from inside it. The notice is taken away
+    before then, so there is nothing left for that to undo.
+    """
+    async with _slow_work_notice(
+        "⏳ **Getting your chat ready.** With a lot of files in your workspace this can take a minute or more. "
+        "The chat is ready once this message goes away."
+    ):
+        await _open_session(resumed_thread)
+
+
+async def _open_session(resumed_thread: dict | None = None) -> None:
     # One correlation id per chat session, bound for the lifetime of this
     # handler so agent-init logs carry it. on_message rebinds it per message.
     # Chainlit's own thread id is preferred when threads are being persisted, so
@@ -1561,7 +1639,23 @@ for _plan_action_name, _ in PLAN_ACTIONS:
 
 @cl.on_settings_update
 async def on_settings_update(settings: dict):
-    """Apply a scope / output-directory change and re-render everything from it."""
+    """Apply a scope / output-directory change and re-render everything from it.
+
+    One at a time per chat. A large selection takes a while to read, and a user who
+    is waiting may well confirm again; two of these working on one session at once
+    would write its scope, counts and inventory in turn, and the agent could be told
+    about folders other than the ones the dialog lists. The second waits for the
+    first and then applies, so the last choice made is the one that stands.
+    """
+    lock = cl.user_session.get("settings_lock")
+    if lock is None:
+        lock = asyncio.Lock()
+        cl.user_session.set("settings_lock", lock)
+    async with lock:
+        await _apply_settings_update(settings)
+
+
+async def _apply_settings_update(settings: dict) -> None:
     ACTIVITY.record_activity("workspace_settings_updated")
     ws = cl.user_session.get("workspace")
     agent = cl.user_session.get("agent")
@@ -1569,7 +1663,11 @@ async def on_settings_update(settings: dict):
         return
 
     try:
-        ws, persisted = await run_in_executor(_apply_workspace_settings, ws, settings)
+        async with _slow_work_notice(
+            "⏳ **Reading the folders you selected.** Large folders can take a minute or more. "
+            "Keep this page open: you will be told when they are ready."
+        ):
+            ws, persisted = await run_in_executor(_apply_workspace_settings, ws, settings)
     except Exception:
         logger.exception("Failed to apply workspace settings")
         await cl.Message(content="⚠️ Could not apply those settings; the previous scope is still active.").send()
@@ -1591,7 +1689,7 @@ async def on_settings_update(settings: dict):
         # With no panel to consult, this message is the only place the user is
         # told what their selection actually costs, so it carries the file
         # counts rather than just the folder names.
-        summaries = await run_in_executor(summarize_scope, ws.scope, ws.workspace_root)
+        summaries = ws.scope_summaries
         shown = summaries[:8]
         scope_text = ", ".join(f"`{s.label}` ({s.files_label()})" for s in shown)
         if len(summaries) > len(shown):
@@ -1742,6 +1840,32 @@ async def on_stop():
         emit_event("run_stopped_by_user")
 
 
+async def _snapshot_before_run(agent) -> set[str]:
+    """The files that exist before a run starts, so what the run adds can be told apart.
+
+    This walks the WHOLE workspace and costs more the larger it is: a minute or
+    more on a network mount holding a large one. It runs in a worker thread.
+    Done on the event loop it held every connection for the whole walk, so no
+    websocket could be serviced; the browser gave up after about 45 s and showed
+    "Could not reach the server" until the walk ended. The notice says why the
+    run has not started yet.
+
+    A thread cannot be interrupted from here, so Stop is passed to it instead:
+    the walk looks at ``stop`` before every directory and ends there, rather than
+    reading the rest of the share for a run that is not going to happen.
+    """
+    stop = threading.Event()
+    cwd, data_root = os.getcwd(), getattr(agent, "data_root_dir", None)
+    async with _slow_work_notice(
+        "⏳ **Getting your workspace ready for this run.** With a lot of files this can take a minute or more. "
+        "Nothing is wrong. The analysis starts as soon as this finishes."
+    ):
+        try:
+            return await run_in_executor(lambda: snapshot_files(cwd, data_root, cancelled=stop.is_set))
+        finally:
+            stop.set()
+
+
 async def _process_message(message: cl.Message):
     agent = cl.user_session.get("agent")
     agent_type = cl.user_session.get("agent_type", "a1")
@@ -1848,6 +1972,12 @@ async def _process_message(message: cl.Message):
     # after the plan gate: an unanswered approval is not work in progress.
     LIVE_RUNS.register(_thread_key(), _websocket_session(), asyncio.current_task())
 
+    # Snapshot the files before execution (cwd + data root) to detect new outputs.
+    # Taken ahead of the run directory and the run record on purpose: it can now
+    # be cancelled (Stop works while it runs), and nothing has been recorded as
+    # started yet for that to leave dangling.
+    initial_files = await _snapshot_before_run(agent)
+
     # Pre-create the run directory so OUTPUT_DIR is available during code
     # execution. The root comes from the session's resolved output target
     # (user preference -> BIOMNI_OUTPUT_ROOT -> workspace -> cwd/runs) rather
@@ -1896,12 +2026,6 @@ async def _process_message(message: cl.Message):
             )
         except Exception:
             logger.warning("Could not record run start", exc_info=True)
-
-    # Snapshot files before execution (cwd + data root) to detect new outputs.
-    initial_files = get_all_files(os.getcwd())
-    _data_root = getattr(agent, "data_root_dir", None)
-    if _data_root and os.path.isdir(_data_root):
-        initial_files |= get_all_files(_data_root)
 
     # Default to the pessimistic outcome and upgrade only on success. Closing
     # the tab or a SIGTERM raises asyncio.CancelledError, which is NOT an

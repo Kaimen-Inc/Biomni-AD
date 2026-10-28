@@ -86,6 +86,49 @@ def test_summarize_scope_counts_only_selected_folders(workspace):
 # --------------------------------------------------------------------------- #
 
 
+def test_inventory_built_from_given_summaries_is_the_same_text_without_walking_again(workspace, monkeypatch):
+    """The caller that already counted the folders must not pay for another pass over them.
+
+    Scanning is cached, but only for a while: by the time a slow folder has been
+    counted, the entries for the folders ahead of it may be gone, and a second
+    call would walk them again.
+    """
+    scope = resolve_scope(WorkspacePrefs(scope_paths=["studyA", "studyB"]), str(workspace))
+    summaries = panel.summarize_scope(scope, str(workspace))
+    expected = panel.build_scope_inventory(scope, str(workspace))
+    fs_scan.clear_cache()  # what an expired cache looks like
+
+    def refuse(*args, **kwargs):
+        raise AssertionError("a selected folder was scanned a second time")
+
+    monkeypatch.setattr(panel, "summarize_scope", refuse)
+    monkeypatch.setattr(panel, "scan_directory", refuse)
+    monkeypatch.setattr(fs_scan, "_walk", refuse)
+
+    assert panel.build_scope_inventory(scope, str(workspace), summaries=summaries) == expected
+
+
+def test_summaries_made_without_their_scan_are_still_described(workspace):
+    """A summary built by hand, or by older code, has no scan to carry: the inventory looks for itself."""
+    scope = resolve_scope(WorkspacePrefs(scope_paths=["studyA"]), str(workspace))
+    (counted,) = panel.summarize_scope(scope, str(workspace))
+    bare = panel.ScopeEntrySummary(label=counted.label, path=counted.path, file_count=2, bounded=False)
+
+    assert bare.scan is None
+    assert panel.build_scope_inventory(scope, str(workspace), summaries=[bare]) == panel.build_scope_inventory(
+        scope, str(workspace)
+    )
+
+
+def test_two_summaries_are_equal_whatever_scan_they_carry(workspace):
+    scope = resolve_scope(WorkspacePrefs(scope_paths=["studyA"]), str(workspace))
+    (counted,) = panel.summarize_scope(scope, str(workspace))
+    bare = panel.ScopeEntrySummary(label=counted.label, path=counted.path, file_count=2, bounded=False)
+
+    assert counted == bare
+    assert hash(counted) == hash(bare), "the scan is a mutable record and must not take part in hashing"
+
+
 def test_inventory_without_a_selection_lists_folders_and_forbids_assuming_empty(workspace):
     scope = resolve_scope(WorkspacePrefs(), str(workspace))
     text = panel.build_scope_inventory(scope, str(workspace))

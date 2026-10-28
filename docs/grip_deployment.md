@@ -271,6 +271,21 @@ A location that cannot be written to is passed over, and the app says so in the 
 
 Avoid pointing `BIOMNI_OUTPUT_ROOT` at the workspace root itself, since every run's folder would then appear at the top level of the workspace.
 
+### Large workspaces
+
+Three things read the workspace: opening a chat, choosing folders in Settings, and starting a run.
+The last lists every file under it, so that what the run creates can be told apart afterwards, and that listing has no limit.
+All three run in worker threads, so the page stays usable however long they take.
+After a second and a half the chat says what it is doing ("Getting your chat ready", "Reading the folders you selected", "Getting your workspace ready for this run") and takes the message away when it is done.
+Stop works during all three, and ends the listing at its next folder.
+
+How long a listing takes depends on the share.
+On SMB each folder read is a network round trip, so the number of folders matters more than the number of files.
+In a test with about 4,600 folders holding 54,000 files and a simulated 20 ms per read, the listing before a run took about two minutes.
+Where the app runs from `/app` and the workspace is mounted inside it at `/app/user-data`, that listing reads the share once, not once for each.
+If runs wait too long to start, move archives and datasets nobody is using out of the workspace.
+The counts shown in Settings are bounded separately: see `BIOMNI_WORKSPACE_MAX_FILES` and `BIOMNI_WORKSPACE_SCAN_TIMEOUT_S` in [configuration.md](configuration.md).
+
 ## Export and sign-out
 
 On GRIP, results leave a workspace only through its airlock, and the platform's gateway signs users in.
@@ -379,6 +394,8 @@ After deploying, sign in through the platform and check, in order:
 | Settings say "The configured location could not be used, so results go to `<directory>` instead" | `BIOMNI_OUTPUT_ROOT`, or the folder chosen in Settings, is not writable by uid 57439 | The reason shown names the fix; see [Storage](#storage) |
 | A finished run, or Settings, says "Downloads are turned off in this deployment, and this folder is outside your workspace" | `BIOMNI_DISABLE_DOWNLOADS` is on and `BIOMNI_OUTPUT_ROOT` (or the folder chosen in Settings) is not under the workspace, so the airlock cannot see the results | Set `BIOMNI_OUTPUT_ROOT` to a folder in the workspace, such as `/app/user-data/biomni-outputs`. See [Where results go](#where-results-go) |
 | "Logout" is still in the avatar menu with `BIOMNI_HIDE_LOGOUT=true` | The setting did not reach the pod (the startup `ui_flags` line says), the browser kept the old stylesheet (reload without the cache), or a Chainlit upgrade changed the menu's markup | Fix the setting, or update the selectors in `public/biomni-hide-logout.css` against the new Chainlit |
+| A red "Could not reach the server" appears for a while after choosing large folders or starting a run, then goes away | An older build listed the workspace on the thread that serves the page, so for as long as that took (a minute or more on a large share) the browser could not get an answer and gave up | Update. This build reads the workspace in worker threads and shows "Getting your chat ready", "Reading the folders you selected" or "Getting your workspace ready for this run" while it works. See [Large workspaces](#large-workspaces) |
+| The chat says "Getting your workspace ready for this run" for minutes before the analysis starts | The workspace holds a great many folders, and listing each one is a network round trip | Nothing is broken. Move archives and unused datasets out of the workspace to shorten it |
 | The agent reports "Google search is unavailable", "arXiv search is unavailable" or "Google Scholar search is unavailable" | Google refuses automated searches; arXiv is throttling the app; Google Scholar blocked it | Nothing to fix in the deployment: the agent searches with the other tools. See [Web and literature search](#web-and-literature-search) |
 | "The language model usage limit has been reached (HTTP 429)" | The platform's per-user or per-workspace limit | Wait, or raise the limit in the proxy |
 | An HTTP 401, 403 or 404 from "the platform's LLM proxy" | The token, the workspace's access to the model, or the model name | `BIOMNI_LLM_PROXY_API_KEY`, the proxy's policy, or `BIOMNI_LLM` |
