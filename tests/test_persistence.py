@@ -124,8 +124,10 @@ def test_schema_covers_every_column_chainlit_writes(tmp_path):
         element_cols = {row[1] for row in conn.execute("PRAGMA table_info(elements)")}
 
     # `feedback` and `modes` are read back from the join, never inserted;
+    # `icon` (a StepDict field since chainlit 2.11) is folded into `metadata` by
+    # Step.to_dict, and Message.to_dict has no such key, so it is never a column;
     # `path` is consumed to read the bytes and dropped before the insert.
-    step_fields = set(chainlit_step.StepDict.__annotations__) - {"feedback", "modes"}
+    step_fields = set(chainlit_step.StepDict.__annotations__) - {"feedback", "modes", "icon"}
     element_fields = set(chainlit_element.ElementDict.__annotations__) - {"path"}
 
     assert step_fields <= step_cols
