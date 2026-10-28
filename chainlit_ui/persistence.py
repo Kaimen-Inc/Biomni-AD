@@ -302,7 +302,8 @@ def ensure_auth_secret(workspace_root: str | None = None) -> str:
         try:
             os.makedirs(directory, exist_ok=True)
             if os.path.isfile(path):
-                stored = open(path, encoding="utf-8").read().strip()
+                with open(path, encoding="utf-8") as handle:
+                    stored = handle.read().strip()
                 if stored:
                     return stored
             generated = secrets.token_urlsafe(48)
