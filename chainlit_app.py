@@ -547,7 +547,10 @@ def _survey_workspace(ws: WorkspaceSession) -> WorkspaceSession:
     # workspace is not listed at all: why is already known, and the attempt
     # would only log the same failure again on every start and save.
     ws.top_level_dirs = [] if ws.workspace_problem else list_top_level_dirs(root, exclude_paths=[ws.output.path])
-    ws.scope_summaries = summarize_scope(ws.scope, root)
+    # Counting the selected folders reads the workspace too. A folder can still pass
+    # isdir when the workspace may be entered but not listed, and the inventory
+    # below would throw those counts away.
+    ws.scope_summaries = [] if ws.workspace_problem else summarize_scope(ws.scope, root)
     ws.inventory = build_scope_inventory(ws.scope, root, top_level_dirs=ws.top_level_dirs, summaries=ws.scope_summaries)
     return ws
 
@@ -1685,7 +1688,13 @@ async def _apply_settings_update(settings: dict) -> None:
         persisted=persisted,
     )
 
-    if ws.scope.roots:
+    if ws.scope.roots and ws.workspace_problem:
+        # Nothing was counted, and the agent is told the workspace cannot be read.
+        summary = (
+            "**Data scope saved, but the workspace cannot be read.** "
+            "The agent is not shown what is in the folders you selected until that is fixed. Settings says why."
+        )
+    elif ws.scope.roots:
         # With no panel to consult, this message is the only place the user is
         # told what their selection actually costs, so it carries the file
         # counts rather than just the folder names.

@@ -18,6 +18,9 @@ from __future__ import annotations
 
 import ast
 import asyncio
+import contextlib
+import os
+import stat
 import threading
 import time
 from pathlib import Path
@@ -408,6 +411,67 @@ def test_the_settings_dialog_is_built_from_the_survey_and_scans_nothing(
 
     picker = next(widget for widget in chainlit_app._workspace_settings_widgets(ws) if widget.id == "scope_folders")
     assert "Currently active: studyA (2 files)" in picker.description
+
+
+# A workspace the app may enter but not list: the mode a share ends up with when its mount options are wrong.
+# Root can list anything, so there is no such directory for it.
+needs_permission_checks = pytest.mark.skipif(
+    hasattr(os, "geteuid") and os.geteuid() == 0, reason="root can list any directory"
+)
+
+
+@contextlib.contextmanager
+def _unlistable(directory: Path):
+    mode = stat.S_IMODE(directory.stat().st_mode)
+    directory.chmod(0o111)  # the owner needs the read bit gone too: it is the owner that is asking
+    try:
+        yield
+    finally:
+        directory.chmod(mode)
+
+
+@needs_permission_checks
+def test_an_unreadable_workspace_is_not_scanned_for_the_folders_selected_in_it(
+    chainlit_app, make_session, workspace: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The survey reports the problem and leaves the workspace alone, on every start and every save.
+
+    A selected folder can still pass ``isdir``, because the workspace can be entered
+    without being listed. Counting it reads the workspace anyway, and the inventory
+    then throws the numbers away.
+    """
+    scans: list[tuple] = []
+    real_walk = fs_scan._walk
+
+    def walk(*args, **kwargs):
+        scans.append(args)
+        return real_walk(*args, **kwargs)
+
+    monkeypatch.setattr(fs_scan, "_walk", walk)
+
+    with _unlistable(workspace):
+        ws = chainlit_app._survey_workspace(make_session(("studyA",)))
+
+    assert ws.workspace_problem, "the workspace was readable, so this proves nothing"
+    assert ws.scope.roots, "no folder was selected, so this proves nothing"
+    assert scans == []
+    assert ws.scope_summaries == []
+    assert "NOT permitted" in ws.inventory
+
+
+@needs_permission_checks
+def test_saving_a_scope_in_an_unreadable_workspace_says_so_instead_of_naming_counts(
+    chainlit_app, settings_env: SimpleNamespace, workspace: Path
+) -> None:
+    # The picker is gone when nothing can be listed, so a folder is chosen by typing its path.
+    submission = {"scope_folders": [], "scope_extra_paths": ["studyA"], "output_dir": "", "remember_settings": True}
+
+    with _unlistable(workspace):
+        asyncio.run(chainlit_app.on_settings_update(submission))
+
+    (confirmation,) = [text for text in settings_env.chat.contents("send") if "Data scope" in text]
+    assert "workspace cannot be read" in confirmation
+    assert "will use" not in confirmation
 
 
 @pytest.fixture
