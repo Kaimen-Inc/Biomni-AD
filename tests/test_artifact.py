@@ -7,10 +7,13 @@ import os
 from datetime import datetime
 
 import pytest
+from biomni import artifact as artifact_module
 from biomni.artifact import (
     DEFAULT_EXCLUDED_DIRS,
+    SnapshotCancelled,
     build_run_id,
     get_all_files,
+    snapshot_files,
     summarize_topic_for_run_id,
 )
 
@@ -171,3 +174,163 @@ def test_get_all_files_custom_exclude_overrides_defaults(tmp_path) -> None:
     # Override: include "runs/" but skip a custom dir
     result = {os.path.basename(p) for p in get_all_files(str(tmp_path), exclude_dirs={"junk"})}
     assert result == {"in.txt"}
+
+
+# --- snapshot_files ------------------------------------------------------------
+
+
+def test_snapshot_files_is_the_union_of_what_each_directory_holds(tmp_path) -> None:
+    (tmp_path / "cwd").mkdir()
+    (tmp_path / "cwd" / "notes.txt").write_text("x")
+    (tmp_path / "data").mkdir()
+    (tmp_path / "data" / "table.csv").write_text("x")
+
+    assert snapshot_files(str(tmp_path / "cwd"), str(tmp_path / "data")) == {
+        str(tmp_path / "cwd" / "notes.txt"),
+        str(tmp_path / "data" / "table.csv"),
+    }
+
+
+def test_snapshot_files_skips_what_is_not_there(tmp_path) -> None:
+    (tmp_path / "real").mkdir()
+    (tmp_path / "real" / "kept.txt").write_text("x")
+
+    # The agent's data root is optional and may have been deleted since it was configured.
+    result = snapshot_files(None, "", str(tmp_path / "gone"), str(tmp_path / "real"))
+    assert result == {str(tmp_path / "real" / "kept.txt")}
+    assert snapshot_files() == set()
+
+
+def test_snapshot_files_counts_a_file_once_when_the_directories_overlap(tmp_path) -> None:
+    (tmp_path / "sub").mkdir()
+    (tmp_path / "sub" / "shared.txt").write_text("x")
+
+    assert snapshot_files(str(tmp_path), str(tmp_path / "sub")) == {str(tmp_path / "sub" / "shared.txt")}
+
+
+def test_snapshot_files_sees_exactly_what_get_all_files_sees(tmp_path) -> None:
+    """The run's before and after snapshots must agree on what a file is, or every run looks like it made a mess."""
+    for name in ("runs", "__pycache__", ".git", "sub"):
+        (tmp_path / name).mkdir()
+        (tmp_path / name / "inner.txt").write_text("x")
+    (tmp_path / ".hidden").write_text("x")
+    (tmp_path / "visible.txt").write_text("x")
+
+    assert snapshot_files(str(tmp_path)) == get_all_files(str(tmp_path))
+
+
+def _every_directory_listed_separately(*directories: str) -> set[str]:
+    """What snapshot_files must always return, however it gets there: the plain union."""
+    files: set[str] = set()
+    for directory in directories:
+        files |= get_all_files(directory)
+    return files
+
+
+@pytest.fixture
+def walks(monkeypatch: pytest.MonkeyPatch) -> list[str]:
+    """The directories get_all_files is actually asked to walk."""
+    asked: list[str] = []
+    real = artifact_module.get_all_files
+
+    def spy(directory, **kwargs):
+        asked.append(directory)
+        return real(directory, **kwargs)
+
+    monkeypatch.setattr(artifact_module, "get_all_files", spy)
+    return asked
+
+
+@pytest.fixture
+def app_tree(tmp_path):
+    """The deployment's shape: the app runs in /app and the workspace is mounted inside it."""
+    app = tmp_path / "app"
+    (app / "user-data" / "study").mkdir(parents=True)
+    (app / "user-data" / "study" / "table.csv").write_text("x")
+    (app / "code.py").write_text("x")
+    return app
+
+
+def test_a_directory_inside_another_is_not_walked_again(app_tree, walks) -> None:
+    """Walking the app directory already lists the workspace under it, and over a network share that is minutes."""
+    result = snapshot_files(str(app_tree), str(app_tree / "user-data"))
+
+    assert walks == [str(app_tree)]
+    assert result == _every_directory_listed_separately(str(app_tree), str(app_tree / "user-data"))
+    assert str(app_tree / "user-data" / "study" / "table.csv") in result
+
+
+def test_the_order_of_the_directories_does_not_matter(app_tree, walks) -> None:
+    snapshot_files(str(app_tree / "user-data"), str(app_tree))
+    assert walks == [str(app_tree)]
+
+
+def test_the_same_directory_given_twice_is_walked_once(app_tree, walks) -> None:
+    snapshot_files(str(app_tree), str(app_tree) + os.sep, str(app_tree / "user-data" / ".."))
+    assert walks == [str(app_tree)]
+
+
+def test_siblings_that_only_share_a_prefix_are_both_walked(tmp_path, walks) -> None:
+    for name in ("data", "data-old"):
+        (tmp_path / name).mkdir()
+        (tmp_path / name / f"{name}.csv").write_text("x")
+
+    result = snapshot_files(str(tmp_path / "data"), str(tmp_path / "data-old"))
+    assert sorted(walks) == [str(tmp_path / "data"), str(tmp_path / "data-old")]
+    assert len(result) == 2
+
+
+@pytest.mark.parametrize("hidden_or_excluded", [".state", "runs", "node_modules"])
+def test_a_directory_the_outer_walk_would_skip_is_walked_on_its_own(tmp_path, walks, hidden_or_excluded) -> None:
+    """get_all_files never enters hidden or excluded directories, so it would miss this one's files."""
+    inner = tmp_path / hidden_or_excluded / "workspace"
+    inner.mkdir(parents=True)
+    (inner / "table.csv").write_text("x")
+    (tmp_path / "code.py").write_text("x")
+
+    result = snapshot_files(str(tmp_path), str(inner))
+
+    assert str(inner) in walks
+    assert str(inner / "table.csv") in result
+    assert result == _every_directory_listed_separately(str(tmp_path), str(inner))
+
+
+def test_a_directory_reached_through_a_symlink_is_walked_on_its_own(tmp_path, walks) -> None:
+    """os.walk does not follow links, so the outer walk never lists what is behind one."""
+    real = tmp_path / "share" / "workspace"
+    real.mkdir(parents=True)
+    (real / "table.csv").write_text("x")
+    app = tmp_path / "app"
+    app.mkdir()
+    (app / "user-data").symlink_to(real, target_is_directory=True)
+
+    result = snapshot_files(str(app), str(app / "user-data"))
+
+    assert sorted(walks) == [str(app), str(app / "user-data")]
+    assert str(app / "user-data" / "table.csv") in result
+    assert result == _every_directory_listed_separately(str(app), str(app / "user-data"))
+
+
+def test_a_walk_can_be_called_off(app_tree) -> None:
+    with pytest.raises(SnapshotCancelled):
+        snapshot_files(str(app_tree), cancelled=lambda: True)
+
+
+def test_a_called_off_walk_stops_at_the_next_directory_instead_of_finishing(tmp_path) -> None:
+    for i in range(20):
+        (tmp_path / f"d{i:02d}").mkdir()
+        (tmp_path / f"d{i:02d}" / "f.txt").write_text("x")
+    asked = 0
+
+    def cancelled() -> bool:
+        nonlocal asked
+        asked += 1
+        return asked > 3
+
+    with pytest.raises(SnapshotCancelled):
+        get_all_files(str(tmp_path), cancelled=cancelled)
+    assert asked == 4, "it must stop at once, not read the other seventeen directories first"
+
+
+def test_a_walk_that_is_not_called_off_is_unchanged(app_tree) -> None:
+    assert snapshot_files(str(app_tree), cancelled=lambda: False) == snapshot_files(str(app_tree))

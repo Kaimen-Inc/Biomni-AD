@@ -80,15 +80,24 @@ _TOPIC_STOPWORDS: frozenset[str] = frozenset(
 )
 
 
+class SnapshotCancelled(Exception):
+    """A walk was stopped because nobody is waiting for its result any more."""
+
+
 def get_all_files(
     directory: str,
     *,
     exclude_dirs: Iterable[str] = DEFAULT_EXCLUDED_DIRS,
+    cancelled: Callable[[], bool] | None = None,
 ) -> set[str]:
     """Recursively collect non-hidden file paths under `directory`.
 
     Hidden files and directories (leading dot) are always skipped. Any
     directory name in `exclude_dirs` is skipped as well.
+
+    ``cancelled`` is asked before each directory is read. Once it says yes the
+    walk raises :class:`SnapshotCancelled` instead of returning: half a listing
+    would pass every file it had not reached yet off as new.
     """
     if not directory or not os.path.isdir(directory):
         return set()
@@ -96,11 +105,65 @@ def get_all_files(
     excluded = set(exclude_dirs)
     result: set[str] = set()
     for root, dirs, files in os.walk(directory):
+        if cancelled is not None and cancelled():
+            raise SnapshotCancelled(directory)
         dirs[:] = [d for d in dirs if not d.startswith(".") and d not in excluded]
         for fname in files:
             if not fname.startswith("."):
                 result.add(os.path.join(root, fname))
     return result
+
+
+def _walk_reaches(ancestor: str, root: str) -> bool:
+    """Whether :func:`get_all_files` on ``ancestor`` also lists everything it would list for ``root``.
+
+    True when ``root`` is below ``ancestor`` and the walk can get there: it does
+    not enter hidden or excluded directories, and does not follow symlinks, so a
+    root reached through one of those has to be walked on its own.
+    """
+    try:
+        if os.path.commonpath([ancestor, root]) != ancestor:
+            return False
+    except ValueError:  # different drives on Windows
+        return False
+    here = ancestor
+    for part in os.path.relpath(root, ancestor).split(os.sep):
+        if part == os.curdir:
+            continue
+        if part.startswith(".") or part in DEFAULT_EXCLUDED_DIRS:
+            return False
+        here = os.path.join(here, part)
+        if os.path.islink(here):
+            return False
+    return True
+
+
+def _distinct_roots(directories: Iterable[str | None]) -> list[str]:
+    """The directories worth walking: each once, and none that a walk of another already covers."""
+    roots: list[str] = []
+    for directory in directories:
+        if directory and (root := os.path.abspath(directory)) not in roots:
+            roots.append(root)
+    return [root for root in roots if not any(other != root and _walk_reaches(other, root) for other in roots)]
+
+
+def snapshot_files(*directories: str | None, cancelled: Callable[[], bool] | None = None) -> set[str]:
+    """Every non-hidden file under any of ``directories``, as :func:`get_all_files` sees them.
+
+    A ``None``, empty or missing directory contributes nothing. This is the walk
+    behind a run's before/after comparison. It is unbounded, so on a network
+    mount holding a large workspace it takes minutes: code running on an event
+    loop must hand it to a worker thread instead of calling it, and can pass
+    ``cancelled`` to have the thread stop when the caller gives up.
+
+    A directory inside another one in the list is not walked again: where the
+    app runs from ``/app`` and the workspace is mounted at ``/app/user-data``,
+    walking both would read the whole workspace twice for the same listing.
+    """
+    files: set[str] = set()
+    for directory in _distinct_roots(directories):
+        files |= get_all_files(directory, cancelled=cancelled)
+    return files
 
 
 def summarize_topic_for_run_id(topic: str) -> str:

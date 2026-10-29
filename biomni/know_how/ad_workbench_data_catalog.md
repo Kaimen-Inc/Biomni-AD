@@ -3,6 +3,13 @@
 This document provides a summary of the datasets available from the AD Workbench (Alzheimer's Disease Data Initiative). When encountering these datasets locally, agents should refer to these descriptions to understand their contents, modalities, and appropriate use cases.
 
 ## Clinical and Observational Cohorts
+*   **GNPC v1 Harmonized Dataset (Global Neurodegeneration Proteomics Consortium):** Plasma, serum and cerebrospinal fluid proteomics (SomaScan, Olink and mass spectrometry) from 20+ clinical cohorts of Alzheimer's disease, Parkinson's disease, ALS, frontotemporal dementia and healthy aging, with 50+ harmonized clinical features per record (diagnosis, disease stage, neuropsychological assessments, demographics).
+    *   Controlled access.
+        A qualified researcher registers for AD Workbench, logs in to the AD Discovery Portal and uses the request access button on the dataset's catalogue entry.
+        Access is granted within individually permissioned AD Workbench workspaces.
+    *   Request access: https://discover.alzheimersdata.org/catalogue/datasets/e2f3536b-d97b-4303-89bd-6864200807a4
+    *   If a user asks for GNPC and it is not in their workspace, do not substitute another dataset on your own: tell them to request access at that link.
+        A smaller GNPC-derived dataset in the workspace, such as the University of Kansas ADRC cohort below, is a different dataset: say which one is there and ask whether to use it.
 *   **University of Kansas Alzheimer's Disease Research Center - GNPC (545 Patients):** Longitudinal demographic, clinical, cognitive, and proteomic data on participants ranging from no cognitive impairment to dementia.
 *   **TOMMORROW Study:** Clinical trial dataset (metadata available on GAAIN) with user guide and infographic.
 *   **The GERAS Studies (US, Japan, EU, II) and Harmonized Cohort:** Prospective observational studies across multiple regions assessing societal costs, resource use, and caregiver burden associated with AD dementia. The combined/harmonized dataset includes variables from these cohorts.
@@ -39,6 +46,9 @@ This document provides a summary of the datasets available from the AD Workbench
 *   **ADDI Standard Variables:** Mapping of 124 commonly used ADRD variables to C-Surv and CDISC standards.
 
 ## Usage Guide for the Agent
+*   **Is it in the workspace?** Some datasets here, GNPC among them, reach a user's workspace only once access is approved.
+    When one is asked for and is not there, say so and point to its access link.
+    Never answer from a different dataset in its place without asking: if a related one is there, name it and ask whether to use it.
 *   **Is it structured or unstructured?** This catalog contains clinical tabular data (e.g., GERAS, synthetic cohorts), raw and processed sequencing data (RNA/ATAC/ChIP-seq), biomarker matrices, and time-series data (EEG).
 *   **How to query?** Depending on the dataset:
     *   For clinical & synthetic sets, use pandas to explore patient-level distributions and harmonize columns (check the ADDI Standard Variables).

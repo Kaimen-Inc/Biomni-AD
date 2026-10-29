@@ -2,17 +2,19 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from pathlib import Path
 
 import pytest
 from chainlit_ui.datasets import (
     AD_DATASET_PROMPTS,
+    GNPC_ACCESS_URL,
+    GNPC_STARTER_LABEL,
+    GNPC_STARTER_MESSAGE,
     build_suggested_prompts_markdown,
     discover_present_dataset_ids,
 )
 
-if TYPE_CHECKING:
-    from pathlib import Path
+REPO = Path(__file__).resolve().parents[1]
 
 # --- discover_present_dataset_ids ---------------------------------------------
 
@@ -129,3 +131,69 @@ def test_markdown_caps_the_total_number_of_examples(tmp_path: Path) -> None:
 
     md = build_suggested_prompts_markdown(tmp_path)
     assert len([line for line in md.splitlines() if line.startswith("- ")]) == 5
+
+
+# --- the GNPC starter ------------------------------------------------------------
+#
+# GNPC is controlled-access: a user who has not been granted it will not find it
+# in their workspace, and the useful answer then is where to ask for it. The
+# starter has to say so itself, because the agent otherwise has nothing to go on.
+
+
+def test_the_gnpc_link_is_the_catalogue_entry_for_requesting_access() -> None:
+    """The entry the Alzheimer's Disease Data Initiative's GNPC page names for requests."""
+    assert (
+        GNPC_ACCESS_URL == "https://discover.alzheimersdata.org/catalogue/datasets/e2f3536b-d97b-4303-89bd-6864200807a4"
+    )
+
+
+def test_the_gnpc_starter_names_the_dataset_and_where_to_request_it() -> None:
+    assert "GNPC" in GNPC_STARTER_LABEL
+    assert GNPC_STARTER_MESSAGE.count(GNPC_ACCESS_URL) == 1
+    # On a line of its own, so punctuation next to it cannot become part of the link.
+    assert f"\n{GNPC_ACCESS_URL}\n" in GNPC_STARTER_MESSAGE
+
+
+def test_the_gnpc_starter_never_stands_in_other_data_for_missing_access() -> None:
+    """Said before the analysis begins, or the agent has already planned around the wrong data."""
+    message = GNPC_STARTER_MESSAGE.lower()
+    assert "if it is not there" in message
+    assert "do not substitute another dataset" in message
+    assert message.index("do not substitute another dataset") < message.index("(1)")
+
+
+def test_a_smaller_gnpc_derived_dataset_is_offered_not_refused_and_not_used_unasked() -> None:
+    """The workspace may hold one cohort's GNPC data (the University of Kansas ADRC one) and not the harmonized set."""
+    message = GNPC_STARTER_MESSAGE.lower()
+    assert "smaller gnpc-derived dataset" in message
+    assert "ask whether to use it" in message
+    assert message.index("ask whether to use it") < message.index("(1)")
+
+
+def test_the_catalogue_tells_the_two_gnpc_datasets_apart() -> None:
+    catalogue = (REPO / "biomni" / "know_how" / "ad_workbench_data_catalog.md").read_text(encoding="utf-8")
+    lines = catalogue.splitlines()
+    first = next(i for i, line in enumerate(lines) if line.startswith("*   **GNPC v1 Harmonized Dataset"))
+    # The entry runs to the next top-level bullet; its sub-bullets and continuation lines are indented.
+    last = next((i for i in range(first + 1, len(lines)) if not lines[i].startswith(" ")), len(lines))
+    entry = "\n".join(lines[first:last])
+    assert "do not substitute another dataset on your own" in entry
+    assert "University of Kansas ADRC cohort" in entry, "the entry must name the smaller dataset it is not about"
+    assert "ask whether to use it" in entry
+    assert "University of Kansas Alzheimer's Disease Research Center - GNPC" in catalogue, (
+        "and that dataset has its own entry"
+    )
+
+
+def test_the_agents_catalogue_carries_the_same_link() -> None:
+    """The starter covers its own click; the catalogue covers anyone asking about GNPC in any chat."""
+    catalogue = (REPO / "biomni" / "know_how" / "ad_workbench_data_catalog.md").read_text(encoding="utf-8")
+    assert GNPC_ACCESS_URL in catalogue
+
+
+def test_exactly_one_welcome_starter_is_about_gnpc() -> None:
+    chainlit_app = pytest.importorskip("chainlit_app")
+    labels = [starter.label for starter in chainlit_app.AD1_STARTERS]
+    assert len(labels) == len(set(labels)), "two starters share a label"
+    gnpc = [starter for starter in chainlit_app.AD1_STARTERS if "GNPC" in starter.label]
+    assert [(s.label, s.message) for s in gnpc] == [(GNPC_STARTER_LABEL, GNPC_STARTER_MESSAGE)]

@@ -644,7 +644,8 @@ git push (main / biomni-ad / feat/adworkbench)
         │
         ▼
 GitHub Actions
-  ├─ ruff / pytest (lightweight subset)
+  ├─ ruff / mypy (advisory) / compile check
+  ├─ pytest: Python 3.11 + 3.12 without extras, and 3.11 with the chainlit extra
   ├─ docker build  →  ACR push  (tag = git SHA + branch)
   └─ deploy
        ├─ dev    : auto on every main commit

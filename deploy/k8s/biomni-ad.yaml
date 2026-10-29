@@ -178,7 +178,8 @@ spec:
             - name: BIOMNI_LOG_REDACT_EMAILS
               value: "true"
 
-            # A finished run is offered to the user as one downloadable archive.
+            # A finished run is offered to the user as one downloadable archive,
+            # unless downloads are turned off (BIOMNI_DISABLE_DOWNLOADS, below).
             # The archives live in a hidden .packages directory beside the runs,
             # on the same volume, and each roughly duplicates the run it came
             # from - so they are capped rather than kept forever. Raise only with
@@ -212,6 +213,17 @@ spec:
             # mounted below; users can override per session in the UI.
             - name: BIOMNI_OUTPUT_ROOT
               value: "/app/runs"
+
+            # GRIP only: results leave the workspace through the airlock and the
+            # gateway signs users in, so the app should offer neither a download
+            # nor a logout. With downloads off, results written to /app/runs
+            # above have no way out, so point BIOMNI_OUTPUT_ROOT into the
+            # workspace as well, for example /app/user-data/biomni-outputs (see
+            # docs/grip_deployment.md, "Export and sign-out").
+            # - name: BIOMNI_DISABLE_DOWNLOADS
+            #   value: "true"
+            # - name: BIOMNI_HIDE_LOGOUT
+            #   value: "true"
 
             # Per-user preferences (data scope, output directory), durable run
             # records and the chat-history database, so a user who closes the
