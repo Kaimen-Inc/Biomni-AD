@@ -53,6 +53,28 @@ jobs:
       - name: Run pytest
         run: python -m pytest -v
 
+  # The tests of the app itself skip without Chainlit, so the job above never
+  # runs them. It installs no extras on purpose: it checks that the pure modules
+  # need none. This one installs the extra, which pins the Chainlit version the
+  # image ships, and runs everything.
+  test-chainlit:
+    name: Test with Chainlit (Python 3.11)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          # The interpreter the image ships (python=3.11.13 in biomni_env/adworkbench_env.yml).
+          python-version: "3.11"
+          cache: pip
+          cache-dependency-path: pyproject.toml
+      - name: Install package + chainlit extra + test deps
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e ".[chainlit]" pytest
+      - name: Run pytest
+        run: python -m pytest -v
+
   compile:
     name: Compile-check all Python files
     runs-on: ubuntu-latest
@@ -99,4 +121,6 @@ jobs:
             biomni/tool/availability.py \
             biomni/workspace_prefs.py \
             chainlit_ui/graph_stream.py \
-            chainlit_ui/llm_failures.py
+            chainlit_ui/llm_failures.py \
+            chainlit_ui/ui_flags.py \
+            chainlit_ui/workspace_panel.py
