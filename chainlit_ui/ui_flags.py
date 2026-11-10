@@ -173,7 +173,7 @@ def withhold_downloads(thread: dict[str, Any]) -> dict[str, Any]:
 # What the user is told
 # --------------------------------------------------------------------------- #
 
-_AIRLOCK = "To take results out of your workspace, export them through the airlock."
+_AIRLOCK = "To take results out, export them through the airlock."
 
 
 @dataclass(frozen=True)

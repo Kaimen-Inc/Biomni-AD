@@ -327,6 +327,7 @@ def test_a_separate_output_folder_is_not_flagged_once_the_airlock_folder_is_decl
     notice = ui_flags.run_saved_notice(f"{RESULTS}/run_1", DATASET, "env")
     assert f"`{RESULTS}/run_1`" in notice
     assert "export them through the airlock" in notice
+    assert "your workspace" not in notice, "the folder is named by its path: 'workspace' means two things here"
     assert "⚠️" not in notice
 
 
@@ -395,7 +396,8 @@ def test_a_guess_is_the_same_whatever_chose_the_folder(monkeypatch: pytest.Monke
 def test_the_completion_notice_points_a_run_inside_the_airlock_folder_at_the_airlock() -> None:
     notice = ui_flags.run_saved_notice(f"{DATASET}/biomni-outputs/run_1", DATASET)
     assert f"`{DATASET}/biomni-outputs/run_1`" in notice
-    assert "airlock" in notice
+    assert "export them through the airlock" in notice
+    assert "your workspace" not in notice
     assert "Downloads are turned off" in notice
 
 
