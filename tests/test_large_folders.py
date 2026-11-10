@@ -631,8 +631,10 @@ def test_stopping_a_run_before_it_starts_ends_the_walk_instead_of_leaving_it_run
 
     async def scenario() -> None:
         task = asyncio.create_task(chainlit_app._snapshot_before_run(SimpleNamespace()))
-        for _ in range(200):  # until the walk is under way
-            if started.is_set():
+        # Until the walk is under way and the notice is up. Stopping on the walk alone races the
+        # notice's own timer, set for the same 10 ms, and under load the stop can get there first.
+        for _ in range(200):
+            if started.is_set() and "send" in chat.kinds():
                 break
             await asyncio.sleep(0.01)
         task.cancel()
