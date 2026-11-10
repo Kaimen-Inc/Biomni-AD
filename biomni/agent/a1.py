@@ -3131,6 +3131,40 @@ Each library is listed with its description to help you understand its functiona
             "nbformat_minor": 5,
         }
 
+    def _trace_entries(self) -> list[str]:
+        """Return the run's transcript as ``trace.json`` stores it: one printed message per entry.
+
+        ``go()`` and ``go_stream()`` record that as ``self.log`` while they stream.
+        A caller that drives ``self.app`` itself, as the chat UI does, syncs the
+        conversation into ``raw_log`` (what the notebook is built from) and never
+        sets ``log``, so the messages are printed from there instead.
+        ``log`` wins when it has anything: a ``go()`` that failed part-way has
+        cleared ``raw_log`` but kept what it had streamed.
+        """
+        log = getattr(self, "log", None)
+        if log:
+            return list(log)
+
+        entries = []
+        for message in getattr(self, "raw_log", None) or []:
+            try:
+                entries.append(pretty_print(message, printout=False))
+            except Exception:
+                # A message this cannot print (a content block with no type, say)
+                # must not cost the run the rest of its trace.
+                entries.append(repr(message))
+        return entries
+
+    def _save_trace(self, trace_path: str) -> None:
+        """Write ``trace.json``: the entries of :meth:`_trace_entries` as a JSON list of strings.
+
+        The text is built before the file is opened, so a transcript that cannot be
+        serialised raises without creating or truncating anything.
+        """
+        payload = json.dumps(self._trace_entries(), indent=2)
+        with open(trace_path, "w", encoding="utf-8") as f:
+            f.write(payload)
+
     def _save_run_artifacts(self, run_id: str, run_dir: str, initial_files: set) -> None:
         """Save all run artifacts (trace, notebook, PDF report, and any generated files)."""
         print(f"\n💾 Saving run artifacts to {run_dir} ...")
@@ -3138,8 +3172,7 @@ Each library is listed with its description to help you understand its functiona
         # 1. Save trace JSON
         trace_path = os.path.join(run_dir, "trace.json")
         try:
-            with open(trace_path, "w") as f:
-                json.dump(self.log, f, indent=2)
+            self._save_trace(trace_path)
             print("  ✓ Saved execution trace: trace.json")
         except Exception as e:
             print(f"  ⚠️ Failed to save trace: {e}")
@@ -3326,7 +3359,7 @@ Each library is listed with its description to help you understand its functiona
                 future.result(timeout=60)
 
             print(f"Conversation history saved as PDF: {pdf_path}")
-            print(f"Total steps recorded: {len(self.log)}")
+            print(f"Total steps recorded: {len(self._trace_entries())}")
 
         except concurrent.futures.TimeoutError:
             print("Warning: PDF generation timed out after 60 seconds")
