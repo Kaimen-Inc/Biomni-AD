@@ -341,8 +341,7 @@ class AD1(A1):
         # Save trace logs (JSON)
         trace_path = os.path.join(run_dir, "trace.json")
         try:
-            with open(trace_path, "w") as f:
-                json.dump(self.log, f, indent=2)
+            self._save_trace(trace_path)
             try:
                 console.print("  [success]✓[/success] Saved execution trace: [bold]trace.json[/bold]")
             except NameError:
