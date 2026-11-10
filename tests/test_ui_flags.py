@@ -19,6 +19,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
+from biomni.workspace_prefs import OutputTarget
 from chainlit_ui import persistence, ui_flags
 
 REPO = Path(__file__).resolve().parents[1]
@@ -26,7 +27,7 @@ REPO = Path(__file__).resolve().parents[1]
 
 @pytest.fixture(autouse=True)
 def _flags_unset(monkeypatch: pytest.MonkeyPatch) -> None:
-    for name in (ui_flags.DISABLE_DOWNLOADS_ENV, ui_flags.HIDE_LOGOUT_ENV):
+    for name in (ui_flags.DISABLE_DOWNLOADS_ENV, ui_flags.HIDE_LOGOUT_ENV, ui_flags.AIRLOCK_ROOT_ENV):
         monkeypatch.delenv(name, raising=False)
 
 
@@ -268,43 +269,181 @@ def test_is_inside(path: str, root: str, inside: bool) -> None:
     assert ui_flags.is_inside(path, root) is inside
 
 
-def test_no_warning_while_downloads_are_on(monkeypatch: pytest.MonkeyPatch) -> None:
-    """The download is how results outside the workspace are collected, so there is nothing to warn about."""
-    assert ui_flags.unreachable_output_warning("/app/runs", "/app/user-data") is None
+# --------------------------------------------------------------------------- #
+# Where the airlock exports from, and what is said about results outside it
+# --------------------------------------------------------------------------- #
+
+# The layout a deployment can be given since the platform provisions an input folder
+# and an output folder: the app reads a dataset from one and writes results to the
+# other, and the airlock exports from the second. "Your workspace" is then the output
+# folder to the platform and the dataset folder to this app.
+DATASET = "/app/user-data"
+RESULTS = "/workspace/biomni-outputs"
+EXPORTS = "/workspace"
 
 
-def test_warning_for_results_the_airlock_cannot_see(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_the_airlock_is_taken_to_export_from_the_workspace_unless_told_otherwise() -> None:
+    assert ui_flags.airlock_root("/app/user-data/") == ui_flags.AirlockRoot("/app/user-data", declared=False)
+    assert ui_flags.airlock_root(None) is None
+
+
+def test_the_operator_can_say_where_the_airlock_exports_from(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv(ui_flags.AIRLOCK_ROOT_ENV, f"{EXPORTS}/")
+    assert ui_flags.airlock_root(DATASET) == ui_flags.AirlockRoot(EXPORTS, declared=True)
+    assert ui_flags.airlock_root(None) == ui_flags.AirlockRoot(EXPORTS, declared=True), "no workspace is needed"
+
+
+def test_a_blank_airlock_root_declares_nothing(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A set-but-empty ConfigMap key must not read as a folder."""
+    monkeypatch.setenv(ui_flags.AIRLOCK_ROOT_ENV, "  ")
+    assert ui_flags.airlock_root(DATASET) == ui_flags.AirlockRoot(DATASET, declared=False)
+
+
+def test_no_warning_while_downloads_are_on() -> None:
+    """The download is how results outside the airlock's folder are collected, so there is nothing to warn about."""
+    assert ui_flags.unreachable_output_warning("/app/runs", DATASET) is None
+    assert ui_flags.airlock_note("/app/runs", DATASET) is None
+
+
+def test_no_warning_for_results_inside_the_workspace_or_with_nothing_to_compare_with(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     monkeypatch.setenv(ui_flags.DISABLE_DOWNLOADS_ENV, "true")
-    warning = ui_flags.unreachable_output_warning("/app/runs", "/app/user-data")
-    assert warning is not None
-    assert "outside your workspace" in warning
-    assert "BIOMNI_OUTPUT_ROOT" in warning
-
-
-def test_no_warning_for_results_inside_the_workspace_or_with_no_workspace(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv(ui_flags.DISABLE_DOWNLOADS_ENV, "true")
-    assert ui_flags.unreachable_output_warning("/app/user-data/biomni-outputs", "/app/user-data") is None
+    assert ui_flags.unreachable_output_warning(f"{DATASET}/biomni-outputs", DATASET) is None
     assert ui_flags.unreachable_output_warning("/app/runs", None) is None
+    assert ui_flags.airlock_note(f"{DATASET}/biomni-outputs", DATASET) is None
+    assert ui_flags.airlock_note("/app/runs", None) is None
 
 
-def test_the_completion_notice_points_a_workspace_run_at_the_airlock() -> None:
-    notice = ui_flags.run_saved_notice("/app/user-data/biomni-outputs/run_1", "/app/user-data")
-    assert "`/app/user-data/biomni-outputs/run_1`" in notice
-    assert "airlock" in notice
+def test_a_separate_output_folder_is_not_flagged_once_the_airlock_folder_is_declared(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The report that started this: every run of a working deployment ended in a warning."""
+    monkeypatch.setenv(ui_flags.DISABLE_DOWNLOADS_ENV, "true")
+    monkeypatch.setenv(ui_flags.AIRLOCK_ROOT_ENV, EXPORTS)
+
+    assert ui_flags.unreachable_output_warning(RESULTS, DATASET, "env") is None
+    assert ui_flags.airlock_note(RESULTS, DATASET) is None
+    notice = ui_flags.run_saved_notice(f"{RESULTS}/run_1", DATASET, "env")
+    assert f"`{RESULTS}/run_1`" in notice
+    assert "export them through the airlock" in notice
+    assert "your workspace" not in notice, "the folder is named by its path: 'workspace' means two things here"
+    assert "⚠️" not in notice
+
+
+def test_without_the_declaration_the_warning_says_what_it_assumed_and_how_to_settle_it(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """What that deployment saw before: a verdict about a folder that worked, and a request to set a variable that was set.
+
+    The app is guessing where the airlock reads, so the warning has to read as a
+    guess, and name the folder it compared with: "your workspace" was the output
+    folder to the people reading it, and the dataset folder to the app.
+    """
+    monkeypatch.setenv(ui_flags.DISABLE_DOWNLOADS_ENV, "true")
+
+    warning = ui_flags.unreachable_output_warning(RESULTS, DATASET, "env")
+
+    assert warning is not None
+    assert f"`{DATASET}`" in warning
+    assert "may not be exportable" in warning
+    assert ui_flags.AIRLOCK_ROOT_ENV in warning
+    for verdict in ("no way", "outside your workspace", "set BIOMNI_OUTPUT_ROOT"):
+        assert verdict not in warning
+
+
+def test_a_declared_airlock_folder_makes_the_warning_a_fact(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv(ui_flags.DISABLE_DOWNLOADS_ENV, "true")
+    monkeypatch.setenv(ui_flags.AIRLOCK_ROOT_ENV, EXPORTS)
+
+    warning = ui_flags.unreachable_output_warning("/app/runs", DATASET, "env")
+
+    assert warning is not None
+    assert f"exports only from `{EXPORTS}`" in warning
+    assert "cannot be taken out" in warning
+    assert "may not" not in warning
+    assert ui_flags.AIRLOCK_ROOT_ENV not in warning, "it is declared; there is nothing left to say"
+
+
+def test_the_advice_follows_what_put_the_results_there(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Never ask for a variable to be set because of a folder that variable did not choose, or that it did."""
+    monkeypatch.setenv(ui_flags.DISABLE_DOWNLOADS_ENV, "true")
+    monkeypatch.setenv(ui_flags.AIRLOCK_ROOT_ENV, EXPORTS)
+
+    chosen = ui_flags.unreachable_output_warning("/app/runs", DATASET, "preference")
+    assert chosen is not None
+    assert chosen.endswith(f"Choose a folder inside `{EXPORTS}`.")
+    assert "BIOMNI_OUTPUT_ROOT" not in chosen, "a folder picked in Settings is the user's to change, not an operator's"
+
+    for source in ("env", "workspace", "cwd-fallback", None):
+        warning = ui_flags.unreachable_output_warning("/app/runs", DATASET, source)
+        assert warning is not None
+        assert warning.endswith(
+            f"Choose a folder inside `{EXPORTS}`, or ask an operator to point BIOMNI_OUTPUT_ROOT at one."
+        )
+        assert "set BIOMNI_OUTPUT_ROOT" not in warning
+
+
+@pytest.mark.parametrize("source", ["preference", "env", "workspace", "cwd-fallback", None])
+def test_a_guess_is_the_same_whatever_chose_the_folder(monkeypatch: pytest.MonkeyPatch, source: str | None) -> None:
+    """Only an operator can settle a guess, so there is no folder for a user to choose, and nothing to vary."""
+    monkeypatch.setenv(ui_flags.DISABLE_DOWNLOADS_ENV, "true")
+    warning = ui_flags.unreachable_output_warning("/app/runs", DATASET, source)
+    assert warning == ui_flags.unreachable_output_warning("/app/runs", DATASET)
+    assert "choose" not in warning.lower()
+
+
+def test_the_completion_notice_points_a_run_inside_the_airlock_folder_at_the_airlock() -> None:
+    notice = ui_flags.run_saved_notice(f"{DATASET}/biomni-outputs/run_1", DATASET)
+    assert f"`{DATASET}/biomni-outputs/run_1`" in notice
+    assert "export them through the airlock" in notice
+    assert "your workspace" not in notice
     assert "Downloads are turned off" in notice
 
 
-def test_the_completion_notice_says_when_results_are_stranded() -> None:
-    notice = ui_flags.run_saved_notice("/app/runs/run_1", "/app/user-data")
+def test_the_completion_notice_says_when_results_are_stranded(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv(ui_flags.AIRLOCK_ROOT_ENV, DATASET)
+    notice = ui_flags.run_saved_notice("/app/runs/run_1", DATASET, "env")
     assert "`/app/runs/run_1`" in notice
-    assert "outside your workspace" in notice
-    assert "airlock" not in notice, "do not send them to the airlock for results it cannot reach"
+    assert "cannot be taken out" in notice
+    assert "export them through the airlock" not in notice, (
+        "do not send them to the airlock for results it cannot reach"
+    )
 
 
-def test_the_completion_notice_without_a_workspace_stops_at_the_path() -> None:
+def test_the_completion_notice_for_a_guess_does_not_send_them_to_the_airlock_either() -> None:
+    notice = ui_flags.run_saved_notice("/app/runs/run_1", DATASET, "env")
+    assert "`/app/runs/run_1`" in notice
+    assert "may not be exportable" in notice
+    assert "export them through the airlock" not in notice
+
+
+def test_the_completion_notice_without_a_folder_to_compare_with_stops_at_the_path() -> None:
     notice = ui_flags.run_saved_notice("/srv/runs/run_1", None)
     assert "`/srv/runs/run_1`" in notice
     assert "airlock" not in notice
+
+
+def test_a_declared_airlock_folder_needs_no_workspace(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv(ui_flags.AIRLOCK_ROOT_ENV, EXPORTS)
+    assert "export them through the airlock" in ui_flags.run_saved_notice(f"{RESULTS}/run_1", None)
+    assert "cannot be taken out" in ui_flags.run_saved_notice("/srv/runs/run_1", None)
+
+
+def test_the_startup_note_gives_an_operator_both_folders_and_the_way_out(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Logged once at startup, where an operator looks, with the paths spelled out."""
+    monkeypatch.setenv(ui_flags.DISABLE_DOWNLOADS_ENV, "true")
+
+    guess = ui_flags.airlock_note(RESULTS, DATASET)
+    assert guess is not None
+    for fact in (RESULTS, DATASET, ui_flags.AIRLOCK_ROOT_ENV, "BIOMNI_OUTPUT_ROOT"):
+        assert fact in guess
+
+    monkeypatch.setenv(ui_flags.AIRLOCK_ROOT_ENV, EXPORTS)
+    fact = ui_flags.airlock_note("/app/runs", DATASET)
+    assert fact is not None
+    for part in ("/app/runs", EXPORTS, "cannot be taken out", "BIOMNI_OUTPUT_ROOT"):
+        assert part in fact
 
 
 # --------------------------------------------------------------------------- #
@@ -472,7 +611,7 @@ def sent(chainlit_app, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> list:
         def __init__(self, **kwargs) -> None:
             self.kwargs = kwargs
 
-    workspace = SimpleNamespace(workspace_root=str(tmp_path / "workspace"))
+    workspace = SimpleNamespace(workspace_root=str(tmp_path / "workspace"), output=SimpleNamespace(source="env"))
     monkeypatch.setattr(chainlit_app.cl, "Message", FakeMessage)
     monkeypatch.setattr(chainlit_app.cl, "File", FakeFile)
     monkeypatch.setattr(
@@ -489,6 +628,11 @@ def _finished_run(tmp_path: Path, *, under: str) -> Path:
     (run / "report.md").write_text("# findings")
     (run / "results.csv").write_text("gene,logfc\nAPOE,2.4\n")
     return run
+
+
+def _output_target(path: Path, *, source: str, reason: str | None = None) -> OutputTarget:
+    """A resolved output location, without resolving one: what the Settings dialog is built from."""
+    return OutputTarget(path=str(path), source=source, writable=True, reason=reason)
 
 
 def test_a_finished_run_is_offered_as_a_download_by_default(chainlit_app, sent: list, tmp_path: Path) -> None:
@@ -539,16 +683,141 @@ def test_with_downloads_off_results_outside_the_workspace_are_flagged(
     asyncio.run(chainlit_app._offer_run_results(str(run), run.name))
 
     assert sent[0].elements == []
-    assert "outside your workspace" in sent[0].content
+    assert "may not be exportable" in sent[0].content
+    assert str(tmp_path / "workspace") in sent[0].content, "say which folder it compared with"
+
+
+def test_a_run_in_a_separate_output_folder_the_airlock_reads_finishes_without_a_warning(
+    chainlit_app, sent: list, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The dataset is the workspace the app reads; the platform's workspace, where the airlock exports from, is another folder."""
+    monkeypatch.setenv(ui_flags.DISABLE_DOWNLOADS_ENV, "true")
+    monkeypatch.setenv(ui_flags.AIRLOCK_ROOT_ENV, str(tmp_path / "platform"))
+    run = _finished_run(tmp_path, under="platform/biomni-outputs")
+    asyncio.run(chainlit_app._offer_run_results(str(run), run.name))
+
+    assert sent[0].elements == []
+    assert str(run) in sent[0].content
+    assert "export them through the airlock" in sent[0].content
+    assert "⚠️" not in sent[0].content
 
 
 def test_the_settings_dialog_warns_about_stranded_results_only_with_downloads_off(
     chainlit_app, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    output = SimpleNamespace(writable=True, reason=None, is_ephemeral=False, path=str(tmp_path / "runs"))
+    output = _output_target(tmp_path / "runs", source="env")
     workspace = str(tmp_path / "workspace")
     assert chainlit_app._output_warnings(output, workspace) == []
 
     monkeypatch.setenv(ui_flags.DISABLE_DOWNLOADS_ENV, "true")
     warnings = chainlit_app._output_warnings(output, workspace)
-    assert len(warnings) == 1 and "outside your workspace" in warnings[0]
+    assert len(warnings) == 1 and "may not be exportable" in warnings[0]
+
+
+def test_the_messages_know_what_chose_the_folder(
+    chainlit_app, sent: list, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A folder the user picked in Settings is theirs to change: no operator, no BIOMNI_OUTPUT_ROOT, in either message."""
+    monkeypatch.setenv(ui_flags.DISABLE_DOWNLOADS_ENV, "true")
+    monkeypatch.setenv(ui_flags.AIRLOCK_ROOT_ENV, str(tmp_path / "platform"))
+    (warning,) = chainlit_app._output_warnings(
+        _output_target(tmp_path / "runs", source="preference"), str(tmp_path / "workspace")
+    )
+    assert "BIOMNI_OUTPUT_ROOT" not in warning
+
+    chainlit_app.cl.user_session.get("workspace").output.source = "preference"
+    run = _finished_run(tmp_path, under="runs")
+    asyncio.run(chainlit_app._offer_run_results(str(run), run.name))
+    assert "BIOMNI_OUTPUT_ROOT" not in sent[0].content
+
+
+def test_the_settings_dialog_is_quiet_about_a_separate_output_folder_the_airlock_reads(
+    chainlit_app, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv(ui_flags.DISABLE_DOWNLOADS_ENV, "true")
+    monkeypatch.setenv(ui_flags.AIRLOCK_ROOT_ENV, str(tmp_path / "platform"))
+    output = _output_target(tmp_path / "platform" / "biomni-outputs", source="env")
+    assert chainlit_app._output_warnings(output, str(tmp_path / "workspace")) == []
+
+
+@pytest.fixture
+def layout(chainlit_app, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> SimpleNamespace:
+    """A dataset folder as the workspace the app reads, and a separate output folder the results go to."""
+    for name in ("BIOMNI_USER_DATA_HOST_PATH", "BIOMNI_DATA_PATH", "BIOMNI_PATH", "BIOMNI_STATE_DIR"):
+        monkeypatch.delenv(name, raising=False)
+    dataset, platform = tmp_path / "dataset", tmp_path / "platform"
+    (platform / "biomni-outputs").mkdir(parents=True)
+    dataset.mkdir()
+    monkeypatch.setenv("BIOMNI_USER_DATA_PATH", str(dataset))
+    monkeypatch.setenv("BIOMNI_OUTPUT_ROOT", str(platform / "biomni-outputs"))
+    monkeypatch.setenv(ui_flags.DISABLE_DOWNLOADS_ENV, "true")
+    return SimpleNamespace(dataset=dataset, platform=platform, results=platform / "biomni-outputs")
+
+
+def _logged(caplog: pytest.LogCaptureFixture, chainlit_app, event: str, **fields):
+    """The one structured line a startup check emitted, as a log record carrying its fields."""
+    check = chainlit_app._log_storage_check if event == "storage_check" else chainlit_app._apply_ui_flags
+    with caplog.at_level("INFO", logger=chainlit_app.logger.name):
+        check()
+    (line,) = [
+        r
+        for r in caplog.records
+        if getattr(r, "event", None) == event and all(getattr(r, k, None) == v for k, v in fields.items())
+    ]
+    return line
+
+
+def test_the_startup_log_warns_an_operator_that_the_airlock_may_not_reach_the_results(
+    chainlit_app, layout: SimpleNamespace, caplog: pytest.LogCaptureFixture
+) -> None:
+    """The log said nothing at INFO while every user was told. This is where an operator looks."""
+    line = _logged(caplog, chainlit_app, "storage_check", location="outputs")
+    assert line.levelname == "WARNING"
+    for fact in (layout.results, layout.dataset, ui_flags.AIRLOCK_ROOT_ENV):
+        assert str(fact) in line.airlock_note
+
+
+def test_the_startup_log_is_quiet_once_the_airlock_folder_is_declared(
+    chainlit_app, layout: SimpleNamespace, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    monkeypatch.setenv(ui_flags.AIRLOCK_ROOT_ENV, str(layout.platform))
+    line = _logged(caplog, chainlit_app, "storage_check", location="outputs")
+    assert line.levelname == "INFO"
+    assert line.airlock_note is None
+
+
+def test_the_startup_log_says_which_folder_the_airlock_is_taken_to_export_from(
+    chainlit_app, layout: SimpleNamespace, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    guessed = _logged(caplog, chainlit_app, "ui_flags")
+    assert (guessed.airlock_root, guessed.airlock_root_declared) == (str(layout.dataset), False)
+
+    caplog.clear()
+    monkeypatch.setenv(ui_flags.AIRLOCK_ROOT_ENV, str(layout.platform))
+    declared = _logged(caplog, chainlit_app, "ui_flags")
+    assert (declared.airlock_root, declared.airlock_root_declared) == (str(layout.platform), True)
+
+    caplog.clear()
+    monkeypatch.delenv(ui_flags.DISABLE_DOWNLOADS_ENV)
+    off = _logged(caplog, chainlit_app, "ui_flags")
+    assert (off.airlock_root, off.airlock_root_declared) == (None, None), "no airlock is in play while downloads are on"
+
+
+def test_the_container_local_warning_does_not_ask_for_a_variable_that_is_already_set(
+    chainlit_app, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An unwritable BIOMNI_OUTPUT_ROOT is passed over, which leaves it set and not in use: fix it, do not set it."""
+    unwritable = "BIOMNI_OUTPUT_ROOT (/data/outputs) is not writable by uid 57439: owned by root"
+    output = _output_target(tmp_path / "runs", source="cwd-fallback", reason=unwritable)
+    assert output.is_ephemeral
+
+    def container_local() -> str:
+        (warning,) = [w for w in chainlit_app._output_warnings(output) if "container-local" in w]
+        return warning
+
+    monkeypatch.setenv("BIOMNI_OUTPUT_ROOT", "/data/outputs")
+    assert "fix BIOMNI_OUTPUT_ROOT, as described above" in container_local()
+    assert "set BIOMNI_OUTPUT_ROOT" not in container_local()
+
+    monkeypatch.delenv("BIOMNI_OUTPUT_ROOT")
+    assert "ask an operator to set BIOMNI_OUTPUT_ROOT" in container_local()

@@ -46,7 +46,8 @@ Logs are one JSON object per line on stdout.
 | `BIOMNI_LLM_PROXY_SCHEMA` | `openai` (the default) or `anthropic` | The API the proxy speaks for that model. |
 | `BIOMNI_USER_DATA_PATH` | `/app/user-data` | The user's workspace. |
 | `BIOMNI_OUTPUT_ROOT` | a directory on a writable volume, see [Where results go](#where-results-go) | Where each run's results are written. |
-| `BIOMNI_DISABLE_DOWNLOADS` | `true` | Results leave a workspace only through the airlock, so the app offers no download of its own. Results must then be inside the workspace. A value that is not `true` or `false` counts as `true`. See [Export and sign-out](#export-and-sign-out). |
+| `BIOMNI_DISABLE_DOWNLOADS` | `true` | Results leave a workspace only through the airlock, so the app offers no download of its own. Results must then be inside the folder the airlock exports from, see `BIOMNI_AIRLOCK_ROOT`. A value that is not `true` or `false` counts as `true`. See [Export and sign-out](#export-and-sign-out). |
+| `BIOMNI_AIRLOCK_ROOT` | the folder the airlock exports from, for example `/workspace` | Needed only when that is not `BIOMNI_USER_DATA_PATH`: the platform gives the app a dataset to read and a separate output folder, and the airlock exports from the output folder. Without it the app takes the airlock to export from `BIOMNI_USER_DATA_PATH`, and warns about every run whose results are elsewhere. See [Export and sign-out](#export-and-sign-out). |
 | `BIOMNI_HIDE_LOGOUT` | `true` | Removes "Logout" from the user menu: behind the gateway it only signs the user straight back in. |
 | `BIOMNI_STATE_DIR` | `/app/state` | Each user's settings, run records and chat history. |
 | `BIOMNI_DATA_LAKE_PATH` | a directory on a volume, for example `/app/state/data_lake` | The reference datasets, downloaded the first time a question needs each one. Left unset they go inside the container, see [Resources](#resources). |
@@ -71,7 +72,8 @@ On GRIP, change four things, each of which the manifest shows where it applies:
 1. Set `BIOMNI_TRUST_AUTH_HEADERS` to `"true"`, and let traffic reach the Service only through the authentication gateway.
 2. Set `BIOMNI_LLM_PROXY_URL`, `BIOMNI_LLM_PROXY_SCHEMA` and `BIOMNI_LLM`, and in the Secret replace `ANTHROPIC_API_KEY` with `BIOMNI_LLM_PROXY_API_KEY`.
 3. Bind the `biomni-ad-workspace` claim to the workspace's own Azure Files share, through a PersistentVolume with the mount options in [Azure Files over SMB](#azure-files-over-smb-mount-options), instead of letting it provision a new share.
-4. Set `BIOMNI_DISABLE_DOWNLOADS` and `BIOMNI_HIDE_LOGOUT` to `"true"`, and point `BIOMNI_OUTPUT_ROOT` into the workspace, so the airlock can reach the results.
+4. Set `BIOMNI_DISABLE_DOWNLOADS` and `BIOMNI_HIDE_LOGOUT` to `"true"`, and point `BIOMNI_OUTPUT_ROOT` into the folder the airlock exports from, so the airlock can reach the results.
+   That folder is the workspace unless `BIOMNI_AIRLOCK_ROOT` says otherwise.
    See [Export and sign-out](#export-and-sign-out).
 
 ## Identity
@@ -265,7 +267,10 @@ Results go to the first of these that the app can write to: the folder the user 
 A location that cannot be written to is passed over, and the app says so in the log and in Settings.
 
 - `BIOMNI_OUTPUT_ROOT=/app/user-data/biomni-outputs` puts results in the workspace, next to the user's other files, once the share is writable by uid 57439.
-  This is the setting to use with `BIOMNI_DISABLE_DOWNLOADS`, since the airlock works on the workspace.
+  This is the setting to use with `BIOMNI_DISABLE_DOWNLOADS` when the airlock exports from the workspace.
+- When the platform gives the app a dataset to read and a separate output folder such as `/workspace`, set `BIOMNI_OUTPUT_ROOT` to a folder in the output folder, for example `/workspace/biomni-outputs`.
+  With `BIOMNI_DISABLE_DOWNLOADS`, also set `BIOMNI_AIRLOCK_ROOT=/workspace`.
+  The app cannot see where the airlock exports from, and without that setting takes it to be the workspace, which here is the dataset.
 - `BIOMNI_OUTPUT_ROOT=/app/runs`, on an Azure Disk, keeps results durable in the meantime.
   Users download each run's results from the app, so this works only while `BIOMNI_DISABLE_DOWNLOADS` is off: with it on, results written here have no way out.
 
@@ -294,7 +299,7 @@ Both are off by default, because the demo and compose deployments have no airloc
 
 **`BIOMNI_DISABLE_DOWNLOADS=true`** removes every download the app offers:
 
-- A finished run says where its results are saved and, for a folder inside the workspace, that they leave it through the airlock.
+- A finished run says where its results are saved and, for a folder inside the one the airlock exports from, that they leave it through the airlock.
   No archive is built or attached.
 - Conversations saved before the switch was turned on stored the run archives their old "Run complete" messages offered.
   Those files are no longer handed back, whether a conversation is reopened or only listed in the sidebar, so the replayed transcript carries no download link.
@@ -303,8 +308,12 @@ Both are off by default, because the demo and compose deployments have no airloc
 - Plots stay visible: that is what a result is for.
   This is not data-loss prevention.
   A page cannot stop a screenshot or copied text, and controlling what leaves a workspace is the airlock's job.
-- Results written outside the workspace could be fetched only through the download, so they are stranded.
-  Settings and each completion message say so when the output folder is outside the workspace, which is the case for the `/app/runs` stopgap above.
+- Results written outside the folder the airlock exports from could be fetched only through the download, so they are stranded.
+  That folder is `BIOMNI_AIRLOCK_ROOT` when it is set, and the workspace otherwise.
+  Settings and each completion message warn when the output folder is outside it, which is the case for the `/app/runs` stopgap above.
+  With `BIOMNI_AIRLOCK_ROOT` set the warning is a statement: the results "cannot be taken out".
+  Without it the app is guessing, so the warning says the results "may not be exportable" and names the folder it compared with.
+- The startup log says the same once, for an operator: the `storage_check` line for the outputs is a warning, with an `airlock_note` that names both folders and the setting that settles it.
 - Archives built before the switch was turned on stay in the hidden `.packages` folder beside the runs.
   Nothing offers them any more, and each roughly duplicates its run, so delete them if the space matters.
 - A value the app cannot read, such as `ture`, counts as `true` and is logged as an error once, so a typo never leaves downloads open.
@@ -315,7 +324,17 @@ The user's name stays in the menu, so the check in the [smoke test](#smoke-test)
 If `custom_css` in `.chainlit/config.toml` points at a stylesheet of your own, the switch replaces it and the startup log warns.
 To keep yours, leave the switch off and put `@import url("biomni-hide-logout.css");` at the top of it.
 
-The startup log has one line, `ui_flags`, giving `downloads_disabled` and `logout_hidden`, to confirm both settings reached the pod.
+**`BIOMNI_AIRLOCK_ROOT=/workspace`** tells the app which folder the airlock exports from.
+It is read only while `BIOMNI_DISABLE_DOWNLOADS` is on, and it matters only when that folder is not `BIOMNI_USER_DATA_PATH`.
+"Workspace" means two things on GRIP.
+To the app it is the folder it reads data from.
+To the platform it is where the airlock works.
+A deployment that mounts a dataset and a separate output folder has two folders, and the airlock exports from the output folder.
+The app cannot see the airlock, so left unset it takes the airlock to export from `BIOMNI_USER_DATA_PATH`, and warns about every run whose results are written anywhere else.
+Setting it ends those warnings.
+It moves nothing: `BIOMNI_OUTPUT_ROOT` must still point inside it.
+
+The startup log has one line, `ui_flags`, giving `downloads_disabled`, `logout_hidden` and, while downloads are off, the `airlock_root` the app is using and whether it was declared (`airlock_root_declared`), to confirm the settings reached the pod.
 
 ## Status and health
 
@@ -378,7 +397,7 @@ After deploying, sign in through the platform and check, in order:
    The run should read the file, draw the chart, and save it in a new run folder under `BIOMNI_OUTPUT_ROOT`.
 3. The proxy's log shows each model call with the user's `sub` as `X-User-Id` and the workspace `uuid` as `X-Workspace-Id`.
 4. Settings, reopened after a page reload, still show what was saved, and the conversation is listed on the left.
-5. With `BIOMNI_DISABLE_DOWNLOADS` and `BIOMNI_HIDE_LOGOUT` set, the finished run in step 2 says where its results are saved and offers no download.
+5. With `BIOMNI_DISABLE_DOWNLOADS` and `BIOMNI_HIDE_LOGOUT` set, the finished run in step 2 says where its results are saved, offers no download, and shows no warning: only that the results leave through the airlock.
    The menu under the avatar shows your name with no "Logout".
 
 ## Troubleshooting
@@ -392,7 +411,8 @@ After deploying, sign in through the platform and check, in order:
 | Startup warning "`BIOMNI_AUTH_..._HEADER=...` has no effect" | A single-value header setting points at a context header | Remove the variable |
 | "This app cannot read your workspace" | The workspace share's mount options do not give uid 57439 access | [Azure Files over SMB](#azure-files-over-smb-mount-options) |
 | Settings say "The configured location could not be used, so results go to `<directory>` instead" | `BIOMNI_OUTPUT_ROOT`, or the folder chosen in Settings, is not writable by uid 57439 | The reason shown names the fix; see [Storage](#storage) |
-| A finished run, or Settings, says "Downloads are turned off in this deployment, and this folder is outside your workspace" | `BIOMNI_DISABLE_DOWNLOADS` is on and `BIOMNI_OUTPUT_ROOT` (or the folder chosen in Settings) is not under the workspace, so the airlock cannot see the results | Set `BIOMNI_OUTPUT_ROOT` to a folder in the workspace, such as `/app/user-data/biomni-outputs`. See [Where results go](#where-results-go) |
+| A finished run, or Settings, says "Downloads are turned off in this deployment, and this folder is outside `<folder>`, where Biomni assumes the airlock exports from, so these results may not be exportable" | `BIOMNI_DISABLE_DOWNLOADS` is on, `BIOMNI_AIRLOCK_ROOT` is not set, and the output folder is not inside `BIOMNI_USER_DATA_PATH`, the folder the app then assumes. The app cannot tell whether the airlock reaches it | If the airlock exports from the output folder, as when the platform provides a separate input folder and output folder, set `BIOMNI_AIRLOCK_ROOT` to it, for example `/workspace`. If it does not, point `BIOMNI_OUTPUT_ROOT` into a folder it does export from. The startup `storage_check` line for the outputs names both. See [Where results go](#where-results-go) |
+| ... says "the airlock exports only from `<folder>`, so results in this folder cannot be taken out" | `BIOMNI_AIRLOCK_ROOT` is set, and the output folder (`BIOMNI_OUTPUT_ROOT`, or the folder chosen in Settings) is not inside it | Point `BIOMNI_OUTPUT_ROOT` at a folder inside it, or choose one in Settings |
 | "Logout" is still in the avatar menu with `BIOMNI_HIDE_LOGOUT=true` | The setting did not reach the pod (the startup `ui_flags` line says), the browser kept the old stylesheet (reload without the cache), or a Chainlit upgrade changed the menu's markup | Fix the setting, or update the selectors in `public/biomni-hide-logout.css` against the new Chainlit |
 | A red "Could not reach the server" appears for a while after choosing large folders or starting a run, then goes away | An older build listed the workspace on the thread that serves the page, so for as long as that took (a minute or more on a large share) the browser could not get an answer and gave up | Update. This build reads the workspace in worker threads and shows "Getting your chat ready", "Reading the folders you selected" or "Getting your workspace ready for this run" while it works. See [Large workspaces](#large-workspaces) |
 | The chat says "Getting your workspace ready for this run" for minutes before the analysis starts | The workspace holds a great many folders, and listing each one is a network round trip | Nothing is broken. Move archives and unused datasets out of the workspace to shorten it |
