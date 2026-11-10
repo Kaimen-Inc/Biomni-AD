@@ -187,6 +187,8 @@ from chainlit_ui.planning import (
 )
 from chainlit_ui.status_gauges import register_database_gauge, register_session_gauge
 from chainlit_ui.ui_flags import (
+    airlock_note,
+    airlock_root,
     custom_stylesheet,
     downloads_disabled,
     logout_hidden,
@@ -622,11 +624,19 @@ def _output_warnings(output: OutputTarget, workspace_root: str | None = None) ->
             )
         )
     if output.is_ephemeral:
+        # BIOMNI_OUTPUT_ROOT can be set and still not be what is in use: one that
+        # cannot be written is passed over, which the warning above explains.
+        # Asking for it to be set would send an operator to a variable that is there.
+        remedy = (
+            "fix BIOMNI_OUTPUT_ROOT, as described above"
+            if os.getenv("BIOMNI_OUTPUT_ROOT", "").strip()
+            else "set BIOMNI_OUTPUT_ROOT"
+        )
         warnings.append(
             "⚠️ This is container-local storage: results are lost when the application restarts. "
-            "Set a path on a mounted volume, or ask an operator to set BIOMNI_OUTPUT_ROOT."
+            f"Set a path on a mounted volume, or ask an operator to {remedy}."
         )
-    stranded = unreachable_output_warning(output.path, workspace_root)
+    stranded = unreachable_output_warning(output.path, workspace_root, output.source)
     if stranded:
         warnings.append(stranded)
     return warnings
@@ -994,15 +1004,21 @@ def _apply_ui_flags() -> None:
     time it serves the page, so choosing the stylesheet here, once, is enough.
     Downloads need nothing at startup - they are decided where a run finishes and
     where a stored conversation is read - but are logged with it, so an operator
-    can confirm from one line that a setting reached the pod.
+    can confirm from one line that a setting reached the pod, and which folder the
+    app takes the airlock to export from.
     """
     chainlit_config.ui.custom_css = custom_stylesheet(chainlit_config.ui.custom_css)
+    # Only meaningful while downloads are off; reported otherwise, it would
+    # suggest an airlock is in play.
+    root = airlock_root(_resolve_workspace_root()) if downloads_disabled() else None
     emit_event(
         "ui_flags",
         logger=logger,
         downloads_disabled=downloads_disabled(),
         logout_hidden=logout_hidden(),
         stylesheet=chainlit_config.ui.custom_css,
+        airlock_root=root.path if root else None,
+        airlock_root_declared=root.declared if root else None,
     )
 
 
@@ -1032,11 +1048,13 @@ def _log_storage_check() -> None:
     # Where results go for a user with no preference - which also logs, once,
     # why each configured location before it was passed over.
     output = resolve_output_dir(default_prefs(), workspace_root=workspace)
+    # With nowhere to write, whether the airlock could collect from it is moot.
+    airlock = airlock_note(output.path, workspace) if output.writable else None
     if not output.writable:
         level = logging.ERROR
-    elif output.reason or output.is_ephemeral:
-        # Working, but not where the deployment meant results to go, or not
-        # somewhere they survive a restart.
+    elif output.reason or output.is_ephemeral or airlock:
+        # Working, but not where the deployment meant results to go, not
+        # somewhere they survive a restart, or not somewhere the airlock reaches.
         level = logging.WARNING
     else:
         level = logging.INFO
@@ -1048,6 +1066,7 @@ def _log_storage_check() -> None:
         output_source=output.source,
         ephemeral=output.is_ephemeral,
         passed_over=output.reason,
+        airlock_note=airlock,
         **storage_facts(output.path),
     )
 
@@ -2460,7 +2479,12 @@ async def _offer_run_results(run_dir: str, run_id: str) -> None:
     """
     if downloads_disabled():
         ws = cl.user_session.get("workspace")
-        await cl.Message(content=run_saved_notice(run_dir, ws.workspace_root if ws is not None else None)).send()
+        notice = run_saved_notice(
+            run_dir,
+            ws.workspace_root if ws is not None else None,
+            ws.output.source if ws is not None else None,
+        )
+        await cl.Message(content=notice).send()
         return
 
     # Offer the whole run as one download. The path below is on the server, so

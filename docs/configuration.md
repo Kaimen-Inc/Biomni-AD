@@ -147,6 +147,11 @@ BIOMNI_DISABLE_DOWNLOADS=true                # Default: false (true removes ever
                                              #          only through its own review, as GRIP's airlock does.
                                              #          Screenshots and copied text are not stopped. A value
                                              #          that is not true/false counts as true, and is logged.)
+BIOMNI_AIRLOCK_ROOT=/workspace               # Default: unset (the airlock is taken to export from the
+                                             #          workspace, BIOMNI_USER_DATA_PATH). Set it when the
+                                             #          platform gives the app a dataset to read and a
+                                             #          separate output folder the airlock exports from.
+                                             #          Read only while BIOMNI_DISABLE_DOWNLOADS is on.
 BIOMNI_HIDE_LOGOUT=true                      # Default: false (true removes "Logout" from the user menu,
                                              #          for a gateway that signs the user straight back in)
 CHAINLIT_HOST=0.0.0.0                        # Default: 0.0.0.0 (container entrypoint only)
@@ -275,9 +280,12 @@ which the resolver checks against the mount table rather than assuming.
 Set `BIOMNI_OUTPUT_ROOT` to a mounted volume, or make the workspace mount
 read-write, to keep results.
 
-With `BIOMNI_DISABLE_DOWNLOADS` set, results must be somewhere the platform's own export can reach, which on GRIP means inside the workspace.
+With `BIOMNI_DISABLE_DOWNLOADS` set, results must be somewhere the platform's own export can reach.
 The download was the only way to fetch anything written elsewhere.
-The Settings panel and each run's completion message warn when the output folder is outside the workspace.
+The app cannot see where the platform exports from, so it takes that to be the workspace, unless `BIOMNI_AIRLOCK_ROOT` names the folder.
+The workspace is the folder the app reads its data from, which on GRIP is not always where the airlock works: a deployment given a dataset and a separate output folder has the airlock export from the output folder, and needs `BIOMNI_AIRLOCK_ROOT` to say so.
+The Settings panel and each run's completion message warn when the output folder is outside that folder, and the startup log says so once, in the `airlock_note` of the outputs `storage_check` line.
+With `BIOMNI_AIRLOCK_ROOT` set the warning is a statement; without it, the app says it is assuming.
 
 "First **writable** candidate" is load-bearing, and the usual reason a
 configured `BIOMNI_OUTPUT_ROOT` appears to be ignored is that it is not
@@ -415,7 +423,8 @@ All are optional; the defaults are what a single-user local run wants.
 
 | Variable | Default | What it does |
 |---|---|---|
-| `BIOMNI_DISABLE_DOWNLOADS` | off | Removes every download the app offers. A finished run says where its results are saved, and no archive is built or attached; a conversation saved before the switch was turned on loses the run archives it stored, and its completion message is reworded, so the replayed transcript hands out no file and offers none (what a user attached to their own message stays). For a platform that lets results out only through its own review, as GRIP's airlock does, so the app offers no second way. Plots stay visible, and this is not data-loss prevention: a screenshot or copied text is beyond what a web page can stop. Results must be inside the workspace for the platform to reach them, and the app warns when they are not. A value the app cannot read, such as `ture`, counts as on and is logged as an error, so a typo never leaves downloads open. |
+| `BIOMNI_DISABLE_DOWNLOADS` | off | Removes every download the app offers. A finished run says where its results are saved, and no archive is built or attached; a conversation saved before the switch was turned on loses the run archives it stored, and its completion message is reworded, so the replayed transcript hands out no file and offers none (what a user attached to their own message stays). For a platform that lets results out only through its own review, as GRIP's airlock does, so the app offers no second way. Plots stay visible, and this is not data-loss prevention: a screenshot or copied text is beyond what a web page can stop. Results must be inside the folder the platform exports from (`BIOMNI_AIRLOCK_ROOT`, else the workspace) for the platform to reach them, and the app warns when they are not. A value the app cannot read, such as `ture`, counts as on and is logged as an error, so a typo never leaves downloads open. |
+| `BIOMNI_AIRLOCK_ROOT` | unset | The folder the platform's airlock exports from. Read only while `BIOMNI_DISABLE_DOWNLOADS` is on. Unset, the app takes the airlock to export from the workspace (`BIOMNI_USER_DATA_PATH`), which is wrong for a deployment that mounts a dataset and a separate output folder and has the airlock export from the output folder: set it there, or every run ends in a warning. It moves nothing, so `BIOMNI_OUTPUT_ROOT` must still point inside it. See [grip_deployment.md](grip_deployment.md#export-and-sign-out). |
 | `BIOMNI_MAX_PACKAGE_MB` | `200` | Unless `BIOMNI_DISABLE_DOWNLOADS` is set, a finished run is offered to the user as one downloadable archive. Runs larger than this are reported by size instead - a single run can write a multi-GB intermediate, and zipping that would stall the app and the browser. |
 | `BIOMNI_MAX_PACKAGES` | `20` | How many archives to keep. Each roughly duplicates the run it came from and the run directories are never deleted, so without a bound the output volume fills about twice as fast. Archives are derived data; dropping one costs only regenerating it. |
 
