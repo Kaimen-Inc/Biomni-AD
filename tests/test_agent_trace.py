@@ -15,6 +15,7 @@ these bind the methods under test to a lightweight stub, as
 from __future__ import annotations
 
 import json
+import logging
 import os
 
 import pytest
@@ -147,13 +148,30 @@ class TestTraceOfAChatDrivenRun:
 
 
 class TestTraceOfAGoRun:
-    """``go()`` and ``go_stream()`` record ``log`` as they stream; that stays the source."""
+    """``go()`` records ``log`` as it streams and sets ``raw_log`` when the stream ends."""
 
-    def test_the_recorded_log_is_written_as_is(self):
-        log = ["=== Human Message ===\n\nhi", "=== Ai Message ===\n\nhello"]
-        agent = _StubAgent(log=list(log), raw_log=_conversation())
+    def test_a_go_run_reads_the_same_from_its_messages(self):
+        """The messages print to the very entries ``go()`` records, so a ``go()`` run's trace does not change."""
+        messages = _conversation()
+        log = [pretty_print(m, printout=False) for m in messages]
+        agent = _StubAgent(log=list(log), raw_log=list(messages))
 
         assert agent._trace_entries() == log
+
+    @pytest.mark.parametrize(
+        "log",
+        [[], ["=== Human Message ===\n\nan earlier question"]],
+        ids=["empty", "left by an earlier run"],
+    )
+    def test_a_log_never_stands_in_for_the_messages_of_the_run_being_saved(self, log):
+        """The chat and Gradio UIs sync ``raw_log`` and never touch ``log``, which an earlier ``go()`` may have filled."""
+        agent = _StubAgent(log=list(log), raw_log=_conversation())
+
+        entries = agent._trace_entries()
+
+        assert len(entries) == 4
+        assert PROMPT in entries[0]
+        assert not any("an earlier question" in e for e in entries)
 
     def test_a_run_that_stopped_part_way_keeps_what_it_recorded(self):
         """``go()`` clears ``raw_log`` first, so a failure part-way leaves only ``log`` to go on."""
@@ -171,11 +189,6 @@ class TestTraceOfAGoRun:
         agent = _StubAgent(log=[], raw_log=[], _conversation_state={"messages": _conversation()})
 
         assert agent._trace_entries() == []
-
-    def test_an_agent_without_a_run_in_the_log_falls_back_to_the_conversation(self):
-        agent = _StubAgent(log=[], raw_log=_conversation())
-
-        assert len(agent._trace_entries()) == 4
 
 
 class TestNothingRecorded:
@@ -214,7 +227,7 @@ class TestPdfSummary:
 
 
 class TestRobustness:
-    def test_one_message_that_cannot_be_printed_does_not_blank_the_trace(self, tmp_path):
+    def test_one_message_that_cannot_be_printed_does_not_blank_the_trace(self, tmp_path, caplog):
         """List content with a block that has no type makes ``pretty_print`` raise."""
         broken = AIMessage(content=[{"text": "no type on this block"}])
         messages = [HumanMessage(content=PROMPT), broken, AIMessage(content="Done.")]
@@ -223,13 +236,15 @@ class TestRobustness:
         agent = _chat_driven_agent(messages)
         path = tmp_path / "trace.json"
 
-        agent._save_trace(str(path))
+        with caplog.at_level(logging.WARNING, logger="biomni.agent.a1"):
+            agent._save_trace(str(path))
 
         entries = _read_trace(path)
         assert len(entries) == 3
         assert PROMPT in entries[0]
         assert "no type on this block" in entries[1]
         assert "Done." in entries[2]
+        assert "could not print a AIMessage" in caplog.text
 
     def test_a_failed_serialisation_does_not_leave_an_empty_file(self, tmp_path):
         """The file used to be opened for writing before anything was serialised."""
