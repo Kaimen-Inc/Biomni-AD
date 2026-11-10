@@ -14,10 +14,6 @@ from typing import Any, Literal, TypedDict
 logger = logging.getLogger(__name__)
 
 
-class _RunDirReady(Exception):
-    """Internal signal: the caller supplied the run directory already."""
-
-
 import pandas as pd
 from dotenv import load_dotenv
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage
@@ -2570,11 +2566,16 @@ Each library is listed with its description to help you understand its functiona
 
         return selected_resources_names
 
-    def go(self, prompt):
+    def go(self, prompt, *, run_dir: str | None = None):
         """Execute the agent with the given prompt.
 
         Args:
             prompt: The user's query
+            run_dir: The folder this run writes into: its generated files, report,
+                trace and notebook. A new one is made under the runs root when not
+                given. A caller that makes the folder itself, as ``AD1.go`` does to
+                save its own artifacts, passes it here, so the run does not make a
+                second one and leave its generated files apart from the report.
 
         """
         self.critic_count = 0
@@ -2587,26 +2588,9 @@ Each library is listed with its description to help you understand its functiona
 
         # Create run directory BEFORE execution so OUTPUT_DIR is available during code runs.
         try:
-            # A caller that already made one wins - AD1.go builds its run
-            # directory before delegating here, and building a second would send
-            # generated outputs to one directory while the report, trace and
-            # notebook are written into the other. Run ids carry a random token,
-            # so the two could never coincide.
-            existing = getattr(self, "_current_run_dir", None)
-            if existing and os.path.isdir(existing):
-                current_run_dir = existing
-                run_id = os.path.basename(existing)
-                os.environ["BIOMNI_OUTPUT_PATH"] = current_run_dir
-                raise _RunDirReady
-            run_id = self._build_run_id(prompt)
-            runs_root = self._resolve_runs_root()
-            os.makedirs(runs_root, exist_ok=True)
-            current_run_dir = os.path.join(runs_root, run_id)
-            os.makedirs(current_run_dir, exist_ok=True)
+            run_id, current_run_dir = self._make_run_dir(prompt, run_dir)
             self._current_run_dir = current_run_dir
             os.environ["BIOMNI_OUTPUT_PATH"] = current_run_dir
-        except _RunDirReady:
-            pass
         except Exception as _e:
             print(f"Warning: Could not pre-create run directory: {_e}")
             current_run_dir = None
@@ -2703,6 +2687,22 @@ Each library is listed with its description to help you understand its functiona
     def _build_run_id(self, topic: str | None = None) -> str:
         """Build run directory ID as run_YYYYMMDD_HHMMSS_topic1_topic2_topic3."""
         return _shared_build_run_id(topic, llm_summarizer=self._summarize_topic_with_llm)
+
+    def _make_run_dir(self, prompt: str, run_dir: str | None = None) -> tuple[str, str]:
+        """Create the folder one ``go()`` call writes into and return ``(run_id, path)``.
+
+        ``run_dir`` is a folder the caller chose; otherwise a new one is made under
+        the runs root, named from the prompt. Either way it is this call's own: a
+        folder left by an earlier run is never picked up, so two calls on one agent
+        cannot write into each other's.
+        """
+        if run_dir:
+            path = os.path.abspath(run_dir)
+        else:
+            run_id = self._build_run_id(prompt)
+            path = os.path.join(self._resolve_runs_root(), run_id)
+        os.makedirs(path, exist_ok=True)
+        return os.path.basename(path), path
 
     def _resolve_runs_root(self) -> str:
         """Where this agent writes run directories.

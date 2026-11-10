@@ -271,8 +271,12 @@ class AD1(A1):
         super().update_system_prompt_with_selected_resources(selected_resources)
         self._enforce_local_data_priority()
 
-    def go(self, prompt):
-        """Execute the agent with the given prompt, injecting AD context if relevant."""
+    def go(self, prompt, *, run_dir: str | None = None):
+        """Execute the agent with the given prompt, injecting AD context if relevant.
+
+        ``run_dir`` is the folder to write this run into, as for :meth:`A1.go`;
+        a new one is made under the runs root when not given.
+        """
 
         # Initialize log/raw_log early so _save_run_artifacts always has them,
         # even when super().go() raises an exception.
@@ -280,10 +284,7 @@ class AD1(A1):
         self.raw_log = getattr(self, "raw_log", [])
 
         # 1. Setup run directory
-        run_id = self._build_run_id(prompt)
-        runs_root = self._resolve_runs_root()
-        current_run_dir = os.path.join(runs_root, run_id)
-        os.makedirs(current_run_dir, exist_ok=True)
+        run_id, current_run_dir = self._make_run_dir(prompt, run_dir)
 
         try:
             console.print(
@@ -313,7 +314,8 @@ class AD1(A1):
 
         # 3. Run the agent
         try:
-            super().go(prompt)
+            # The run's folder is made, so the generated files go where the report does.
+            super().go(prompt, run_dir=current_run_dir)
         except Exception as e:
             try:
                 console.print(f"\n[danger]❌ Agent execution failed:[/danger] {e}")
